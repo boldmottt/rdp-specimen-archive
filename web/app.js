@@ -274,10 +274,10 @@
       .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("") + (layers(v).length ? `<span class="layer-pill">${esc(layers(v).join("·"))}</span>` : "");
     const chips = vars.length > 1
       ? vars.map((x) => `
-      <button class="vchip${x.id === (v && v.id) ? " on" : ""}" data-sel="${esc(x.id)}" title="${esc(vName(x))}">
+      <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}" data-sel="${esc(x.id)}" data-img="${esc(vImg(p.id, x) || "")}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
         ${x.images && x.images.length ? `<span class="vdot" data-src="${imgUrl(p.id, x.images[0])}"></span>` : '<span class="vdot"></span>'}
         <span class="nm">${esc(vName(x))}</span>
-      </button>`).join("")
+      </button>`).join("") + `<button class="vchip vchip-all" data-all="1" title="이 패턴의 모든 컬러를 한 번에">${vars.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${vars.length}색`}</button>`
       : (v && v.colorCode && v.colorCode !== "-" ? `<span class="vchip" style="cursor:default"><span class="nm" style="font-family:var(--mono)">${esc(v.colorCode)}</span></span>` : "");
     return `<article class="card${picked ? " picked" : ""}" data-pid="${esc(p.id)}">
       <div class="media">
@@ -360,11 +360,37 @@
         location.hash = `#/p/${encodeURIComponent(p.id)}/${encodeURIComponent(p._sel || p.variations[0].id)}`;
       };
     });
-    $$("[data-sel]").forEach((el) => (el.onclick = (e) => {
+    $$("[data-sel]").forEach((el) => {
+      const card = el.closest(".card");
+      const p = byId(card.dataset.pid);
+      const img = () => card.querySelector(".media img");
+      el.onmouseenter = () => { const im = img(); if (im && el.dataset.img) im.src = el.dataset.img; };
+      el.onmouseleave = () => {
+        const im = img(); if (!im) return;
+        const cur = varOf(p, p._sel);
+        im.src = vImg(p.id, cur) || im.src;
+      };
+      el.onclick = (e) => {
+        e.stopPropagation();
+        toggleCart(p.id, el.dataset.sel);
+        p._sel = el.dataset.sel;
+        const im = img(); if (im && el.dataset.img) im.src = el.dataset.img;
+        card.classList.toggle("picked", inCart(p.id, el.dataset.sel));
+        card.querySelectorAll("[data-sel]").forEach((b) => b.classList.toggle("in", inCart(p.id, b.dataset.sel)));
+        const chk = card.querySelector("[data-check]");
+        if (chk) chk.classList.toggle("on", inCart(p.id, el.dataset.sel));
+        const all = card.querySelector("[data-all]");
+        if (all) all.textContent = p.variations.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${p.variations.length}색`;
+        renderCart();
+      };
+    });
+    $$("[data-all]").forEach((el) => (el.onclick = (e) => {
       e.stopPropagation();
       const p = byId(el.closest(".card").dataset.pid);
-      p._sel = el.dataset.sel;
-      renderCatalog();
+      const allIn = p.variations.every((x) => inCart(p.id, x.id));
+      if (allIn) App.cart = App.cart.filter((c) => c.pid !== p.id);
+      else p.variations.forEach((x) => { if (!inCart(p.id, x.id)) App.cart.push({ pid: p.id, vid: x.id }); });
+      saveLS(); renderCatalog(); renderCart();
     }));
     $$("[data-check]").forEach((el) => (el.onclick = (e) => {
       e.stopPropagation();

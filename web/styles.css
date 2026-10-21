@@ -94,6 +94,11 @@ body.prop-mode .topbar .ghost{display:none}
 .vdot{width:12px;height:12px;border-radius:50%;background:#d8d5cd;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.09);margin-left:2px}
 .vchip .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;font-size:11px}
 .vchip .plus{width:20px;height:20px;border-radius:50%;background:#f1efe9;display:grid;place-items:center;font-size:12px;color:var(--ink-3)}
+.vchip.in{background:var(--ink);border-color:var(--ink);color:#fff}
+.vchip.in .vdot{box-shadow:0 0 0 1.5px rgba(255,255,255,.5);margin-left:0}
+.vchip.in .nm{color:#fff}
+.vchip-all{border-style:dashed;background:#faf9f6;font-weight:600}
+.vchip-all:hover{border-style:solid;border-color:var(--ink);color:var(--ink)}
 
 /* cart bar */
 .cartbar{position:fixed;left:0;right:0;bottom:0;z-index:70;display:flex;justify-content:flex-end;pointer-events:none;padding:0 28px 24px}
