@@ -1,5 +1,9 @@
 # RDP Specimen Archive
 
+![catalog](docs/catalog.jpg)
+![detail](docs/detail.jpg)
+![proposal](docs/proposal.jpg)
+
 패턴 시편(스와치)을 쇼핑몰처럼 훑고, 원하는 컬러만 담아 **A4 제안서 PDF**로 뽑는 개인용 로컬 앱.
 서버·DB 설치 없이 맥에서 더블클릭으로 실행하고, 데이터는 구글 드라이브 동기화 폴더에 JSON + 이미지로 저장한다.
 
