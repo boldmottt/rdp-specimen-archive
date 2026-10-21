@@ -160,8 +160,9 @@
     const path = el.dataset.f;
     const isVar = path.startsWith("v.");
     const rel = isVar ? path.slice(2) : path;
-    const p = byId(pid);
-    const v = varOf(p, vid);
+    const isNewMode = !!App.newDraft && pid === "__new__";
+    const p = isNewMode ? App.newDraft : byId(pid);
+    const v = isNewMode ? (p.variations || [])[0] : varOf(p, vid);
     const src = isVar ? v : p;
     if (!src) return;
     let cur = rel.split(".").reduce((a, k) => (a == null ? null : a[k]), src);
@@ -183,6 +184,19 @@
       const val = inp.value.trim();
       restore();
       if ((cur == null ? "" : String(cur)) === val) return;
+      if (isNewMode) {
+        const tgt = isVar ? (p.variations || [])[0] : p;
+        if (!tgt) return;
+        const keys = rel.split(".");
+        let o = tgt;
+        for (let i = 0; i < keys.length - 1; i++) {
+          if (o[keys[i]] == null || typeof o[keys[i]] !== "object") o[keys[i]] = {};
+          o = o[keys[i]];
+        }
+        o[keys[keys.length - 1]] = /plate/i.test(rel) ? val.split(",").map((x) => x.trim()).filter(Boolean) : val;
+        renderDetail("__new__", null, App.newDraft);
+        return;
+      }
       await inlineSave(pid, (d) => {
         const tgt = isVar ? (d.variations || []).find((x) => x.id === v.id) : d;
         if (!tgt) return false;
@@ -340,6 +354,30 @@
     }));
   }
 
+  async function saveNewPattern() {
+    const d = App.newDraft;
+    if (!d) return;
+    if (!d.project) { toast("프로젝트를 입력하세요"); return; }
+    if (!d.pattern.code) { toast("패턴 코드를 입력하세요"); return; }
+    const id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
+    if (byId(id) && !confirm(`'${id}' 시편이 이미 있습니다. 덮어쓸까요?`)) return;
+    const payload = { ...JSON.parse(JSON.stringify(d)), id };
+    try {
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, "", true);
+      const saved = JSON.parse(JSON.stringify(payload));
+      saved.updatedAt = r.savedAt || "";
+      saved._mtime = Date.now();
+      const i = App.patterns.findIndex((x) => x.id === id);
+      if (i >= 0) App.patterns[i] = saved; else App.patterns.push(saved);
+      App.newDraft = null;
+      toast("저장됨");
+      location.hash = `#/p/${encodeURIComponent(id)}/${encodeURIComponent(saved.variations[0].id)}`;
+    } catch (e) {
+      if (e.status === 409) toast("같은 ID의 시편이 이미 있습니다");
+      else toast("저장 실패: " + e.message);
+    }
+  }
+
   /* ---------------- plate popover ---------------- */
   const plateCache = new Map();
   async function showPlate(lot, anchor) {
@@ -456,9 +494,10 @@
     return t ? Math.round(t * 10) / 10 : "—";
   }
 
-  function renderDetail(pid, vid) {
+  function renderDetail(pid, vid, override) {
     document.body.classList.remove("prop-mode");
-    const p = byId(pid);
+    const isNew = !!override;
+    const p = override || byId(pid);
     if (!p) { location.hash = ""; return; }
     const v = varOf(p, vid) || p.variations[0];
     p._sel = v.id;
@@ -486,14 +525,17 @@
       <div class="detail${App.meeting ? " meeting" : ""}">
         <div class="span2 d-head-row">
           <div>
-            <div class="kicker"><span class="proj">${esc(p.projectName)}</span><span class="mini">${esc(p.client)}</span></div>
-            <h1>${esc(p.pattern.code)}</h1>
+            <div class="kicker">${p.projectName || p.client ? `<span class="proj">${esc(p.projectName)}</span><span class="mini">${esc(p.client)}</span>` : `<span class="proj">NEW SPECIMEN</span>`}</div>
+            <h1>${esc(p.pattern.code || "새 시편")}</h1>
             <div class="sub">${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · ") || p.label.type || "")}</div>
+            ${isNew ? '<div class="new-hint">값을 클릭해 채우세요. 프로젝트와 패턴 코드는 필수입니다.</div>' : ""}
           </div>
           <div class="d-actions">
-            <button class="btn-dark${inCart(p.id, v.id) ? " on" : ""}" id="addbtn">${inCart(p.id, v.id) ? "✓ 담김" : "제안서에 담기"}</button>
-            <button class="btn-line${App.meeting ? " on" : ""}" id="meetingbtn" title="고객 미팅용: 메모·배합·작업일지·동판 숨김">${App.meeting ? "미팅 모드 ON" : "미팅 모드"}</button>
-            <button class="btn-line" id="editbtn">편집</button>
+            ${isNew
+              ? `<button class="btn-dark" id="newsave">저장</button><button class="btn-line" id="newcancel">취소</button>`
+              : `<button class="btn-dark${inCart(p.id, v.id) ? " on" : ""}" id="addbtn">${inCart(p.id, v.id) ? "✓ 담김" : "제안서에 담기"}</button>
+                 <button class="btn-line${App.meeting ? " on" : ""}" id="meetingbtn" title="고객 미팅용: 메모·배합·작업일지·동판 숨김">${App.meeting ? "미팅 모드 ON" : "미팅 모드"}</button>
+                 <button class="btn-line" id="editbtn">편집</button>`}
           </div>
         </div>
 
@@ -506,8 +548,8 @@
         <div class="side">
           <div class="colorcard">
             <div class="eyebrow" style="margin:0">Color</div>
-            <div class="cc-name${v.colorName ? "" : " is-code"}" data-f="v.colorName" title="클릭해서 컬러명 수정">${esc(vName(v))}</div>
-            ${v.colorName ? `<div class="cc-code" data-f="v.colorCode" title="클릭해서 컬러코드 수정">${esc(v.colorCode || "컬러코드")}</div>` : ""}
+            <div class="cc-name${v.colorName || v.colorCode ? (v.colorName ? "" : " is-code") : " is-empty"}" data-f="v.colorName" title="클릭해서 컬러명 수정">${esc(v.colorName || v.colorCode || "컬러명")}</div>
+            ${v.colorName || (!v.colorName && !v.colorCode) ? `<div class="cc-code${v.colorCode ? "" : " is-empty"}" data-f="v.colorCode" title="클릭해서 컬러코드 수정">${esc(v.colorCode || "컬러코드")}</div>` : ""}
             <div class="cc-row">
               <span class="${v.status ? "" : "is-empty"}" data-f="v.status">${esc(v.status || "상태")}</span>
               <span data-f="v.date">${esc(v.date ? fmtDate(v.date) : "날짜")}</span>
@@ -557,9 +599,17 @@
       </div>
     </div>`;
 
-    $("#addbtn").onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
-    $("#editbtn").onclick = () => openEditor(pid, v.id);
-    $("#meetingbtn").onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
+    if (isNew) {
+      $("#newsave").onclick = () => saveNewPattern();
+      $("#newcancel").onclick = () => { if (confirm("작성을 취소할까요?")) { App.newDraft = null; location.hash = ""; } };
+    } else {
+      const addBtn = $("#addbtn");
+      if (addBtn) addBtn.onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
+      const editBtn = $("#editbtn");
+      if (editBtn) editBtn.onclick = () => openEditor(pid, v.id);
+      const meetBtn = $("#meetingbtn");
+      if (meetBtn) meetBtn.onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
+    }
     paintDots();
     $$("[data-layer-plate]").forEach((el) => (el.onclick = (e) => {
       e.stopPropagation();
@@ -941,7 +991,7 @@
       pattern: { code: "", name: "", nameKo: "", tags: [] },
       label: { item: "", type: "", supplier: "", remark: "" },
       work: { place: "", worker: "", machine: "", plate: [], emboss: "", pad: "", sop: "", volume: "" },
-      variations: [{ id: "v01", colorName: "기본", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" }],
+      variations: [{ id: "v01", colorName: "", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" }],
       history: [],
     };
   }
@@ -1505,7 +1555,11 @@
     const h = location.hash.replace(/^#/, "");
     const nav = $("#navhome");
     if (nav) nav.style.display = h ? "" : "none";
-    if (h.indexOf("/p/") === 0) {
+    if (h === "/new") {
+      if (!App.newDraft) App.newDraft = newDoc();
+      renderDetail("__new__", null, App.newDraft);
+      renderCart();
+    } else if (h.indexOf("/p/") === 0) {
       const parts = h.slice(3).split("/");
       renderDetail(decodeURIComponent(parts[0]), parts[1] ? decodeURIComponent(parts[1]) : null);
       renderCart();
@@ -1525,7 +1579,7 @@
     $("#brand").onclick = () => (location.hash = "");
     $("#navhome").onclick = () => (location.hash = "");
     $("#cartbtn").onclick = () => (location.hash = "#/proposal");
-    $("#newbtn").onclick = () => openEditor(null, null);
+    $("#newbtn").onclick = () => { App.newDraft = newDoc(); location.hash = "#/new"; };
     $("#drawer-close").onclick = () => closeEditor();
     $("#drawer-cancel").onclick = () => closeEditor();
     $("#drawer-scrim").onclick = () => closeEditor();

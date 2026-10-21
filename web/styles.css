@@ -461,3 +461,5 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .plate-pats{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.02em}
 .plate-pats b{font-weight:500;color:var(--ink-2)}
 .plate-pats b.cur{color:var(--ink);font-weight:700}
+.new-hint{margin:8px 0 0;font-size:11.5px;color:#8d9198}
+.new-hint{margin-top:8px;font-size:11.5px;color:#8d9198}
