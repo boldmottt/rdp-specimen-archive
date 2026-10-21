@@ -1,10 +1,11 @@
 {
-  "dataRoot": "/Users/ttobone/Library/CloudStorage/GoogleDrive-loo4leesk@gmail.com/내 드라이브/RDP-Archive",
+  "dataRoot": "~/Library/CloudStorage/GoogleDrive-<account>/My Drive/RDP-Archive",
   "port": 8791,
-  "brand": "NIFCO",
-  "brandSub": "RDP SPECIMEN ARCHIVE",
-  "company": "NIFCO KOREA · 미래상품개발팀",
+  "brand": "RDP",
+  "brandSub": "SPECIMEN ARCHIVE",
+  "company": "COMPANY · TEAM",
   "firstPageMax": 2,
   "pageMax": 2,
-  "rdpDbPath": "~/MySecondBrain/Areas/NIFCO/RDP-DB/rdp.db"
+  "rdpDbPath": "~/path/to/rdp.db",
+  "lan": false
 }
