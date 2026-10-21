@@ -1019,7 +1019,7 @@
       schemaVersion: 2, id: "", project: "", projectName: "", client: "",
       nextVarSeq: 2,
       pattern: { code: "", name: "", nameKo: "", tags: [] },
-      label: { item: "", type: "", supplier: "", remark: "" },
+      label: { item: "", type: "", supplier: "NIFCO KOREA", remark: "" },
       work: { place: "", worker: "", machine: "", plate: [], emboss: "", pad: "", sop: "", volume: "" },
       variations: [{ id: "v01", colorName: "", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" }],
       history: [],
@@ -1067,7 +1067,7 @@
         <div class="sec-label">라벨</div>
         ${fieldRow("품목", "label.item", { ph: "도어 격자" })}
         ${fieldRow("구분", "label.type", { ph: "2도 인쇄" })}
-        ${fieldRow("공급사", "label.supplier", { ph: "니프코코리아" })}
+        ${fieldRow("공급사", "label.supplier", { ph: "NIFCO KOREA" })}
         ${fieldRow("비고", "label.remark")}
         <div class="sec-label">작업</div>
         ${fieldRow("작업 장소", "work.place")}
