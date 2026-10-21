@@ -450,6 +450,7 @@
       const extra = Array.from(new Set(rows.map((m) => m.plate).filter(Boolean))).filter((x) => x !== plate);
       return `<div class="mixgroup"><h4>${esc(layer)}
         <button class="plate-chip" data-layer-plate="${esc(layer)}" title="이 도수의 동판 — 클릭해서 변경">${plate ? "동판 " + esc(plate) : "동판 지정"}</button>
+        ${plate ? `<button class="plate-info" data-plate="${esc(plate)}" title="동판 정보">i</button>` : ""}
         <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
     }).join("");
 

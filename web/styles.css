@@ -453,3 +453,5 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .layer-plates label{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-3)}
 .layer-plates input{width:84px;border:1px solid var(--line-2);border-radius:6px;padding:4px 6px;font:inherit;font-size:11px;font-family:var(--mono)}
 .mixgroup h4{gap:8px}
+.plate-info{width:16px;height:16px;border-radius:50%;border:1px solid var(--line-2);background:#fff;color:var(--ink-3);font-size:9.5px;font-style:italic;font-family:Georgia,serif;cursor:pointer;display:inline-grid;place-items:center;padding:0}
+.plate-info:hover{border-color:var(--ink);color:var(--ink)}
