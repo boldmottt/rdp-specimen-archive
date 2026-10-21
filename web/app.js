@@ -499,7 +499,9 @@
         <b>${letters[i]}</b>
         <span class="cn">${esc(v.colorName || "기본")}</span>
         ${v.colorCode ? `<span>${esc(v.colorCode)}</span>` : ""}
-        ${(v.coating || []).length ? `<span>도장 ${esc((v.coating || []).map((c) => c.code).filter(Boolean).join(", "))}</span>` : ""}
+        ${(() => { const cs = (v.coating || []).map((c) => c.code).filter(Boolean);
+                   const uniq = cs.filter((c) => c !== v.colorCode);
+                   return uniq.length ? `<span>도장 ${esc(uniq.join(", "))}</span>` : ""; })()}
         ${v.status ? `<span>${esc(v.status)}</span>` : ""}
         ${v.date ? `<span>${esc(fmtDate(v.date))}</span>` : ""}
       </div>`).join("");
