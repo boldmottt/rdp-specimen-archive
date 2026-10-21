@@ -38,11 +38,18 @@ except ImportError:
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, "web")
 CONFIG_PATH = os.path.join(HERE, "config.json")
+_CFG_MTIME = None
+try:
+    _CFG_MTIME = os.path.getmtime(CONFIG_PATH)
+except Exception:
+    pass
 
 RATIO_W, RATIO_H = 170, 70
 TARGET_W, TARGET_H = 2400, 988
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
-SAFE_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+BASE_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+LAN_HOSTS = set()
+SAFE_HOSTS = set(BASE_HOSTS)
 
 
 # ---------------------------------------------------------------- config
@@ -679,6 +686,22 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _maybe_reload_cfg(self):
+        """config.json이 바뀌면 요청 시점에 다시 읽는다 (재시작 없이 주소·인증 설정 반영)."""
+        global _CFG_MTIME
+        try:
+            m = os.path.getmtime(CONFIG_PATH)
+            if m != _CFG_MTIME:
+                CFG.clear()
+                CFG.update(json.load(open(CONFIG_PATH, encoding="utf-8")))
+                SAFE_HOSTS.clear()
+                SAFE_HOSTS.update(BASE_HOSTS)
+                SAFE_HOSTS.update(LAN_HOSTS)
+                SAFE_HOSTS.update(str(h).lower() for h in (CFG.get("allowHosts") or []) if h)
+                _CFG_MTIME = m
+        except Exception:
+            pass
+
     def _access_ok(self) -> bool:
         """Cloudflare Access 뒤에 있을 때, 인증된 요청만 통과시킨다.
         (Access를 꺼먹거나 잘못 설정해도 앱이 인터넷에 그냥 열리지 않게 하는 안전장치)"""
@@ -747,6 +770,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- routing
     def do_GET(self):
+        self._maybe_reload_cfg()
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
@@ -830,6 +854,7 @@ class Handler(BaseHTTPRequestHandler):
             self.error(500, str(e))
 
     def do_PUT(self):
+        self._maybe_reload_cfg()
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
@@ -931,6 +956,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.json(r)
 
     def do_POST(self):
+        self._maybe_reload_cfg()
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
@@ -1025,6 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
             self.error(500, str(e))
 
     def do_DELETE(self):
+        self._maybe_reload_cfg()
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
@@ -1271,8 +1298,9 @@ if __name__ == "__main__":
         LAN_MODE = True
         bind_addr = "0.0.0.0"
         lan_ips = local_ips()
-        SAFE_HOSTS.update(lan_ips)
-        SAFE_HOSTS.add(socket.gethostname().lower())
+        LAN_HOSTS.update(lan_ips)
+        LAN_HOSTS.add(socket.gethostname().lower())
+        SAFE_HOSTS.update(LAN_HOSTS)
 
     srv = Server((bind_addr, PORT), Handler)
     tunnel_hosts = [h for h in (CFG.get("allowHosts") or []) if h and h not in ("localhost", "127.0.0.1")]
