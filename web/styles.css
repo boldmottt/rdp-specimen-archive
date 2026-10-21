@@ -211,9 +211,6 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 
 /* 비교 페이지 */
 .cmp{margin-top:4mm}
-.cmp-item{padding:0 0 3.5mm;margin-bottom:3.5mm;border-bottom:1px solid #f0eee9;break-inside:avoid}
-.cmp-item:last-child{border-bottom:0}
-.cmp-item img{width:170mm;height:70mm;object-fit:cover;display:block;background:#efede8}
 .cmp-meta{display:flex;gap:5mm;align-items:baseline;padding-top:1.8mm;font-size:8.5px;color:#8d9198;flex-wrap:wrap}
 .cmp-meta b{font-family:var(--mono);font-size:11px;color:#141517;font-weight:600}
 .cmp-meta .v{color:#141517}
@@ -308,9 +305,12 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
   .drawer{width:100vw}
   .field-row{grid-template-columns:80px 1fr}
   .sheet{width:100%;min-height:0;padding:16px}
-  .p-img,.cmp-item img{width:100%;height:auto;aspect-ratio:170/70}
-  .cmp-item{grid-template-columns:1fr;gap:2mm}
+  .p-img,.cmp-cell img{width:100%;height:auto;aspect-ratio:170/70}
+  .cmp-cell{grid-template-columns:1fr;gap:2mm}
   .p-body{grid-template-columns:1fr;gap:5mm}
+  .cov-foot,.p-foot{flex-wrap:wrap;gap:2mm;font-size:7.5px;line-height:1.4}
+  .cov-foot .ruler,.p-foot .ruler{display:none}
+  .p-title h2{font-size:22px}
   .cov-thumbs{grid-template-columns:repeat(2,1fr)}
   .cartbar{justify-content:center;padding:0 12px 12px}
   .cart-thumbs{display:none}
@@ -324,7 +324,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
   .sheets{padding:0;display:block}
   .sheet{box-shadow:none;margin:0!important;border-radius:0;width:210mm;min-height:297mm;page-break-after:always;break-after:page}
   .sheet:last-of-type{page-break-after:auto;break-after:auto}
-  .p-img,.cov-thumbs img,.cmp-item img{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .p-img,.cov-thumbs img,.cmp-cell img{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .p-comment .c:empty:before{content:""}
   .p-comment.empty{display:none}
 }
@@ -372,7 +372,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .cmp-cell img{width:170mm;height:70mm;object-fit:cover;display:block;background:#efede8}
 .cmp-cell .ab{position:absolute;left:0;top:0;background:#141517;color:#fff;font-family:var(--mono);font-size:9pt;font-weight:600;line-height:1;padding:2.4mm 3mm;letter-spacing:.12em}
 .cmp-legend{margin-top:3.5mm;display:flex;flex-direction:column;gap:1.6mm}
-.cmp-legend>div{display:grid;grid-template-columns:5mm 62mm 44mm 24mm auto;gap:0;font-size:10px;color:#5b5f66;align-items:baseline}
+.cmp-legend>div{display:grid;grid-template-columns:6mm 46mm auto;gap:0;font-size:10px;color:#5b5f66;align-items:baseline}
 .cmp-legend .dt{font-family:var(--mono);text-align:right}
 .cmp-legend .mono{font-family:var(--mono)}
 .cmp-legend b{font-family:var(--mono);color:#141517;font-size:10px;min-width:3.5mm}
@@ -403,3 +403,17 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .pp-more{color:#8d9198}
 .pp-empty{font-size:12px;color:#8d9198;padding:4px 0}
 .pp-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
+
+/* 제안서 스펙 표 (5항목) */
+.p-spec{margin-top:6mm;border-top:1px solid #141517}
+.p-spec>div{display:grid;grid-template-columns:26mm 1fr;gap:0;padding:2.6mm 0;border-bottom:1px solid #e4e1da;font-size:10.5px;align-items:baseline}
+.p-spec>div>div{display:flex;align-items:baseline}
+.p-spec span{font-size:7.5px;letter-spacing:.16em;color:#8d9198}
+.p-spec b{font-family:var(--mono);font-weight:600;font-size:11px;margin-right:2mm}
+
+.p-head{display:block;margin-bottom:0}
+.p-head .pn{margin-bottom:2mm}
+.p-title{border-bottom:1px solid #141517;padding-bottom:3mm;margin-bottom:5mm}
+.p-title span{font-size:7.5px;letter-spacing:.16em;color:#8d9198}
+.p-title h2{margin:1.5mm 0 0;font-size:26px;letter-spacing:-.035em;font-family:var(--mono);font-weight:600;line-height:1.1}
+.p-title .pname{font-size:11.5px;color:#5b5f66;margin-top:1.2mm}

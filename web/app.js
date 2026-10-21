@@ -432,41 +432,47 @@
     </section>`;
   }
 
+  function batchCodes(v) {
+    const byLayer = {};
+    (v.mixes || []).forEach((m) => {
+      const l = m.layer || "";
+      (byLayer[l] = byLayer[l] || []).push(m);
+    });
+    const out = [];
+    Object.keys(byLayer).forEach((l) => {
+      const list = byLayer[l];
+      const ref = list.find((m) => m.isReference) || list[list.length - 1];
+      if (ref && ref.batch) out.push(String(ref.batch).startsWith(l) ? ref.batch : (l ? l + "-" + ref.batch : ref.batch));
+    });
+    return out.join(" / ");
+  }
+
+  function remarkLine(p, v) {
+    const plates = (p.work.plate || []).filter(Boolean).join(", ");
+    const codes = batchCodes(v);
+    return [plates, codes].filter(Boolean).join(" · ") || "—";
+  }
+
   function pageSingle(p, v, idx, total) {
     return `<section class="sheet s-page">
-      <div class="p-head"><div>
-        <div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div>
+      <div class="p-head"><div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div></div>
+      <div class="p-title">
+        <span>PATTERN</span>
         <h2>${esc(p.pattern.code)}</h2>
-        <div class="pname">${esc([v.colorName, v.colorCode].filter(Boolean).join(" · ") || [p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · "))}</div>
-      </div><div class="ptag">${esc(p.project)}<br>${esc(p.client)}</div></div>
-      ${v.images && v.images.length ? `<img class="p-img" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="p-img"></div>'}
-      <div class="p-body">
-        <div class="p-sec"><h4>SPECIFICATION</h4><dl>
-          <dt>Color</dt><dd>${esc(vName(v))}</dd>
-          ${v.colorName && v.colorCode ? `<dt>Color Code</dt><dd class="mono">${esc(v.colorCode)}</dd>` : ""}
-          <dt>Item</dt><dd>${esc(dash(p.label.item))}</dd>
-          <dt>Type</dt><dd>${esc(dash(p.label.type))}</dd>
-          <dt>동판</dt><dd class="mono">${esc((p.work.plate || []).join(", ") || "—")}</dd>
-          ${(() => { const cs = (v.coating || []).filter((c) => c.code && c.code !== v.colorCode);
-                     return cs.length ? `<dt>도장</dt><dd>${esc(cs.map((c) => [c.code, c.lot].filter(Boolean).join(" ")).join(", "))}</dd>` : ""; })()}
-          <dt>엠보</dt><dd>${esc(dash(p.work.emboss))}</dd>
-        </dl></div>
-        <div class="p-sec"><h4>PROJECT</h4><dl>
-          <dt>차종</dt><dd>${esc(p.projectName)}</dd>
-          <dt>고객</dt><dd>${esc(p.client || "—")}</dd>
-          <dt>상태</dt><dd>${esc(dash(v.status))}</dd>
-          <dt>양산 일정</dt><dd>${esc(dash(p.work.sop))}</dd>
-          <dt>작업일</dt><dd class="mono">${esc(fmtDate(v.date))}</dd>
-          ${App.prop.showMix ? `<dt>배합</dt><dd>${(v.mixes || []).length}건</dd>` : ""}
-        </dl></div>
+        <div class="pname">${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · "))}</div>
       </div>
-      ${v.note ? `<div class="p-note"><h4>NOTE</h4><p>${esc(v.note)}</p></div>` : ""}
-      ${App.prop.showMix ? mixBlock(v) : ""}
+      ${v.images && v.images.length ? `<img class="p-img" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="p-img"></div>'}
+      <div class="p-spec">
+        <div><span>COLOR</span>${esc(vName(v))}</div>
+        <div><span>ITEM</span>${esc(dash(p.label.item))}</div>
+        <div><span>TYPE</span>${esc(dash(p.label.type))}</div>
+        <div><span>REMARK</span>${esc(remarkLine(p, v))}</div>
+      </div>
       <div class="p-comment${((App.prop.comments || {})[p.id + "::" + v.id] || "").trim() ? "" : " empty"}"><h4>제안 포인트</h4>
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::${esc(v.id)}">${esc((App.prop.comments || {})[p.id + "::" + v.id] || "")}</div>
       </div>
-      <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. 배합 정보는 사내 검토용입니다.</div>
-      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}${v.colorName ? " / " + esc(v.colorName) : ""}</span></div>
+      <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다.</div>
+      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}</span></div>
     </section>`;
   }
 
@@ -511,35 +517,26 @@
         ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="width:170mm;height:70mm;background:#efede8"></div>'}
         <span class="ab">${letters[i]}</span>
       </div>`).join("");
-    const legend = vars.map((v, i) => {
-      const codes = (v.coating || []).map((c) => c.code).filter(Boolean).filter((c) => c !== v.colorCode);
-      const nm = [vName(v), v.colorName ? v.colorCode : ""].filter(Boolean).join(" · ");
-      return `<div>
+    const legend = vars.map((v, i) => `<div>
         <b>${letters[i]}</b>
-        <span class="cn">${esc(nm)}</span>
-        <span>${codes.length ? "도장 " + esc(codes.join(", ")) : "—"}</span>
-        <span>${esc(v.status || "—")}</span>
-        <span class="dt">${v.date ? esc(fmtDate(v.date)) : "—"}</span>
-      </div>`;
-    }).join("");
+        <span class="cn">${esc(vName(v))}</span>
+        <span>${esc(remarkLine(p, v))}</span>
+      </div>`).join("");
     return `<section class="sheet s-page">
-      <div class="p-head"><div>
-        <div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div>
+      <div class="p-head"><div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div></div>
+      <div class="p-title">
+        <span>PATTERN</span>
         <h2>${esc(p.pattern.code)}</h2>
-        <div class="pname">컬러 비교 · ${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · "))}${parts > 1 ? ` (계속 ${part}/${parts})` : ""}</div>
-      </div><div class="ptag">${esc(p.project)}<br>${esc(p.client)}</div></div>
+        <div class="pname">${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · "))}${parts > 1 ? ` (계속 ${part}/${parts})` : ""}</div>
+      </div>
       <div class="cmp-stack">${cells}</div>
       <div class="cmp-legend">
-        <div class="lg-head"><b></b><span>COLOR</span><span>도장</span><span>상태</span><span class="dt">날짜</span></div>
+        <div class="lg-head"><b></b><span>COLOR</span><span>REMARK</span></div>
         ${legend}
       </div>
       <div class="p-strip">
         ${p.label.item ? `<div><span>ITEM</span>${esc(p.label.item)}</div>` : ""}
         ${p.label.type ? `<div><span>TYPE</span>${esc(p.label.type)}</div>` : ""}
-        ${p.label.supplier ? `<div><span>SUPPLIER</span>${esc(p.label.supplier)}</div>` : ""}
-        ${(p.work.plate || []).length ? `<div><span>동판</span>${esc((p.work.plate || []).join(", "))}</div>` : ""}
-        ${p.work.sop ? `<div><span>양산</span>${esc(p.work.sop)}</div>` : ""}
-        ${p.work.emboss ? `<div><span>엠보</span>${esc(p.work.emboss)}</div>` : ""}
       </div>
       <div class="p-comment"><h4>제안 포인트</h4>
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::all">${esc((App.prop.comments || {})[p.id + "::all"] || "")}</div>
