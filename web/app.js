@@ -274,7 +274,7 @@
           <div class="colorcard">
             <div class="eyebrow" style="margin:0">Color</div>
             <div class="cc-name">${esc(vName(v))}</div>
-            <div class="cc-code">${esc(dash(v.colorCode))}</div>
+            ${v.colorName && v.colorCode ? `<div class="cc-code">${esc(v.colorCode)}</div>` : ""}
             <div class="cc-row"><span>${esc(dash(v.status))}</span><span>${esc(fmtDate(v.date))}</span><span>${mixes.length} 배합</span></div>
           </div>
           <section class="sec sec-tight"><h3>도장</h3>
