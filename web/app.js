@@ -18,7 +18,7 @@
     config: {},
     q: "", project: "all", sort: "recent",
     cart: [],
-    prop: { title: "RDP 패턴 제안", client: "", date: "", by: "", comments: {}, showMix: false, note: "" },
+    prop: { title: "RDP 패턴 제안", client: "", date: "", by: "", comments: {}, showMix: false, showComments: false, note: "" },
     edit: null,
     meeting: false,
     view: "catalog",
@@ -797,9 +797,9 @@
         <div><span>TYPE</span>${esc(dash(p.label.type))}</div>
         <div><span>REMARK</span>${esc(remarkLine(p, v))}</div>
       </div>
-      <div class="p-comment${((App.prop.comments || {})[p.id + "::" + v.id] || "").trim() ? "" : " empty"}"><h4>제안 포인트</h4>
+      ${App.prop.showComments ? `<div class="p-comment${((App.prop.comments || {})[p.id + "::" + v.id] || "").trim() ? "" : " empty"}"><h4>제안 포인트</h4>
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::${esc(v.id)}">${esc((App.prop.comments || {})[p.id + "::" + v.id] || "")}</div>
-      </div>
+      </div>` : ""}
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다.</div>
       <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.pattern.code)}</span></div>
     </section>`;
@@ -867,9 +867,9 @@
         ${p.label.item ? `<div><span>ITEM</span>${esc(p.label.item)}</div>` : ""}
         ${p.label.type ? `<div><span>TYPE</span>${esc(p.label.type)}</div>` : ""}
       </div>
-      <div class="p-comment"><h4>제안 포인트</h4>
+      ${App.prop.showComments ? `<div class="p-comment${((App.prop.comments || {})[p.id + "::all"] || "").trim() ? "" : " empty"}"><h4>제안 포인트</h4>
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::all">${esc((App.prop.comments || {})[p.id + "::all"] || "")}</div>
-      </div>
+      </div>` : ""}
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. A~${letters[vars.length - 1]}는 실물 크기(170×70mm)로 인쇄됩니다.</div>
       <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.pattern.code)}</span></div>
     </section>`;
@@ -918,6 +918,7 @@
         <div class="field"><label>고객</label><input class="w-md" id="f-client" value="${esc(App.prop.client || "")}" placeholder="고객사"></div>
         <div class="field"><label>날짜</label><input class="w-sm" id="f-date" value="${esc(App.prop.date || todayLocal())}"></div>
         <div class="field"><label>작성</label><input class="w-sm" id="f-by" value="${esc(App.prop.by || "")}"></div>
+        <label class="chk-inline" title="켜면 각 페이지에 '제안 포인트' 칸이 생깁니다"><input type="checkbox" id="f-comments"${App.prop.showComments ? " checked" : ""}> 제안 포인트</label>
         <div class="grow"></div>
         <button class="btn-line" id="psnapshot">확정 저장</button>
         <button class="btn-dark" id="pprint">인쇄 / PDF</button>
@@ -932,6 +933,8 @@
       el.oninput = () => { App.prop[key] = el.value; saveLS(); if (key !== "showMix") { const c = $(".s-cover"); if (c) c.outerHTML = coverSheet(groups); } };
     };
     bindField("#f-title", "title"); bindField("#f-client", "client"); bindField("#f-date", "date"); bindField("#f-by", "by");
+    const chkC = $("#f-comments");
+    if (chkC) chkC.onchange = (e) => { App.prop.showComments = e.target.checked; saveLS(); renderProposal(); };
     $$("[data-comment]").forEach((el) => (el.oninput = () => {
       App.prop.comments = App.prop.comments || {};
       App.prop.comments[el.dataset.comment] = el.innerText;
