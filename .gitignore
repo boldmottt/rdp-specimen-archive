@@ -1,0 +1,7 @@
+config.json
+data/
+*.db
+*.sqlite
+.DS_Store
+__pycache__/
+.venv/
