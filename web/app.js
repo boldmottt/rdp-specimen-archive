@@ -432,7 +432,8 @@
           <dt>Item</dt><dd>${esc(dash(p.label.item))}</dd>
           <dt>Type</dt><dd>${esc(dash(p.label.type))}</dd>
           <dt>동판</dt><dd class="mono">${esc((p.work.plate || []).join(", ") || "—")}</dd>
-          <dt>도장</dt><dd>${esc((v.coating || []).map((c) => [c.code, c.lot].filter(Boolean).join(" ")).join(", ") || "—")}</dd>
+          ${(() => { const cs = (v.coating || []).filter((c) => c.code && c.code !== v.colorCode);
+                     return cs.length ? `<dt>도장</dt><dd>${esc(cs.map((c) => [c.code, c.lot].filter(Boolean).join(" ")).join(", "))}</dd>` : ""; })()}
           <dt>엠보</dt><dd>${esc(dash(p.work.emboss))}</dd>
         </dl></div>
         <div class="p-sec"><h4>PROJECT</h4><dl>
