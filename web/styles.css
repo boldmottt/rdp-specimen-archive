@@ -389,3 +389,17 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 /* RDP-DB 동기화 */
 .rdp-bar{display:flex;align-items:center;gap:10px;margin:-4px 0 14px}
 .rdp-bar .hint{font-size:11px;color:#8d9198}
+
+/* DB로 보내기 미리보기 */
+.push-panel{border:1px solid #e4d9c3;background:#fdf9f1;border-radius:10px;padding:12px 14px;margin:0 0 14px}
+.pp-head{font-size:12px;color:#5b5f66;margin-bottom:8px}
+.pp-head b{color:#141517}
+.push-panel ul{list-style:none;margin:0;padding:0;font-size:11.5px}
+.push-panel li{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #f3ece0}
+.push-panel li:last-child{border-bottom:0}
+.push-panel li b{font-family:var(--mono);min-width:56px}
+.pp-f{color:#5b5f66}
+.pp-f b{font-family:inherit;color:#a72c23}
+.pp-more{color:#8d9198}
+.pp-empty{font-size:12px;color:#8d9198;padding:4px 0}
+.pp-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}

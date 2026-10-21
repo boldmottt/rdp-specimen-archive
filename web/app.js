@@ -736,6 +736,23 @@
     return `<div class="field-row"><label>${label}</label><input data-k="${key}" value="${esc(v)}" placeholder="${o.ph || ""}" ${o.mono ? 'style="font-family:var(--mono);font-size:12px"' : ""}></div>`;
   }
 
+  function pushPanel(pv) {
+    const upd = pv.updates || [], ins = pv.inserts || [], sk = pv.skipped || [];
+    const rows = [];
+    upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> <span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
+    ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> <span class="pp-f">신규 배합 (${esc(i.plate)})</span></li>`));
+    const shown = rows.slice(0, 12).join("");
+    const more = rows.length > 12 ? `<li class="pp-more">외 ${rows.length - 12}건</li>` : "";
+    return `<div class="push-panel">
+      <div class="pp-head">DB에 반영할 변경 — 수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
+      ${rows.length ? `<ul>${shown}${more}</ul>` : `<div class="pp-empty">반영할 변경이 없습니다</div>`}
+      <div class="pp-actions">
+        <button class="mini-btn" id="pp-cancel">취소</button>
+        <button class="mini-btn danger" id="pp-ok" ${rows.length ? "" : "disabled"}>DB에 반영</button>
+      </div>
+    </div>`;
+  }
+
   function renderDrawer() {
     const d = E.draft;
     let body = "";
@@ -816,8 +833,10 @@
       body = `<div class="rdp-bar">
           <button class="mini-btn" id="rdpdiff">DB와 비교</button>
           <button class="mini-btn" id="rdpsync">DB에서 가져오기</button>
+          <button class="mini-btn" id="rdppush">DB로 보내기</button>
           <span class="hint" id="rdpstat">${App.rdpStatus ? (App.rdpStatus.exists ? "DB 연결됨 · " + (App.rdpStatus.total || 0) + "행" : "DB 경로 없음") : "확인 중…"}</span>
         </div>
+        ${E.push ? pushPanel(E.push) : ""}
         <div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
         <div class="tbl-wrap" style="margin:0 -6px"><table class="mix-edit">${head}${rows}</table></div>
         <div style="display:flex;gap:6px;margin-top:12px">
@@ -925,6 +944,31 @@
         el.oninput = handler; el.onchange = handler;
       });
       $$("[data-delmix]").forEach((el) => (el.onclick = () => { v.mixes.splice(Number(el.dataset.delmix), 1); renderDrawer(); }));
+      const pp = $("#pp-cancel");
+      if (pp) pp.onclick = () => { E.push = null; renderDrawer(); };
+      const pok = $("#pp-ok");
+      if (pok) pok.onclick = async () => {
+        if (isDirty()) { toast("먼저 저장한 뒤 보내세요"); return; }
+        pok.disabled = true; pok.textContent = "반영 중…";
+        try {
+          const r = await fetch(`/api/rdp/push/${encodeURIComponent(d.id)}`, { method: "POST" }).then((x) => x.json());
+          if (!r.ok) throw new Error(r.error || "반영 실패");
+          E.push = null;
+          renderDrawer();
+          toast(`DB 반영 완료 · 수정 ${r.updated || 0} · 신규 ${r.inserted || 0}` + (r.backup ? ` (백업 ${r.backup})` : ""));
+        } catch (e) {
+          toast("반영 실패: " + e.message);
+          pok.disabled = false; pok.textContent = "DB에 반영";
+        }
+      };
+      const pu = $("#rdppush");
+      if (pu) pu.onclick = async () => {
+        if (isDirty()) { toast("먼저 저장한 뒤 보내세요"); return; }
+        try {
+          const pv = await apiGet(`/api/rdp/push-preview/${encodeURIComponent(d.id)}`);
+          E.push = pv; renderDrawer();
+        } catch (e) { toast("미리보기 실패: " + e.message); }
+      };
       const df = $("#rdpdiff");
       if (df) df.onclick = async () => {
         if (isDirty()) { toast("먼저 저장한 뒤 비교하세요"); return; }

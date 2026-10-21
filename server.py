@@ -279,6 +279,112 @@ def merge_mixes(v, db_mixes):
     return added, updated
 
 
+RESULT_TO_DB = {"ok": "✅", "warn": "⚠️", "ng": "❌", "planned": "테스트예정", "": ""}
+INK_COLS = (("MT", "mt"), ("BK", "bk"), ("WH", "wh"), ("YE", "ye"), ("RD", "rd"), ("CL", "cl"), ("YE-D", "ye_d"))
+PCT_COLS = (("mattingPct", "matting_agent_pct"), ("mattingG", "matting_agent_g"),
+            ("thinnerPct", "thinner_pct"), ("thinnerG", "thinner_g"),
+            ("hardenerPct", "hardener_pct"), ("hardenerG", "hardener_g"))
+
+
+def plan_push(doc, db_mixes):
+    """아카이브 -> DB 반영 계획. 실제 쓰기는 하지 않는다."""
+    v = pick_variation(doc, db_mixes) if db_mixes else ((doc.get("variations") or [None])[0])
+    if not v:
+        return {"updates": [], "inserts": [], "skipped": [{"batch": "-", "reason": "베리에이션 없음"}]}
+    dbmap = {(d["layer"], d["batch"], d["plate"]): d for d in db_mixes}
+    updates, inserts, skipped = [], [], []
+    for m in v.get("mixes", []):
+        plate = (m.get("plate") or "").strip()
+        if not plate:
+            skipped.append({"batch": m.get("batch"), "reason": "동판 없음"})
+            continue
+        key = (m.get("layer"), m.get("batch"), plate)
+        cur = dbmap.get(key)
+        if cur is None:
+            inserts.append({"batch": m.get("batch"), "layer": m.get("layer"), "plate": plate})
+            continue
+        fields = []
+        cur_inks = cur.get("inks") or {}
+        for k, _col in INK_COLS:
+            nv = float(m.get("inks", {}).get(k) or 0)
+            ov = float(cur_inks.get(k) or 0)
+            if abs(nv - ov) > 1e-9:
+                fields.append({"name": k, "from": ov, "to": nv})
+        for f, _col in PCT_COLS:
+            nv = m.get(f)
+            if nv is None:
+                continue
+            ov = cur.get(f)
+            if ov is None or abs(float(nv) - float(ov)) > 1e-9:
+                fields.append({"name": f, "from": ov, "to": float(nv)})
+        enum = m.get("result") or ""
+        if enum != (cur.get("result") or ""):
+            fields.append({"name": "result", "from": cur.get("result") or "", "to": RESULT_TO_DB.get(enum, "")})
+        if m.get("date") and m["date"] != (cur.get("date") or ""):
+            fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
+        if fields:
+            updates.append({"batch": m.get("batch"), "layer": m.get("layer"), "plate": plate, "fields": fields})
+    return {"updates": updates, "inserts": inserts, "skipped": skipped}
+
+
+def apply_push(project, code, doc, db_mixes, plan):
+    path = rdp_db_path()
+    os.makedirs(BACKUP, exist_ok=True)
+    bpath = os.path.join(BACKUP, f"rdp.db.{now_stamp()}")
+    shutil.copy2(path, bpath)
+
+    v = pick_variation(doc, db_mixes)
+    by_key = {(m.get("layer"), m.get("batch"), (m.get("plate") or "").strip()): m for m in v.get("mixes", [])}
+
+    con = sqlite3.connect(path)
+    try:
+        cur = con.cursor()
+        cur.execute("BEGIN IMMEDIATE")
+        n_upd = n_ins = 0
+        for u in plan["updates"]:
+            m = by_key.get((u["layer"], u["batch"], u["plate"]))
+            if not m:
+                continue
+            sets, vals = [], []
+            for f in u["fields"]:
+                if f["name"] == "result":
+                    sets.append("result=?"); vals.append(f["to"])
+                elif f["name"] == "date":
+                    sets.append("date=?"); vals.append(f["to"])
+                elif f["name"] in [k for k, _ in INK_COLS]:
+                    sets.append(f"{dict(INK_COLS)[f['name']]}=?"); vals.append(f["to"])
+                else:
+                    sets.append(f"{dict(PCT_COLS)[f['name']]}=?"); vals.append(f["to"])
+            vals += [project, code, u["plate"], u["layer"], u["batch"]]
+            cur.execute(f"UPDATE rdp_mixes SET {', '.join(sets)} WHERE project=? AND pattern_code=? AND plate=? AND layer=? AND batch_no=?", vals)
+            n_upd += cur.rowcount
+        for ins in plan["inserts"]:
+            m = by_key.get((ins["layer"], ins["batch"], ins["plate"]))
+            if not m:
+                continue
+            inks = {k: float(m.get("inks", {}).get(k) or 0) for k, _ in INK_COLS}
+            cur.execute("""INSERT INTO rdp_mixes
+                (date, project, pattern_code, plate, layer, batch_no, is_base,
+                 mt, bk, wh, ye, rd, cl, ye_d,
+                 matting_agent_pct, matting_agent_g, thinner_pct, thinner_g, hardener_pct, hardener_g,
+                 result, change_summary, notes)
+                VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?)""",
+                (m.get("date") or datetime.now().strftime("%Y-%m-%d"), project, code, ins["plate"], ins["layer"], ins["batch"],
+                 1 if m.get("isReference") else 0,
+                 inks["MT"], inks["BK"], inks["WH"], inks["YE"], inks["RD"], inks["CL"], inks["YE-D"],
+                 m.get("mattingPct"), m.get("mattingG"), m.get("thinnerPct"), m.get("thinnerG"),
+                 m.get("hardenerPct"), m.get("hardenerG"),
+                 RESULT_TO_DB.get(m.get("result") or "", ""), m.get("change") or "", m.get("note") or ""))
+            n_ins += 1
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+    return {"updated": n_upd, "inserted": n_ins, "backup": os.path.basename(bpath)}
+
+
 def diff_db(doc, db_mixes):
     """아카이브 JSON과 DB를 비교해 차이만 뽑는다 (쓰기 없음)."""
     v = pick_variation(doc, db_mixes) if db_mixes else ((doc.get("variations") or [None])[0])
@@ -548,6 +654,18 @@ class Handler(BaseHTTPRequestHandler):
                                   "company": CFG.get("company", ""),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
                                   "pageMax": CFG.get("pageMax", 2)})
+            if p.startswith("/api/rdp/push-preview/"):
+                pid = p[len("/api/rdp/push-preview/"):].strip("/")
+                try:
+                    safe_id(pid)
+                    path = safe_join(PATTERNS, pid + ".json")
+                    with open(path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
+                    plan = plan_push(doc, db_mixes)
+                    return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
+                except Exception as e:
+                    return self.error(400, str(e))
             if p.startswith("/api/rdp/diff/"):
                 pid = p[len("/api/rdp/diff/"):].strip("/")
                 try:
@@ -604,6 +722,18 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p.startswith("/api/rdp/push-preview/"):
+                pid = p[len("/api/rdp/push-preview/"):].strip("/")
+                try:
+                    safe_id(pid)
+                    path = safe_join(PATTERNS, pid + ".json")
+                    with open(path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
+                    plan = plan_push(doc, db_mixes)
+                    return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
+                except Exception as e:
+                    return self.error(400, str(e))
             if p.startswith("/api/rdp/diff/"):
                 pid = p[len("/api/rdp/diff/"):].strip("/")
                 try:
@@ -719,6 +849,27 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         total["skipped"].append(pid)
                 return self.json({"ok": True, **total})
+            if p.startswith("/api/rdp/push/"):
+                pid = p[len("/api/rdp/push/"):].strip("/")
+                try:
+                    safe_id(pid)
+                except ValueError:
+                    return self.error(400, "id 형식 오류")
+                try:
+                    with pid_lock(pid):
+                        path = safe_join(PATTERNS, pid + ".json")
+                        with open(path, encoding="utf-8") as f:
+                            doc = json.load(f)
+                        project = doc.get("project")
+                        code = (doc.get("pattern") or {}).get("code")
+                        db_mixes = read_rdp_mixes(project, code)
+                        plan = plan_push(doc, db_mixes)
+                        if not plan["updates"] and not plan["inserts"]:
+                            return self.json({"ok": True, "updated": 0, "inserted": 0, "message": "반영할 변경이 없습니다"})
+                        res = apply_push(project, code, doc, db_mixes, plan)
+                        return self.json({"ok": True, **res, "skipped": len(plan["skipped"])})
+                except Exception as e:
+                    return self.error(500, str(e))
             if p.startswith("/api/rdp/sync/"):
                 pid = p[len("/api/rdp/sync/"):].strip("/")
                 return self.sync_pattern(pid)
