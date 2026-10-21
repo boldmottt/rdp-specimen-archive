@@ -814,7 +814,8 @@
         <td><input type="checkbox" data-mf="isReference" ${m.isReference ? "checked" : ""}></td>
         <td class="act"><button class="mini-btn danger" data-delmix="${mi}">✕</button></td></tr>`).join("");
       body = `<div class="rdp-bar">
-          <button class="mini-btn" id="rdpsync">RDP-DB에서 가져오기</button>
+          <button class="mini-btn" id="rdpdiff">DB와 비교</button>
+          <button class="mini-btn" id="rdpsync">DB에서 가져오기</button>
           <span class="hint" id="rdpstat">${App.rdpStatus ? (App.rdpStatus.exists ? "DB 연결됨 · " + (App.rdpStatus.total || 0) + "행" : "DB 경로 없음") : "확인 중…"}</span>
         </div>
         <div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
@@ -924,6 +925,18 @@
         el.oninput = handler; el.onchange = handler;
       });
       $$("[data-delmix]").forEach((el) => (el.onclick = () => { v.mixes.splice(Number(el.dataset.delmix), 1); renderDrawer(); }));
+      const df = $("#rdpdiff");
+      if (df) df.onclick = async () => {
+        if (isDirty()) { toast("먼저 저장한 뒤 비교하세요"); return; }
+        try {
+          const r = await apiGet(`/api/rdp/diff/${encodeURIComponent(d.id)}`);
+          const c = (r.changed || []).length, a = (r.archiveOnly || []).length, b = (r.dbOnly || []).length;
+          const msg = (c + a + b) === 0
+            ? "DB와 차이 없음 (" + r.same + "건 동일)"
+            : `아카이브만 다름 ${c}건 · DB에만 있음 ${b}건 · DB에 없음 ${a}건`;
+          toast(msg);
+        } catch (e) { toast("비교 실패: " + e.message); }
+      };
       const sy = $("#rdpsync");
       if (sy) sy.onclick = async () => {
         if (isDirty()) { toast("먼저 저장한 뒤 가져오세요"); return; }

@@ -279,6 +279,56 @@ def merge_mixes(v, db_mixes):
     return added, updated
 
 
+def diff_db(doc, db_mixes):
+    """아카이브 JSON과 DB를 비교해 차이만 뽑는다 (쓰기 없음)."""
+    v = pick_variation(doc, db_mixes) if db_mixes else ((doc.get("variations") or [None])[0])
+    if not v:
+        return {"error": "no variation"}
+    dbk = {}
+    for dm in db_mixes:
+        dbk[(dm["layer"], dm["batch"], dm.get("plate") or "")] = dm
+    bkey = {}
+    for dm in db_mixes:
+        bkey.setdefault((dm["layer"], dm["batch"]), []).append(dm)
+
+    new, changed, same, unmatched = [], [], 0, []
+    for m in v.get("mixes", []):
+        key3 = (m.get("layer"), m.get("batch"), m.get("plate") or "")
+        dm = dbk.get(key3)
+        if dm is None:
+            cands = bkey.get((m.get("layer"), m.get("batch"))) or []
+            if len(cands) == 1 and not m.get("plate"):
+                dm = cands[0]
+        if dm is None:
+            unmatched.append(m.get("batch"))
+            continue
+        fields = []
+        if dm.get("inks") and m.get("inks") != dm["inks"]:
+            fields.append("inks")
+        for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
+            if dm.get(f) is not None and m.get(f) != dm[f]:
+                fields.append(f)
+        if dm.get("result") and m.get("result") != dm["result"]:
+            fields.append("result")
+        if dm.get("date") and m.get("date") != dm["date"]:
+            fields.append("date")
+        if fields:
+            changed.append({"batch": m.get("batch"), "plate": m.get("plate"), "fields": fields})
+        else:
+            same += 1
+
+    db_keys = set(dbk.keys())
+    arc_keys = {(m.get("layer"), m.get("batch"), m.get("plate") or "") for m in v.get("mixes", [])}
+    for k in db_keys - arc_keys:
+        cands = bkey.get((k[0], k[1])) or []
+        if len(cands) == 1:
+            continue
+        new.append({"batch": k[1], "plate": k[2]})
+
+    return {"variation": v.get("id"), "same": same, "changed": changed,
+            "archiveOnly": unmatched, "dbOnly": new}
+
+
 def load_all():
     out, errors = [], []
     if not os.path.isdir(PATTERNS):
@@ -498,6 +548,19 @@ class Handler(BaseHTTPRequestHandler):
                                   "company": CFG.get("company", ""),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
                                   "pageMax": CFG.get("pageMax", 2)})
+            if p.startswith("/api/rdp/diff/"):
+                pid = p[len("/api/rdp/diff/"):].strip("/")
+                try:
+                    safe_id(pid)
+                    path = safe_join(PATTERNS, pid + ".json")
+                    if not os.path.isfile(path):
+                        return self.error(404, "패턴이 없습니다")
+                    with open(path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
+                    return self.json({"ok": True, **diff_db(doc, db_mixes)})
+                except Exception as e:
+                    return self.error(400, str(e))
             if p == "/api/rdp/status":
                 path = rdp_db_path()
                 exists = bool(path) and os.path.isfile(path)
@@ -541,6 +604,19 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p.startswith("/api/rdp/diff/"):
+                pid = p[len("/api/rdp/diff/"):].strip("/")
+                try:
+                    safe_id(pid)
+                    path = safe_join(PATTERNS, pid + ".json")
+                    if not os.path.isfile(path):
+                        return self.error(404, "패턴이 없습니다")
+                    with open(path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
+                    return self.json({"ok": True, **diff_db(doc, db_mixes)})
+                except Exception as e:
+                    return self.error(400, str(e))
             if p == "/api/rdp/status":
                 path = rdp_db_path()
                 exists = bool(path) and os.path.isfile(path)

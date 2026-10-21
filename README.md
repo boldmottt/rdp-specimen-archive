@@ -104,6 +104,7 @@ python3 server.py --demo    # sample-data 를 임시 폴더에 복사해 실행 
 | GET | `/api/rdp/status` | rdp.db 연결 상태와 패턴별 배합 수 |
 | POST | `/api/rdp/sync/<id>` | 그 시편의 배합을 rdp.db에서 가져와 병합 |
 | POST | `/api/rdp/sync-all` | 전체 시편 일괄 병합 |
+| GET | `/api/rdp/diff/<id>` | 아카이브와 DB의 차이만 계산 (쓰기 없음) |
 
 저장 요청에는 `X-Base-Rev: <updatedAt>` 헤더를 함께 보낸다. 서버의 현재 값과 다르면 **409 + 최신 문서**를 돌려주고, 화면은 "다른 곳에서 먼저 저장되었습니다"를 띄운 뒤 최신 내용을 불러올지 묻는다. 패턴 단위 `threading.Lock`으로 같은 파일 동시 쓰기도 막는다.
 
