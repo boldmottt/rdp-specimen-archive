@@ -476,3 +476,13 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .chk-inline{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);cursor:pointer;user-select:none;padding:0 4px;white-space:nowrap}
 .chk-inline input{width:15px;height:15px;accent-color:#141517;cursor:pointer;margin:0}
 .chk-inline:hover{color:var(--ink)}
+/* 잉크 태그 */
+.ink-tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#faf9f6}
+.ink-tags .it-head{font-size:9px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;margin-right:2px}
+.itag{border:1px solid var(--line-2);background:#fff;border-radius:999px;padding:3px 10px;font-size:11px;font-family:var(--mono);color:var(--ink-2);cursor:pointer;transition:.12s}
+.itag:hover{border-color:var(--ink);color:var(--ink)}
+.itag.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.ink-tags #ink-new{border:1px dashed var(--line-2);background:#fff;border-radius:999px;padding:3px 10px;font-size:11px;width:96px;color:var(--ink)}
+.ink-tags #ink-new:focus{outline:none;border-style:solid;border-color:var(--ink)}
+.ink-note{font-size:10.5px;color:var(--ink-3);line-height:1.5;margin:-4px 0 10px}
+.ink-note b{color:var(--ink-2);font-weight:600}

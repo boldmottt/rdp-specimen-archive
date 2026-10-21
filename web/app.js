@@ -18,7 +18,7 @@
     config: {},
     q: "", project: "all", sort: "recent",
     cart: [],
-    prop: { title: "RDP 패턴 제안", client: "", date: "", by: "", comments: {}, showMix: false, showComments: false, note: "" },
+    prop: { title: "RDP 패턴 제안", client: "", date: "", by: "", comments: {}, showMix: false, showComments: false, note: "", inkTags: [] },
     edit: null,
     meeting: false,
     view: "catalog",
@@ -550,9 +550,37 @@
     });
   }
 
+  function inkOrder(list) {
+    const PRIORITY = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
+    return list.slice().sort((a, b) => {
+      const ia = PRIORITY.indexOf(a), ib = PRIORITY.indexOf(b);
+      if (ia >= 0 && ib >= 0) return ia - ib;
+      if (ia >= 0) return -1;
+      if (ib >= 0) return 1;
+      return a.localeCompare(b);
+    });
+  }
+
+  const DEFAULT_INKS = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
+
+  function inkPool() {
+    const set = new Set(DEFAULT_INKS.concat(App.prop.inkTags || []));
+    App.patterns.forEach((p) => (p.variations || []).forEach((v) => (v.mixes || []).forEach((m) => {
+      Object.keys(m.inks || {}).forEach((k) => set.add(k));
+    })));
+    return inkOrder(Array.from(set));
+  }
+
+  function addInkTag(tag) {
+    const t = String(tag || "").trim().toUpperCase();
+    if (!t) return "";
+    App.prop.inkTags = App.prop.inkTags || [];
+    if (!App.prop.inkTags.includes(t)) { App.prop.inkTags.push(t); saveLS(); }
+    return t;
+  }
+
   function mixTable(mixes) {
-    const cols = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
-    const used = cols.filter((c) => mixes.some((m) => m.inks && m.inks[c] != null));
+    const used = inkOrder(Array.from(new Set(mixes.flatMap((m) => Object.keys(m.inks || {})))));
     const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>잉크합</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
@@ -1160,10 +1188,9 @@
 
     if (E.tab === "mixes") {
       const v = d.variations[E.vIdx];
-      const allCols = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
-      const baseCols = ["MT", "BK", "WH", "YE", "RD"];
-      const usedInk = allCols.filter((c) => baseCols.includes(c) || (v.mixes || []).some((m) => m.inks && m.inks[c] != null));
-      const inkCols = usedInk;
+      const usedInk = Array.from(new Set((v.mixes || []).flatMap((m) => Object.keys(m.inks || {}))));
+      const inkCols = inkOrder(Array.from(new Set([...usedInk, ...(v._inkCols || [])])));
+      const pool = inkPool();
       const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = (v.mixes || []).map((m, mi) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
@@ -1188,6 +1215,13 @@
           <span class="lp-head">패턴 <b>${esc(d.pattern.code)}</b> · 도수별 동판</span>
           ${Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean))).map((l) => `<label>${esc(l)}<input data-lp="${esc(l)}" value="${esc(layerPlate(v, l))}" placeholder="동판"></label>`).join("")}
         </div>
+        <div class="ink-tags">
+          <span class="it-head">잉크</span>
+          ${pool.map((t) => `<button class="itag${inkCols.includes(t) ? " on" : ""}" data-inkadd="${esc(t)}" title="${inkCols.includes(t) ? "이 컬러에 사용 중" : "이 컬러에 열 추가"}">${esc(t)}</button>`).join("")}
+          <input id="ink-new" placeholder="+ 새 잉크" maxlength="10" autocomplete="off">
+        </div>
+        <div class="ink-note">태그를 누르면 이 컬러의 배합 열이 생깁니다. 한 번 쓴 잉크는 다음 시편에서도 태그로 나옵니다.
+          <b>DB 반영은 MT·BK·WH·YE·RD·CL·YE-D 7종만</b> 되고, 그 외 태그는 아카이브에만 저장됩니다.</div>
         <div class="tbl-wrap" style="margin:0 -6px"><table class="mix-edit">${head}${rows}</table></div>
         <div style="display:flex;gap:6px;margin-top:12px">
           <button class="mini-btn" id="add-mix">+ 배합 추가</button>
@@ -1298,6 +1332,23 @@
         };
         el.oninput = handler; el.onchange = handler;
       });
+      $$("[data-inkadd]").forEach((el) => (el.onclick = () => {
+        const t = el.dataset.inkadd;
+        const has = (v._inkCols || []).includes(t) || (v.mixes || []).some((m) => m.inks && m.inks[t] != null);
+        if (!has) { v._inkCols = v._inkCols || []; v._inkCols.push(t); }
+        addInkTag(t);
+        renderDrawer();
+      }));
+      const inkNew = $("#ink-new");
+      if (inkNew) inkNew.onkeydown = (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const t = addInkTag(inkNew.value);
+        if (!t) return;
+        v._inkCols = v._inkCols || [];
+        if (!v._inkCols.includes(t)) v._inkCols.push(t);
+        renderDrawer();
+      };
       $$("[data-delmix]").forEach((el) => (el.onclick = () => { v.mixes.splice(Number(el.dataset.delmix), 1); renderDrawer(); }));
       const pp = $("#pp-cancel");
       if (pp) pp.onclick = () => { E.push = null; renderDrawer(); };
