@@ -502,4 +502,14 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .lab-block label{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--ink-2)}
 .lab-block input{width:54px;border:1px solid var(--line-2);border-radius:5px;padding:3px 5px;font-size:11px;font-family:var(--mono)}
 .lab-block input:focus{outline:none;border-color:var(--ink)}
-
+.layer-plates .lp-row{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.layer-plates .lp-l{font-size:10.5px;color:var(--ink-3);font-family:var(--mono)}
+.lp-pats{font-size:10.5px;color:var(--ink-2);display:inline-flex;align-items:center;gap:3px;flex-wrap:wrap}
+.lp-pats b{font-family:var(--mono);font-weight:600;color:var(--ink-2)}
+.lp-pats b.cur{color:#141517;background:#efece5;border-radius:4px;padding:0 4px}
+.lp-pats i{font-style:normal;font-size:9.5px;color:var(--ink-3);margin-right:4px}
+.lp-db{font-size:10px;color:var(--ink-3);display:inline-flex;align-items:center;gap:4px;margin-left:2px}
+.lp-db b{font-family:var(--mono);font-weight:600;color:var(--ink-2)}
+.lp-db b.cur{color:#141517;background:#efece5;border-radius:4px;padding:0 4px}
+.lp-db i{font-style:normal;font-size:9px;color:var(--ink-3);margin-right:3px}
+.lp-db.empty{color:#b0aca2}

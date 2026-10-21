@@ -517,7 +517,7 @@
       Object.keys(lp).forEach((l) => {
         if (lp[l] === plate) {
           const key = pp.id;
-          if (!out.has(key)) out.set(key, { id: pp.id, label: pp.pattern.code, project: pp.project, layers: new Set() });
+          if (!out.has(key)) out.set(key, { id: pp.id, label: pp.pattern.code, name: pp.pattern.name || pp.pattern.nameKo || "", project: pp.project, layers: new Set() });
           out.get(key).layers.add(l);
         }
       });
@@ -1259,7 +1259,14 @@
         <div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
         <div class="layer-plates">
           <span class="lp-head">패턴 <b>${esc(d.pattern.code)}</b> · 도수별 동판</span>
-          ${Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean))).map((l) => `<label>${esc(l)}<input data-lp="${esc(l)}" value="${esc(layerPlate(v, l))}" placeholder="동판"></label>`).join("")}
+          ${Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean))).map((l) => {
+            const plate = layerPlate(v, l);
+            const list = plate ? platePatterns(plate) : [];
+            const pats = list.length
+              ? list.map((x) => `<b class="${x.id === d.id ? "cur" : ""}" title="${esc([...x.layers].join(", "))} — ${esc(x.project || "")}">${esc(x.label)}</b>${x.name ? `<i>${esc(x.name)}</i>` : ""}`).join(" · ")
+              : `<b class="cur">${esc(d.pattern.code)}</b>`;
+            return `<label class="lp-row"><span class="lp-l">${esc(l)}</span><input data-lp="${esc(l)}" value="${esc(plate)}" placeholder="동판"><span class="lp-pats">${pats}</span><span class="lp-db" data-dbplate="${esc(plate)}" data-lplayer="${esc(l)}"></span></label>`;
+          }).join("")}
         </div>
         <div class="ink-tags">
           <span class="it-head">잉크</span>
@@ -1379,6 +1386,23 @@
           } else m[f] = el.value;
         };
         el.oninput = handler; el.onchange = handler;
+      });
+      $$("[data-dbplate]").forEach(async (el) => {
+        const plate = el.dataset.dbplate;
+        if (!plate) return;
+        try {
+          const info = await apiGet(`/api/plate/${encodeURIComponent(plate)}`);
+          const map = new Map();
+          (info.usedBy || []).forEach((u) => {
+            if (!map.has(u.code)) map.set(u.code, new Set());
+            if (u.layer) map.get(u.code).add(u.layer);
+          });
+          if (!map.size) { el.textContent = "DB 기록 없음"; el.className = "lp-db empty"; return; }
+          el.innerHTML = "DB " + Array.from(map.entries()).map(([code, layers]) =>
+            `<b class="${code === d.pattern.code ? "cur" : ""}">${esc(code)}</b><i>${esc([...layers].join("·"))}</i>`).join(" · ");
+        } catch (e) {
+          el.textContent = "";
+        }
       });
       const mattBtn = document.querySelector("[data-matttog]");
       if (mattBtn) mattBtn.onclick = () => {
