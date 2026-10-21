@@ -719,36 +719,6 @@ class Handler(BaseHTTPRequestHandler):
                                   "company": CFG.get("company", ""),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
                                   "pageMax": CFG.get("pageMax", 2)})
-            if p == "/api/ui":
-                if os.path.exists(UI_STATE):
-                    try:
-                        with open(UI_STATE, encoding="utf-8") as f:
-                            return self.json({"ok": True, "state": json.load(f)})
-                    except Exception as e:
-                        return self.json({"ok": True, "state": {}, "error": str(e)})
-                return self.json({"ok": True, "state": {}})
-            if p == "/api/patterns":
-                pats, errs = load_all()
-                return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
-            if p.startswith("/img/"):
-                return self.serve_image(p[len("/img/"):])
-            if p.startswith("/api/open-folder"):
-                subprocess.Popen(["open", DATA])
-                return self.json({"ok": True})
-            return self.serve_static(p)
-        except BrokenPipeError:
-            pass
-        except Exception as e:
-            self.error(500, str(e))
-
-    def do_PUT(self):
-        if not self._host_ok():
-            return self.error(403, "forbidden host")
-        if not self._write_ok():
-            return self.error(403, "cross-site request blocked")
-        u = urlparse(self.path)
-        p = unquote(u.path)
-        try:
             if p.startswith("/api/rdp/push-preview/"):
                 pid = p[len("/api/rdp/push-preview/"):].strip("/")
                 try:
@@ -798,6 +768,36 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:
                         info["error"] = str(e)
                 return self.json(info)
+            if p == "/api/ui":
+                if os.path.exists(UI_STATE):
+                    try:
+                        with open(UI_STATE, encoding="utf-8") as f:
+                            return self.json({"ok": True, "state": json.load(f)})
+                    except Exception as e:
+                        return self.json({"ok": True, "state": {}, "error": str(e)})
+                return self.json({"ok": True, "state": {}})
+            if p == "/api/patterns":
+                pats, errs = load_all()
+                return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
+            if p.startswith("/img/"):
+                return self.serve_image(p[len("/img/"):])
+            if p.startswith("/api/open-folder"):
+                subprocess.Popen(["open", DATA])
+                return self.json({"ok": True})
+            return self.serve_static(p)
+        except BrokenPipeError:
+            pass
+        except Exception as e:
+            self.error(500, str(e))
+
+    def do_PUT(self):
+        if not self._host_ok():
+            return self.error(403, "forbidden host")
+        if not self._write_ok():
+            return self.error(403, "cross-site request blocked")
+        u = urlparse(self.path)
+        p = unquote(u.path)
+        try:
             if p == "/api/ui":
                 raw = self.read_body()
                 try:
