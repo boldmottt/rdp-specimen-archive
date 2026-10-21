@@ -1346,9 +1346,17 @@
       };
       $$("[data-inkadd]").forEach((el) => (el.onclick = () => {
         const t = el.dataset.inkadd;
-        const has = (v._inkCols || []).includes(t) || (v.mixes || []).some((m) => m.inks && m.inks[t] != null);
-        if (!has) { v._inkCols = v._inkCols || []; v._inkCols.push(t); }
-        addInkTag(t);
+        const hasVals = (v.mixes || []).some((m) => m.inks && m.inks[t] != null);
+        const isOn = (v._inkCols || []).includes(t) || hasVals;
+        if (isOn) {
+          if (hasVals && !confirm(`${t} 값을 이 컬러의 배합에서 지울까요?`)) return;
+          (v.mixes || []).forEach((m) => { if (m.inks) delete m.inks[t]; });
+          v._inkCols = (v._inkCols || []).filter((x) => x !== t);
+        } else {
+          v._inkCols = v._inkCols || [];
+          v._inkCols.push(t);
+          addInkTag(t);
+        }
         renderDrawer();
       }));
       const inkNew = $("#ink-new");
