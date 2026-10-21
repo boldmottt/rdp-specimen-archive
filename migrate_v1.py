@@ -97,7 +97,7 @@ def main():
         mixes = []
         for m in sp.get("mixes", []):
             r = m.get("result") or ""
-            code = "ok" if "✅" in r else "warn" if "⚠" in r else "ng" if "❌" in r else "planned" if "예정" in r else ""
+            code = "ok" if "✅" in r else "warn" if "⚠" in r else "ng" if "❌" in r else "plan" if "예정" in r else ""
             note = (m.get("note") or "").strip()
             mixes.append({
                 "layer": m.get("layer") or "",

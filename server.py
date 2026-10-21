@@ -60,12 +60,13 @@ def load_config() -> dict:
         try:
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 cfg.update(json.load(f))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[warn] config.json을 읽지 못해 기본값을 사용합니다: {e}")
     return cfg
 
 
 CFG = load_config()
+SAFE_HOSTS.update(str(h).lower() for h in (CFG.get("allowHosts") or []) if h)
 DATA = os.path.abspath(os.path.expanduser(CFG["dataRoot"]))
 PATTERNS = os.path.join(DATA, "patterns")
 IMAGES = os.path.join(DATA, "images")
@@ -636,7 +637,7 @@ def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
     low_res = src_w < 1700
     im = im.resize((TARGET_W, TARGET_H), Image.LANCZOS)
 
-    name = f"{vid}-{slot}-{datetime.now().strftime('%H%M%S%f')[:9]}.jpg"
+    name = f"{vid}-{slot}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jpg"
     out_dir = os.path.join(IMAGES, pid)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, name)
@@ -670,6 +671,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         if "/api/" in (self.path or ""):
             sys.stderr.write("  %s\n" % (fmt % args))
+
+    def _db_write_allowed(self) -> bool:
+        if LAN_MODE and not CFG.get("allowLanWrite"):
+            return False
+        return True
 
     def _write_ok(self) -> bool:
         """상태 변경 요청이 같은 오리진에서 왔는지 확인 (CSRF 방지)."""
@@ -781,9 +787,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
             if p.startswith("/img/"):
                 return self.serve_image(p[len("/img/"):])
-            if p.startswith("/api/open-folder"):
-                subprocess.Popen(["open", DATA])
-                return self.json({"ok": True})
             return self.serve_static(p)
         except BrokenPipeError:
             pass
@@ -837,10 +840,34 @@ class Handler(BaseHTTPRequestHandler):
             db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
             if not db_mixes:
                 return {"ok": True, "added": 0, "updated": 0, "variation": None}
-            v = pick_variation(doc, db_mixes)
-            if not v:
+            vs = doc.get("variations") or []
+            if not vs:
                 return {"ok": False, "error": "베리에이션 없음"}
-            added, updated = merge_mixes(v, db_mixes)
+
+            # 도장코드 == 컬러코드 기준으로 베리에이션별 분배, 매칭 안 되면 첫 베리에이션
+            groups = {}
+            for dm in db_mixes:
+                groups.setdefault((dm.get("_coating") or "").strip(), []).append(dm)
+            first = vs[0]
+            plans = []
+            for v in vs:
+                code = (v.get("colorCode") or "").strip()
+                rows = groups.pop(code, []) if code else []
+                if rows:
+                    plans.append((v, rows))
+            for _code, rows in list(groups.items()):
+                plans.append((first, rows))
+                groups.pop(_code, None)
+
+            added = updated = 0
+            touched = []
+            for v, rows in plans:
+                a, u = merge_mixes(v, rows)
+                added += a
+                updated += u
+                if a or u:
+                    touched.append(v.get("id"))
+            v = vs[0]
             if added or updated:
                 doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
                 with open(path, encoding="utf-8") as f:
@@ -848,7 +875,9 @@ class Handler(BaseHTTPRequestHandler):
                 atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
                 atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
             return {"ok": True, "added": added, "updated": updated,
-                    "variation": v.get("id"), "total": len(v.get("mixes", []))}
+                    "variation": (touched[0] if touched else v.get("id")),
+                    "variations": touched,
+                    "total": sum(len(x.get("mixes", [])) for x in vs)}
 
     def sync_pattern(self, pid):
         try:
@@ -871,7 +900,12 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p == "/api/open-folder":
+                subprocess.Popen(["open", DATA])
+                return self.json({"ok": True})
             if p == "/api/rdp/sync-all":
+                if not self._db_write_allowed():
+                    return self.error(403, "LAN 모드에서는 DB 동기화가 꺼져 있습니다 (config.allowLanWrite)")
                 total = {"added": 0, "updated": 0, "patterns": 0, "skipped": []}
                 for doc in load_all()[0]:
                     pid = doc["id"]
@@ -888,6 +922,8 @@ class Handler(BaseHTTPRequestHandler):
                         total["skipped"].append(pid)
                 return self.json({"ok": True, **total})
             if p.startswith("/api/rdp/push/"):
+                if not self._db_write_allowed():
+                    return self.error(403, "LAN 모드에서는 DB 쓰기가 꺼져 있습니다 (config.allowLanWrite)")
                 pid = p[len("/api/rdp/push/"):].strip("/")
                 try:
                     safe_id(pid)
@@ -914,7 +950,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/proposals":
                 doc = json.loads(self.read_body().decode("utf-8"))
                 slug = doc.get("slug") or ("proposal-" + now_stamp())
-                slug = re.sub(r"[^A-Za-z0-9._-]", "-", slug)[:60]
+                slug = re.sub(r"[^0-9A-Za-z가-힣._-]", "-", slug)[:60]
                 d = os.path.join(PROPOSALS, slug)
                 n = 1
                 while os.path.exists(d):
@@ -1097,6 +1133,9 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+LAN_MODE = False
+
+
 def local_ips() -> set:
     ips = set()
     try:
@@ -1175,6 +1214,7 @@ if __name__ == "__main__":
     bind_addr = "127.0.0.1"
     lan_ips = set()
     if args.lan or CFG.get("lan"):
+        LAN_MODE = True
         bind_addr = "0.0.0.0"
         lan_ips = local_ips()
         SAFE_HOSTS.update(lan_ips)

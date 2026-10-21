@@ -333,7 +333,7 @@
     </div>`;
 
     const of = $("#openfolder");
-    if (of) of.onclick = (e) => { e.preventDefault(); fetch("/api/open-folder").then(() => toast("Finder에서 열었습니다")).catch(() => {}); };
+    if (of) of.onclick = (e) => { e.preventDefault(); fetch("/api/open-folder", { method: "POST" }).then(() => toast("Finder에서 열었습니다")).catch(() => {}); };
     paintDots();
     $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
     const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
@@ -380,7 +380,16 @@
     if (!d.pattern.code) { toast("패턴 코드를 입력하세요"); return; }
     const id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
     const exists = byId(id);
-    if (exists && !confirm(`'${id}' 시편이 이미 있습니다. 덮어쓸까요?`)) return;
+    if (exists) {
+      if (confirm(`'${id}' 시편이 이미 있습니다.\n기존 시편을 열까요? (지금 작성한 내용은 저장되지 않습니다)`)) {
+        const v0 = (exists.variations && exists.variations[0]) ? exists.variations[0].id : "";
+        App.newDraft = null;
+        location.hash = `#/p/${encodeURIComponent(id)}${v0 ? "/" + encodeURIComponent(v0) : ""}`;
+      } else {
+        toast("이미 있는 시편입니다 — 프로젝트나 패턴 코드를 바꾸세요");
+      }
+      return;
+    }
     const payload = { ...JSON.parse(JSON.stringify(d)), id };
     try {
       const r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, exists ? (exists.updatedAt || "") : "", !exists);
@@ -482,14 +491,14 @@
   }
 
   function syncLayerPlates(v) {
+    // 표시용으로만 도수 대표 동판을 기억한다. 배합 행의 plate는 절대 추측해서 채우지 않는다.
     const layers = Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean)));
     v.layerPlates = v.layerPlates || {};
     layers.forEach((l) => {
       if (!v.layerPlates[l]) {
-        const hit = (v.mixes || []).find((m) => m.layer === l && m.plate);
-        if (hit) v.layerPlates[l] = hit.plate;
+        const used = Array.from(new Set((v.mixes || []).filter((m) => m.layer === l && m.plate).map((m) => m.plate)));
+        if (used.length === 1) v.layerPlates[l] = used[0];
       }
-      if (v.layerPlates[l]) (v.mixes || []).forEach((m) => { if (m.layer === l && !m.plate) m.plate = v.layerPlates[l]; });
     });
   }
 
@@ -561,7 +570,7 @@
 
         <div class="gallery">
           <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(p.id, images[0])}" alt="">` : (isNew ? '<div class="empty-new"><span>이미지는 저장 후 <b>편집</b>에서 추가합니다</span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
-          ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(p.id, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(im)}">`).join("")}</div>` : ""}
+          ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(p.id, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(imgUrl(p.id, im))}">`).join("")}</div>` : ""}
           ${chips ? `<div class="vchips" style="margin-top:14px">${chips}</div>` : ""}
         </div>
 
@@ -1638,7 +1647,9 @@
       if (location.hash && location.hash !== "#") location.hash = ""; else renderCatalog();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "/" && document.activeElement.tagName !== "INPUT" && !document.activeElement.isContentEditable) { e.preventDefault(); $("#search").focus(); }
+      const ae = document.activeElement;
+      const typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
+      if (e.key === "/" && !typing) { e.preventDefault(); $("#search").focus(); }
       if (e.key === "Escape") {
         if ($("#crop-modal").classList.contains("on")) return $("#crop-modal").classList.remove("on");
         if ($("#drawer").classList.contains("on")) return closeEditor();

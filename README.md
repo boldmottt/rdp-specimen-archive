@@ -82,7 +82,8 @@ python3 server.py                         # http://localhost:8791
 
 - **상태 변경 요청(PUT/POST/DELETE)은 `Origin`/`Sec-Fetch-Site`를 검사**해 다른 사이트에서 온 요청을 403으로 막는다. DB 쓰기 API가 생기면서 CSRF가 실질 위협이 됐기 때문.
 - `--lan`은 서버를 `0.0.0.0`에 바인딩하고, 그 맥의 LAN IP를 Host 허용목록에 자동 추가한다(모르는 Host는 여전히 403).
-- **로그인이 없다.** 같은 네트워크의 누구나 읽고 수정할 수 있으니 신뢰하는 망에서만 켤 것. 외부 공개가 필요하면 Cloudflare Tunnel + Access 같은 인증을 앞에 두는 편이 안전하다.
+- **로그인이 없다.** 같은 네트워크의 누구나 읽고 수정할 수 있다. 그래서 LAN 모드에서는 **rdp.db 쓰기(`push`, `sync-all`)가 기본으로 꺼진다**. 필요하면 `config.json`에 `"allowLanWrite": true`.
+- Tailscale 같은 터널을 쓰면 Host가 달라 403이 날 수 있다. `config.json`의 `"allowHosts": ["100.x.x.x", "mac.tailnet.ts.net"]`에 추가하면 통과한다. 외부 공개가 필요하면 Cloudflare Tunnel + Access 같은 인증을 앞에 두는 편이 안전하다.
 - 맥이 잠자기면 접속이 끊긴다. 서버 창을 닫아도 종료된다.
 
 `config.json`:
