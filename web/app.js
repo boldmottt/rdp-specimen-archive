@@ -278,7 +278,11 @@
         ${x.images && x.images.length ? `<span class="vdot" data-src="${imgUrl(p.id, x.images[0])}"></span>` : '<span class="vdot"></span>'}
         <span class="nm">${esc(vName(x))}</span>
       </button>`).join("") + `<button class="vchip vchip-all" data-all="1" title="이 패턴의 모든 컬러를 한 번에">${vars.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${vars.length}색`}</button>`
-      : (v && v.colorCode && v.colorCode !== "-" ? `<span class="vchip" style="cursor:default"><span class="nm" style="font-family:var(--mono)">${esc(v.colorCode)}</span></span>` : "");
+      : (v ? `
+      <button class="vchip${inCart(p.id, v.id) ? " in" : ""}${v.id === vid ? " on" : ""}" data-sel="${esc(v.id)}" data-img="${esc(vImg(p.id, v) || "")}" title="클릭: 제안서에 담기/빼기">
+        ${v.images && v.images.length ? `<span class="vdot" data-src="${imgUrl(p.id, v.images[0])}"></span>` : '<span class="vdot"></span>'}
+        <span class="nm" style="font-family:var(--mono)">${esc(vName(v))}</span>
+      </button>` : "");
     return `<article class="card${picked ? " picked" : ""}" data-pid="${esc(p.id)}">
       <div class="media">
         ${v && v.images && v.images.length ? `<img loading="lazy" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="empty">IMAGE N/A</div>'}
