@@ -384,13 +384,37 @@
   });
 
   /* ---------------- detail ---------------- */
+  function layerPlate(v, layer) {
+    const lp = v.layerPlates || {};
+    if (lp[layer]) return lp[layer];
+    const hit = (v.mixes || []).find((m) => m.layer === layer && m.plate);
+    return hit ? hit.plate : "";
+  }
+
+  function setLayerPlate(v, layer, plate) {
+    v.layerPlates = v.layerPlates || {};
+    v.layerPlates[layer] = plate;
+    (v.mixes || []).forEach((m) => { if (m.layer === layer) m.plate = plate; });
+  }
+
+  function syncLayerPlates(v) {
+    const layers = Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean)));
+    v.layerPlates = v.layerPlates || {};
+    layers.forEach((l) => {
+      if (!v.layerPlates[l]) {
+        const hit = (v.mixes || []).find((m) => m.layer === l && m.plate);
+        if (hit) v.layerPlates[l] = hit.plate;
+      }
+      if (v.layerPlates[l]) (v.mixes || []).forEach((m) => { if (m.layer === l) m.plate = v.layerPlates[l]; });
+    });
+  }
+
   function mixTable(mixes) {
     const cols = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
     const used = cols.filter((c) => mixes.some((m) => m.inks && m.inks[c] != null));
-    const head = `<tr><th>배합</th><th>동판</th>${used.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>잉크합</th><th>결과</th><th>비고</th></tr>`;
+    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>잉크합</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
-      <td>${m.plate ? `<button class="plate-link" data-plate="${esc(m.plate)}">${esc(m.plate)}</button>` : "—"}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
       <td>${m.mattingG != null ? m.mattingG : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>
       <td>${m.thinnerG != null ? m.thinnerG : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
@@ -422,8 +446,11 @@
     const mixes = v.mixes || [];
     const byLayer = layers(v).map((layer) => {
       const rows = mixes.filter((m) => m.layer === layer);
-      const plates = Array.from(new Set(rows.map((m) => m.plate).filter(Boolean)));
-      return `<div class="mixgroup"><h4>${esc(layer)}<span>${rows.length} 배합${plates.length ? " · 동판 " + plates.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
+      const plate = layerPlate(v, layer);
+      const extra = Array.from(new Set(rows.map((m) => m.plate).filter(Boolean))).filter((x) => x !== plate);
+      return `<div class="mixgroup"><h4>${esc(layer)}
+        <button class="plate-chip" data-layer-plate="${esc(layer)}" title="이 도수의 동판 — 클릭해서 변경">${plate ? "동판 " + esc(plate) : "동판 지정"}</button>
+        <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
     }).join("");
 
     $("#view").innerHTML = `<div class="wrap">
@@ -506,6 +533,40 @@
     $("#editbtn").onclick = () => openEditor(pid, v.id);
     $("#meetingbtn").onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
     paintDots();
+    $$("[data-layer-plate]").forEach((el) => (el.onclick = (e) => {
+      e.stopPropagation();
+      if (el.dataset.editing) return;
+      const layer = el.dataset.layerPlate;
+      const cur = layerPlate(v, layer);
+      const prev = el.innerHTML;
+      el.dataset.editing = "1";
+      el.innerHTML = '<input class="inline-input" style="width:118px;font-size:11px">';
+      const inp = el.firstElementChild;
+      inp.value = cur || "";
+      inp.placeholder = "동판";
+      inp.focus(); inp.select();
+      const restore = () => { delete el.dataset.editing; el.innerHTML = prev; };
+      const commit = async () => {
+        if (!el.dataset.editing) return;
+        const val = inp.value.trim();
+        restore();
+        if (val === (cur || "")) return;
+        await inlineSave(pid, (d2) => {
+          const v2 = (d2.variations || []).find((x) => x.id === v.id);
+          if (!v2) return false;
+          v2.layerPlates = v2.layerPlates || {};
+          v2.layerPlates[layer] = val;
+          (v2.mixes || []).forEach((m) => { if (m.layer === layer) m.plate = val; });
+          return true;
+        });
+        renderDetail(pid, v.id);
+      };
+      inp.onblur = commit;
+      inp.onkeydown = (e2) => {
+        if (e2.key === "Enter") { e2.preventDefault(); inp.blur(); }
+        if (e2.key === "Escape") { e2.preventDefault(); inp.onblur = null; restore(); }
+      };
+    }));
     $$("[data-plate]").forEach((el) => (el.onclick = (e) => { e.stopPropagation(); showPlate(el.dataset.plate, el); }));
     $$("[data-f]").forEach((el) => {
       el.title = "클릭해서 수정";
@@ -574,9 +635,15 @@
   }
 
   function remarkLine(p, v) {
-    const plates = (p.work.plate || []).filter(Boolean).join(", ");
+    const layers = Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean)));
+    const byLayer = layers.map((l) => ({ l, plate: layerPlate(v, l) })).filter((x) => x.plate);
+    const uniq = Array.from(new Set(byLayer.map((x) => x.plate)));
+    let platePart;
+    if (!byLayer.length) platePart = (p.work.plate || []).filter(Boolean).join(", ");
+    else if (uniq.length === 1) platePart = uniq[0];
+    else platePart = byLayer.map((x) => `${x.l} ${x.plate}`).join(" · ");
     const codes = batchCodes(v);
-    return [plates, codes].filter(Boolean).join(" · ") || "—";
+    return [platePart, codes].filter(Boolean).join(" · ") || "—";
   }
 
   function pageSingle(p, v, idx, total) {
@@ -941,12 +1008,11 @@
       const baseCols = ["MT", "BK", "WH", "YE", "RD"];
       const usedInk = allCols.filter((c) => baseCols.includes(c) || (v.mixes || []).some((m) => m.inks && m.inks[c] != null));
       const inkCols = usedInk;
-      const head = `<tr><th></th><th>도수</th><th>배합</th><th>동판</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>결과</th><th>기준</th><th></th></tr>`;
+      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = (v.mixes || []).map((m, mi) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
-        <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:62px"></td>
-        <td><input data-mf="plate" value="${esc(m.plate || "")}" style="width:46px;font-size:10px"></td>
+        <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
         ${inkCols.map((c) => `<td><input data-mf="ink:${c}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
         <td><input data-mf="mattingPct" value="${m.mattingPct != null ? m.mattingPct : ""}" style="width:36px"></td>
         <td><input data-mf="thinnerPct" value="${m.thinnerPct != null ? m.thinnerPct : ""}" style="width:36px"></td>
@@ -962,6 +1028,9 @@
         </div>
         ${E.push ? pushPanel(E.push) : ""}
         <div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
+        <div class="layer-plates">
+          ${Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean))).map((l) => `<label>${esc(l)}<input data-lp="${esc(l)}" value="${esc(layerPlate(v, l))}" placeholder="동판"></label>`).join("")}
+        </div>
         <div class="tbl-wrap" style="margin:0 -6px"><table class="mix-edit">${head}${rows}</table></div>
         <div style="display:flex;gap:6px;margin-top:12px">
           <button class="mini-btn" id="add-mix">+ 배합 추가</button>
@@ -1047,6 +1116,10 @@
 
     if (E.tab === "mixes") {
       const v = d.variations[E.vIdx];
+      $$("[data-lp]").forEach((el) => (el.onchange = () => {
+        setLayerPlate(v, el.dataset.lp, el.value.trim());
+        renderDrawer();
+      }));
       $$("[data-mi] input[data-mf], [data-mi] select[data-mf]").forEach((el) => {
         const h = el.oninput || el.onchange;
         const handler = () => {
@@ -1136,7 +1209,9 @@
         })));
         const next = Math.max(0, ...nums) + 1;
         const layer = next + "도";
-        v.mixes.push({ layer, batch: "", plate: (d.work.plate || [])[0] || "", inks: {}, mattingPct: 2, thinnerPct: 30, hardenerPct: 20, result: "", isReference: false, note: "", change: "" });
+        v.layerPlates = v.layerPlates || {};
+        v.layerPlates[layer] = (d.work.plate || [])[0] || "";
+        v.mixes.push({ layer, batch: "", plate: v.layerPlates[layer], inks: {}, mattingPct: 2, thinnerPct: 30, hardenerPct: 20, result: "", isReference: false, note: "", change: "" });
         renderDrawer();
         toast(layer + " 추가 — 배합번호와 값을 입력하세요");
       };
@@ -1215,6 +1290,7 @@
           d.id = ""; E.msg = "저장 취소 — 패턴 코드를 바꾸세요"; renderDrawer(); return;
         }
       }
+      (d.variations || []).forEach((vv) => syncLayerPlates(vv));
       E.msg = "저장 중…"; renderDrawer();
       const payload = {};
       Object.keys(d).forEach((k) => { if (!k.startsWith("_")) payload[k] = d[k]; });

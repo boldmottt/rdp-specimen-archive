@@ -445,3 +445,11 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .plate-pop li a:hover{text-decoration-color:var(--ink)}
 .plate-pop li span{color:var(--ink-3);font-size:11px}
 .pp-load{color:var(--ink-3);font-size:12px}
+
+/* 도수별 동판 */
+.plate-chip{border:1px solid var(--line-2);background:#fff;border-radius:999px;padding:2px 9px;font-size:11px;font-family:var(--mono);color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.plate-chip:hover{border-color:var(--ink);color:var(--ink)}
+.layer-plates{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+.layer-plates label{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-3)}
+.layer-plates input{width:84px;border:1px solid var(--line-2);border-radius:6px;padding:4px 6px;font:inherit;font-size:11px;font-family:var(--mono)}
+.mixgroup h4{gap:8px}
