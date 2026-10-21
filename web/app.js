@@ -711,7 +711,7 @@
   function coverSheet(groups) {
     const d = App.prop.date || todayLocal();
     const flat = groups.reduce((a, g) => a.concat(g.vars.map((v) => ({ p: g.p, v }))), []);
-    const thumbs = flat.slice(0, 9).map(({ p, v }) => `<figure>
+    const thumbs = flat.map(({ p, v }) => `<figure>
       ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="aspect-ratio:170/70;background:#efede8"></div>'}
       <figcaption>${esc(p.pattern.code)}${v.colorName ? " · " + esc(v.colorName) : ""}</figcaption></figure>`).join("");
     return `<section class="sheet s-cover">
@@ -724,7 +724,7 @@
         <div><dt>Prepared by</dt><dd>${esc(App.prop.by || "—")}</dd></div>
       </div>
       <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div>
-        <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : 3},1fr)">${thumbs}</div></div>
+        <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : flat.length <= 9 ? 3 : flat.length <= 16 ? 4 : 5},1fr)">${thumbs}</div></div>
       <div class="cov-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
   }
@@ -775,7 +775,7 @@
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::${esc(v.id)}">${esc((App.prop.comments || {})[p.id + "::" + v.id] || "")}</div>
       </div>
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다.</div>
-      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}</span></div>
+      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.pattern.code)}</span></div>
     </section>`;
   }
 
@@ -845,7 +845,7 @@
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::all">${esc((App.prop.comments || {})[p.id + "::all"] || "")}</div>
       </div>
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. A~${letters[vars.length - 1]}는 실물 크기(170×70mm)로 인쇄됩니다.</div>
-      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}</span></div>
+      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.pattern.code)}</span></div>
     </section>`;
   }
 
