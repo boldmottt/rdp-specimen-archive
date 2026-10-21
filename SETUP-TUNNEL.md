@@ -1,5 +1,20 @@
 # 외부 접속 구축 가이드 (Cloudflare Tunnel + Access)
 
+## 지금 구성 (2026-10-22 완료)
+
+| 항목 | 값 |
+|---|---|
+| 공개 주소 | `https://rdparchive.fyi` |
+| 터널 | `rdp-archive` (ID `2aedd753-41dc-49dd-9c53-8cd29e64168c`) → `http://localhost:8791` |
+| 인증 | Cloudflare Access · 정책 `Only Seokhee` (Allow · Emails `loo4leesk@gmail.com`) |
+| 팀 도메인 | `rdp-archive.cloudflareaccess.com` |
+| 터널 자동 시작 | `~/.cloudflared/rdp-archive.sh` + `~/Library/LaunchAgents/com.nifco.rdptunnel.plist` |
+| 앱 자동 시작 | `./install_launchagent.sh` (선택) |
+
+아래 원문 가이드는 다른 도메인으로 다시 구축할 때를 위한 참고용입니다.
+
+---
+
 회사 PC 브라우저 → Cloudflare(이메일 인증) → 집 맥북 `cloudflared` → `localhost:8791`
 
 공유기 포트를 열지 않고, 인증을 통과한 사람만 들어옵니다.
