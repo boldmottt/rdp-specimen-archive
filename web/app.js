@@ -41,7 +41,7 @@
     uiTimer = setTimeout(() => {
       fetch("/api/ui", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cart: App.cart, prop: App.prop }),
+        body: JSON.stringify({ cart: App.cart, prop: App.prop, ts: (App.prop.ts = Date.now()) }),
       }).catch(() => {});
     }, 400);
   }
@@ -52,9 +52,10 @@
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
-  async function apiPut(path, body, rev) {
+  async function apiPut(path, body, rev, create) {
     const headers = { "Content-Type": "application/json" };
     if (rev) headers["X-Base-Rev"] = rev;
+    if (create) headers["X-Create"] = "1";
     const r = await fetch(path, { method: "PUT", headers, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (r.status === 409) {
@@ -442,7 +443,7 @@
           <dt>상태</dt><dd>${esc(dash(v.status))}</dd>
           <dt>양산 일정</dt><dd>${esc(dash(p.work.sop))}</dd>
           <dt>작업일</dt><dd class="mono">${esc(fmtDate(v.date))}</dd>
-          <dt>배합</dt><dd>${(v.mixes || []).length}건</dd>
+          ${App.prop.showMix ? `<dt>배합</dt><dd>${(v.mixes || []).length}건</dd>` : ""}
         </dl></div>
       </div>
       ${v.note ? `<div class="p-note"><h4>NOTE</h4><p>${esc(v.note)}</p></div>` : ""}
@@ -607,24 +608,33 @@
     const doc = {
       slug: `${App.prop.date || todayLocal()}_${(App.prop.client || "proposal").replace(/[^\w가-힣-]/g, "")}`,
       title: App.prop.title, client: App.prop.client, date: App.prop.date || todayLocal(), by: App.prop.by,
+      docNo: App.prop.docNo, rev: App.prop.rev || "0",
       createdAt: new Date().toISOString(),
       items: groups.map((g) => ({
         pattern: { id: g.p.id, code: g.p.pattern.code, name: g.p.pattern.name, nameKo: g.p.pattern.nameKo, project: g.p.project, projectName: g.p.projectName, client: g.p.client,
           label: g.p.label, work: g.p.work },
         variations: g.vars.map((v) => ({ id: v.id, colorName: v.colorName, colorCode: v.colorCode, coating: v.coating, status: v.status, date: v.date,
           images: v.images, mixes: App.prop.showMix ? v.mixes : undefined,
-          comment: (App.prop.comments || {})[g.p.id + "::" + v.id] || "" })),
+          comment: (App.prop.comments || {})[g.p.id + "::" + v.id] || "",
+          pageComment: (App.prop.comments || {})[g.p.id + "::all"] || "" })),
       })),
     };
     try {
       const r = await fetch("/api/proposals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(doc) });
       const j = await r.json();
-      toast(j.ok ? "제안서 스냅샷 저장됨" : "저장 실패");
+      if (j.ok) {
+        const m = /^(.*-)(\d+)$/.exec(App.prop.docNo || "");
+        if (m) { App.prop.docNo = m[1] + String(Number(m[2]) + 1).padStart(2, "0"); saveLS(); renderProposal(); }
+        toast("제안서 스냅샷 저장됨 · 이미지 " + (j.images || 0) + "장");
+      } else {
+        toast("저장 실패");
+      }
     } catch (e) { toast("저장 실패: " + e.message); }
   }
 
   /* ---------------- cart bar ---------------- */
   function pruneCart() {
+    if (App.loadErrors && App.loadErrors.length) return;
     const before = App.cart.length;
     App.cart = App.cart.filter((c) => {
       const p = byId(c.pid);
@@ -680,9 +690,21 @@
   }
   function syncTabs() { $$("#drawer-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === E.tab)); }
 
+  function nextVarId(d) {
+    const nums = (d.variations || []).map((v) => {
+      const m = /^v(\d+)$/.exec(v.id || "");
+      return m ? Number(m[1]) : 0;
+    });
+    const maxUsed = Math.max(0, ...nums);
+    const seq = Math.max(Number(d.nextVarSeq || 0), maxUsed + 1);
+    d.nextVarSeq = seq + 1;
+    return "v" + String(seq).padStart(2, "0");
+  }
+
   function newDoc() {
     return {
       schemaVersion: 2, id: "", project: "", projectName: "", client: "",
+      nextVarSeq: 2,
       pattern: { code: "", name: "", nameKo: "", tags: [] },
       label: { item: "", type: "", supplier: "", remark: "" },
       work: { place: "", worker: "", machine: "", plate: [], emboss: "", pad: "", sop: "", volume: "" },
@@ -829,14 +851,12 @@
     if (E.tab === "var") {
       $$("[data-vidx]").forEach((el) => (el.onclick = () => { E.vIdx = Number(el.dataset.vidx); renderDrawer(); }));
       $("#add-var").onclick = () => {
-        const n = d.variations.length + 1;
-        d.variations.push({ id: "v" + String(n).padStart(2, "0"), colorName: "", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" });
+        d.variations.push({ id: nextVarId(d), colorName: "", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" });
         E.vIdx = d.variations.length - 1; renderDrawer();
       };
       $("#dup-var").onclick = () => {
         const src = clone(d.variations[E.vIdx]);
-        const n = d.variations.length + 1;
-        src.id = "v" + String(n).padStart(2, "0");
+        src.id = nextVarId(d);
         src.images = [];
         src.colorName = (src.colorName || "기본") + " 복사";
         d.variations.push(src); E.vIdx = d.variations.length - 1; renderDrawer();
@@ -911,17 +931,12 @@
         input.onchange = () => { const f = input.files[0]; if (f) startCrop(f, { slot: i + 1 }); };
         input.click();
       }));
-      $$("[data-delimg]").forEach((el) => (el.onclick = async () => {
+      $$("[data-delimg]").forEach((el) => (el.onclick = () => {
         const i = Number(el.dataset.delimg);
-        const name = v.images[i];
-        if (!confirm("이미지를 삭제할까요? (_trash로 이동)")) return;
-        try {
-          if (!String(name).startsWith("v")) { /* noop */ }
-          await apiDelete(`/api/image/${encodeURIComponent(d.id)}/${encodeURIComponent(name)}`);
-        } catch (e) { /* 파일이 없어도 배열에서는 제거 */ }
+        if (!confirm("이 이미지를 뺄까요? 저장하면 파일은 _trash로 정리됩니다.")) return;
         v.images.splice(i, 1);
         renderDrawer();
-        toast("이미지 삭제됨 (저장을 눌러 반영)");
+        toast("이미지 제외 — 저장을 눌러 반영");
       }));
     }
 
@@ -945,20 +960,28 @@
   }
 
   async function saveDraft() {
-    const d = E.draft;
+    if (!E.draft) return;
+    let d = E.draft;
     try {
       if (E.tab === "json" && $("#jsonarea")) {
-        try { d = E.draft = JSON.parse($("#jsonarea").value); } catch (e) { E.msg = "JSON 문법 오류"; renderDrawer(); return; }
+        try { d = E.draft = JSON.parse($("#jsonarea").value); } catch (e) {
+          const msg = $("#drawer-msg");
+          if (msg) { msg.textContent = "JSON 문법 오류 — 고친 뒤 다시 저장하세요"; msg.className = "msg err"; }
+          return;
+        }
       }
       if (!d.pattern.code) { E.msg = "패턴 코드를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
       if (!d.id) {
         if (!d.project) { E.msg = "프로젝트를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
         d.id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
+        if (byId(d.id) && !confirm(`이미 '${d.id}' 시편이 있습니다. 덮어쓸까요?`)) {
+          d.id = ""; E.msg = "저장 취소 — 패턴 코드를 바꾸세요"; renderDrawer(); return;
+        }
       }
       E.msg = "저장 중…"; renderDrawer();
       const payload = {};
       Object.keys(d).forEach((k) => { if (!k.startsWith("_")) payload[k] = d[k]; });
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(d.id)}`, payload, E.baseRev);
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(d.id)}`, payload, E.baseRev, E.isNew);
       const idx = App.patterns.findIndex((x) => x.id === d.id);
       const saved = clone(d); saved._mtime = Date.now();
       if (r.savedAt) { saved.updatedAt = r.savedAt; E.baseRev = r.savedAt; }
@@ -1071,6 +1094,7 @@
   }
 
   async function commitUpload(res) {
+    if (!E.draft || !E.draft.variations[E.vIdx]) return;
     const v = E.draft.variations[E.vIdx];
     v.images = v.images || [];
     v.images[C.slot - 1] = res.file;
@@ -1080,6 +1104,7 @@
   }
 
   async function uploadCenter() {
+    if (!E.draft) return;
     try {
       const pid = E.draft.id || (E.draft.project + "-" + E.draft.pattern.code).replace(/[^\w.-]/g, "-");
       const vid = E.draft.variations[E.vIdx].id;
@@ -1168,8 +1193,12 @@
     try {
       const ui = await apiGet("/api/ui");
       if (ui && ui.state) {
-        if (Array.isArray(ui.state.cart)) App.cart = ui.state.cart;
-        if (ui.state.prop) App.prop = Object.assign(App.prop, ui.state.prop);
+        const localTs = Number(App.prop.ts || 0);
+        const serverTs = Number(ui.state.ts || 0);
+        if (serverTs >= localTs) {
+          if (Array.isArray(ui.state.cart)) App.cart = ui.state.cart;
+          if (ui.state.prop) App.prop = Object.assign(App.prop, ui.state.prop);
+        }
       }
     } catch (e) {}
 
@@ -1197,6 +1226,7 @@
     try {
       const data = await apiGet("/api/patterns");
       App.patterns = data.patterns || [];
+      App.loadErrors = data.errors || [];
       if (data.errors && data.errors.length) {
         console.warn("load errors", data.errors);
         toast("동기화 충돌/깨진 파일 " + data.errors.length + "건 — 콘솔 확인");

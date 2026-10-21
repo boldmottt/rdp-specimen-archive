@@ -99,7 +99,7 @@ python3 server.py --demo    # sample-data 를 임시 폴더에 복사해 실행 
 | DELETE | `/api/patterns/<id>` | `_trash`로 이동 |
 | PUT | `/api/image/<pid>/<vid>?slot=1&x=..&y=..&w=..&h=..` | 원본 바이트 + 크롭 좌표 → 2400×988 JPEG (파일명은 `v01-1-<시각>.jpg`처럼 매번 새로 생성) |
 | DELETE | `/api/image/<pid>/<filename>` | `_trash`로 이동 |
-| POST | `/api/proposals` | 제안서 스냅샷 저장 |
+| POST | `/api/proposals` | 제안서 스냅샷 저장 (참조 이미지를 `proposals/<slug>/images/`로 함께 복사) |
 | GET/PUT | `/api/ui` | 장바구니·제안서 설정(제목/고객/코멘트) 서버 보관 |
 
 저장 요청에는 `X-Base-Rev: <updatedAt>` 헤더를 함께 보낸다. 서버의 현재 값과 다르면 **409 + 최신 문서**를 돌려주고, 화면은 "다른 곳에서 먼저 저장되었습니다"를 띄운 뒤 최신 내용을 불러올지 묻는다. 패턴 단위 `threading.Lock`으로 같은 파일 동시 쓰기도 막는다.
@@ -135,7 +135,7 @@ HEIC는 Pillow가 못 열면 `sips`로 변환한다.
 
 ## 제안서 스냅샷
 
-`확정 저장`을 누르면 선택한 패턴/컬러/코멘트를 `proposals/<날짜>_<고객>/proposal.json`에 복사한다.
+`확정 저장`을 누르면 선택한 패턴/컬러/코멘트와 **이미지 파일까지** `proposals/<날짜>_<고객>/`에 복사하고 문서번호를 다음 번호로 넘긴다.
 나중에 원본 배합을 고쳐도 **보낸 제안서의 내용은 바뀌지 않는다.**
 
 ## 라이선스

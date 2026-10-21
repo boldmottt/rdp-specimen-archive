@@ -288,6 +288,19 @@ def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
             top = (im.height - nh) // 2
             im = im.crop((0, top, im.width, top + nh))
 
+    # 어떤 경로로 잘렸든 비율을 한 번 더 강제 (클라이언트 스테이지 비율 오차 방지)
+    target_ratio = RATIO_W / RATIO_H
+    cur = im.width / im.height
+    if abs(cur - target_ratio) / target_ratio > 0.005:
+        if cur > target_ratio:
+            nw = int(round(im.height * target_ratio))
+            left = (im.width - nw) // 2
+            im = im.crop((left, 0, left + nw, im.height))
+        else:
+            nh = int(round(im.width / target_ratio))
+            top = (im.height - nh) // 2
+            im = im.crop((0, top, im.width, top + nh))
+
     if im.mode in ("RGBA", "LA", "P"):
         im = im.convert("RGBA")
         bg = Image.new("RGB", im.size, (255, 255, 255))
@@ -439,10 +452,34 @@ class Handler(BaseHTTPRequestHandler):
                 slug = doc.get("slug") or ("proposal-" + now_stamp())
                 slug = re.sub(r"[^A-Za-z0-9._-]", "-", slug)[:60]
                 d = os.path.join(PROPOSALS, slug)
+                n = 1
+                while os.path.exists(d):
+                    n += 1
+                    d = os.path.join(PROPOSALS, f"{slug}-{n:02d}")
                 os.makedirs(d, exist_ok=True)
+
+                # 스냅샷이 참조하는 이미지를 함께 복사 (나중에 gc가 원본을 지워도 안전)
+                copied, missing = [], []
+                for item in doc.get("items", []):
+                    pid = (item.get("pattern") or {}).get("id")
+                    if not pid:
+                        continue
+                    for v in item.get("variations", []):
+                        for name in (v.get("images") or []):
+                            src = safe_join(IMAGES, pid, os.path.basename(str(name)))
+                            if not os.path.isfile(src):
+                                missing.append(f"{pid}/{name}")
+                                continue
+                            dst_dir = os.path.join(d, "images", pid)
+                            os.makedirs(dst_dir, exist_ok=True)
+                            shutil.copy2(src, os.path.join(dst_dir, os.path.basename(str(name))))
+                            copied.append(f"{pid}/{name}")
+
+                doc["_snapshot"] = {"createdAt": now_stamp(), "images": len(copied), "missing": missing}
                 atomic_write(os.path.join(d, "proposal.json"),
                              json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
-                return self.json({"ok": True, "path": os.path.join(d, "proposal.json")})
+                return self.json({"ok": True, "path": os.path.join(d, "proposal.json"),
+                                  "slug": os.path.basename(d), "images": len(copied), "missing": missing})
             return self.error(404, "not found")
         except Exception as e:
             self.error(500, str(e))
@@ -479,10 +516,14 @@ class Handler(BaseHTTPRequestHandler):
             self.error(500, str(e))
 
     # ---------- handlers
+    MAX_BODY = 40 * 1024 * 1024  # 이미지 1장 상한
+
     def read_body(self) -> bytes:
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0:
             return b""
+        if n > self.MAX_BODY:
+            raise ValueError(f"본문이 너무 큽니다 ({n} bytes)")
         return self.rfile.read(n)
 
     def save_pattern(self, pid):
@@ -506,12 +547,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"ok": False, "errors": errs}, 400)
 
         path = safe_join(PATTERNS, pid + ".json")
+        if (self.headers.get("X-Create") or "").strip() == "1" and os.path.exists(path):
+            return self.json({"ok": False, "exists": True,
+                              "message": f"'{pid}' 시편이 이미 있습니다"}, 409)
         base_rev = (self.headers.get("X-Base-Rev") or "").strip()
         if os.path.exists(path) and base_rev:
             try:
                 with open(path, encoding="utf-8") as f:
                     prev = json.load(f)
-            except Exception:
+            except Exception as e:
+                print(f"[warn] 기존 파일을 읽지 못했습니다 {pid}: {e}")
                 prev = None
             prev_rev = (prev or {}).get("updatedAt") or ""
             if prev_rev and base_rev != prev_rev:
@@ -536,7 +581,11 @@ class Handler(BaseHTTPRequestHandler):
             for layer, cnt in per.items():
                 if cnt > 1:
                     warns.append(f"{v.get('id')} {layer}에 기준 배합이 {cnt}개")
-        removed = gc_images(pid, doc)
+        try:
+            removed = gc_images(pid, doc)
+        except Exception as e:
+            removed = []
+            print(f"[warn] gc 실패 {pid}: {e}")
         return self.json({"ok": True, "savedAt": doc["updatedAt"], "warnings": warns, "removedImages": removed})
 
     def serve_image(self, rel):
