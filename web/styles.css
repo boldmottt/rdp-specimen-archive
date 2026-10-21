@@ -455,3 +455,9 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .mixgroup h4{gap:8px}
 .plate-info{width:16px;height:16px;border-radius:50%;border:1px solid var(--line-2);background:#fff;color:var(--ink-3);font-size:9.5px;font-style:italic;font-family:Georgia,serif;cursor:pointer;display:inline-grid;place-items:center;padding:0}
 .plate-info:hover{border-color:var(--ink);color:var(--ink)}
+.plate-pop li.here a{font-weight:600}
+.lp-head{font-size:11px;color:var(--ink-3);margin-right:4px;align-self:center}
+.lp-head b{font-family:var(--mono);color:var(--ink);font-weight:600}
+.plate-pats{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.02em}
+.plate-pats b{font-weight:500;color:var(--ink-2)}
+.plate-pats b.cur{color:var(--ink);font-weight:700}

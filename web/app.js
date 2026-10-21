@@ -362,17 +362,28 @@
       catch (e) { info = null; }
     }
     if (!info || info.ok === false) { pop.innerHTML = '<div class="pp-load">동판 정보가 없습니다</div>'; return; }
-    const used = (info.usedBy || []).map((u) => {
-      const p = byId(u.id);
-      const vid = p && p.variations && p.variations[0] ? p.variations[0].id : "";
+    const curPid = decodeURIComponent((location.hash.match(/#\/p\/([^/]+)/) || [])[1] || "");
+    const rowsMap = new Map();
+    (info.usedBy || []).forEach((u) => rowsMap.set(u.id + "|" + (u.layer || ""), { id: u.id, project: u.project, code: u.code, layer: u.layer || "" }));
+    App.patterns.forEach((pp) => (pp.variations || []).forEach((vv) => {
+      const lp = vv.layerPlates || {};
+      Object.keys(lp).forEach((l) => {
+        if (lp[l] === lot) rowsMap.set(pp.id + "|" + l, { id: pp.id, project: pp.project, code: pp.pattern.code, layer: l });
+      });
+    }));
+    const rowsArr = Array.from(rowsMap.values()).sort((a, b) => (a.code + a.layer).localeCompare(b.code + b.layer));
+    const used = rowsArr.map((u) => {
+      const p2 = byId(u.id);
+      const vid = p2 && p2.variations && p2.variations[0] ? p2.variations[0].id : "";
       const href = `#/p/${encodeURIComponent(u.id)}${vid ? "/" + encodeURIComponent(vid) : ""}`;
-      return `<li><a href="${href}" data-goto="1">${esc(u.project)} ${esc(u.code)}</a><span>${esc(u.layer || "")}</span></li>`;
+      const here = curPid === u.id;
+      return `<li${here ? ' class="here"' : ""}><a href="${href}" data-goto="1">${esc(u.project)} ${esc(u.code)}</a><span>${esc(u.layer)}${here ? " · 현재" : ""}</span></li>`;
     }).join("");
     pop.innerHTML = `<div class="pp-title">${esc(info.lot)}</div>
       <div class="pp-meta">${esc([info.type, info.size].filter(Boolean).join(" · ") || "—")}</div>
       ${info.note ? `<div class="pp-note">${esc(info.note)}</div>` : ""}
       ${info.created ? `<div class="pp-date">${esc(fmtDate(info.created))}</div>` : ""}
-      ${used ? `<div class="pp-sub">이 동판을 쓰는 패턴</div><ul>${used}</ul>` : ""}`;
+      ${used ? `<div class="pp-sub">이 동판에 들어간 패턴</div><ul>${used}</ul>` : ""}`;
     $$("[data-goto]", pop).forEach((a) => (a.onclick = () => pop.classList.remove("on")));
   }
 
@@ -384,6 +395,21 @@
   });
 
   /* ---------------- detail ---------------- */
+  function platePatterns(plate) {
+    const out = new Map();
+    App.patterns.forEach((pp) => (pp.variations || []).forEach((vv) => {
+      const lp = vv.layerPlates || {};
+      Object.keys(lp).forEach((l) => {
+        if (lp[l] === plate) {
+          const key = pp.id;
+          if (!out.has(key)) out.set(key, { id: pp.id, label: pp.pattern.code, project: pp.project, layers: new Set() });
+          out.get(key).layers.add(l);
+        }
+      });
+    }));
+    return Array.from(out.values());
+  }
+
   function layerPlate(v, layer) {
     const lp = v.layerPlates || {};
     if (lp[layer]) return lp[layer];
@@ -416,9 +442,9 @@
     const body = mixes.map((m) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
-      <td>${m.mattingG != null ? m.mattingG : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>
-      <td>${m.thinnerG != null ? m.thinnerG : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
-      <td>${m.hardenerG != null ? m.hardenerG : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
+      <td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>
+      <td>${m.thinnerG != null ? m.thinnerG + "g" : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
+      <td>${m.hardenerG != null ? m.hardenerG + "g" : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
       <td>${pigmentTotal(m)}</td>
       <td class="res res-${esc(m.result || "")}">${esc(RESULT_LABEL[m.result] || "—")}</td>
       <td class="note">${esc(m.change || m.note || "")}</td></tr>`).join("");
@@ -450,6 +476,7 @@
       const extra = Array.from(new Set(rows.map((m) => m.plate).filter(Boolean))).filter((x) => x !== plate);
       return `<div class="mixgroup"><h4>${esc(layer)}
         <button class="plate-chip" data-layer-plate="${esc(layer)}" title="이 도수의 동판 — 클릭해서 변경">${plate ? "동판 " + esc(plate) : "동판 지정"}</button>
+        ${plate ? `<span class="plate-pats">${platePatterns(plate).map((x) => `<b class="${x.id === p.id ? "cur" : ""}">${esc(x.label)}</b>`).join(" · ") || `<b class="cur">${esc(p.pattern.code)}</b>`}</span>` : ""}
         ${plate ? `<button class="plate-info" data-plate="${esc(plate)}" title="동판 정보">i</button>` : ""}
         <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
     }).join("");
@@ -642,7 +669,7 @@
     let platePart;
     if (!byLayer.length) platePart = (p.work.plate || []).filter(Boolean).join(", ");
     else if (uniq.length === 1) platePart = uniq[0];
-    else platePart = byLayer.map((x) => `${x.l} ${x.plate}`).join(" · ");
+    else platePart = byLayer.map((x) => `${x.plate}(${p.pattern.code} ${x.l})`).join(" · ");
     const codes = batchCodes(v);
     return [platePart, codes].filter(Boolean).join(" · ") || "—";
   }
@@ -1030,6 +1057,7 @@
         ${E.push ? pushPanel(E.push) : ""}
         <div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
         <div class="layer-plates">
+          <span class="lp-head">패턴 <b>${esc(d.pattern.code)}</b> · 도수별 동판</span>
           ${Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean))).map((l) => `<label>${esc(l)}<input data-lp="${esc(l)}" value="${esc(layerPlate(v, l))}" placeholder="동판"></label>`).join("")}
         </div>
         <div class="tbl-wrap" style="margin:0 -6px"><table class="mix-edit">${head}${rows}</table></div>
