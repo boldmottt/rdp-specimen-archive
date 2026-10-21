@@ -252,9 +252,11 @@
     }).sort((a, b) => {
       if (App.sort === "code") return (a.project + a.pattern.code).localeCompare(b.project + b.pattern.code);
       if (App.sort === "recent") {
-        const da = (a.variations || []).map((v) => v.date).sort().pop() || "";
-        const db = (b.variations || []).map((v) => v.date).sort().pop() || "";
-        return db.localeCompare(da);
+        const key = (p) => {
+          const d = (p.variations || []).map((v) => v.date).filter(Boolean).sort().pop();
+          return d || String(p.updatedAt || "").slice(0, 10);
+        };
+        return key(b).localeCompare(key(a));
       }
       return 0;
     });
@@ -267,7 +269,8 @@
     const picked = v && inCart(p.id, v.id);
     const nm = p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "";
     const title = `<span class="c-code">${esc(p.pattern.code)}</span><span class="c-name">${esc([nm, p.pattern.nameKo].filter(Boolean).join(" ") || "")}</span>`;
-    const meta = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : ""]
+    const when = (v && v.date) ? fmtDate(v.date).slice(2) : (p.updatedAt ? String(p.updatedAt).slice(2, 10).replace(/-/g, ".") : "");
+    const meta = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : (when ? esc(when) : "")]
       .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("") + `<span class="layer-pill">${esc(layers(v).join("·") || "—")}</span>`;
     const chips = vars.length > 1
       ? vars.map((x) => `
@@ -279,7 +282,7 @@
     return `<article class="card${picked ? " picked" : ""}" data-pid="${esc(p.id)}">
       <div class="media">
         ${v && v.images && v.images.length ? `<img loading="lazy" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="empty">IMAGE N/A</div>'}
-        <div class="badge">${esc(p.project)}</div>
+        ${p.project ? `<div class="badge">${esc(p.project)}</div>` : ""}
         <div class="check${picked ? " on" : ""}" data-check="1" title="제안서에 담기">
           <svg viewBox="0 0 24 24"><path d="M4 12.5 9.5 18 20 6.5"/></svg>
         </div>
@@ -298,7 +301,7 @@
     const projects = ["all"].concat(Array.from(new Set(App.patterns.map((p) => p.project))));
     const chips = projects.map((k) => {
       const n = k === "all" ? App.patterns.length : App.patterns.filter((p) => p.project === k).length;
-      return `<button class="chip${App.project === k ? " on" : ""}" data-proj="${esc(k)}">${k === "all" ? "전체" : esc(k)}<span class="n">${n}</span></button>`;
+      return `<button class="chip${App.project === k ? " on" : ""}" data-proj="${esc(k)}">${k === "all" ? "전체" : (k ? esc(k) : "미지정")}<span class="n">${n}</span></button>`;
     }).join("");
     const totalVar = App.patterns.reduce((a, p) => a + (p.variations || []).length, 0);
     const totalMix = App.patterns.reduce((a, p) => a + (p.variations || []).reduce((b, v) => b + (v.mixes || []).length, 0), 0);
@@ -598,7 +601,7 @@
           <section class="sec"><h3>라벨 정보</h3>
             <dl class="kv">
               <dt>Company</dt><dd data-f="client">${esc(dash(p.client))}</dd>
-              <dt>Project</dt><dd class="mono"${isNew ? ' data-f="project"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.project)}</dd>
+              <dt>Project</dt><dd class="mono"${isNew ? ' data-f="project"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.project || "—")}</dd>
               <dt>Pattern Code</dt><dd class="mono"${isNew ? ' data-f="pattern.code"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.pattern.code)}</dd>
               <dt>Pattern Name</dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
               <dt>Item</dt><dd data-f="label.item">${esc(dash(p.label.item))}</dd>
