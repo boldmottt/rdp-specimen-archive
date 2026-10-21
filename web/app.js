@@ -1274,7 +1274,10 @@
             const pats = list.length
               ? list.map((x) => `<b class="${x.id === d.id ? "cur" : ""}" title="${esc([...x.layers].join(", "))} — ${esc(x.project || "")}">${esc(x.label)}</b>${x.name ? `<i>${esc(x.name)}</i>` : ""}`).join(" · ")
               : `<b class="cur">${esc(d.pattern.code)}</b>`;
-            return `<label class="lp-row"><span class="lp-l">${esc(l)}</span><input data-lp="${esc(l)}" value="${esc(plate)}" placeholder="동판"><input class="lp-pat" data-lpat="${esc(l)}" value="${esc(((v.layerPatterns || {})[l]) || "")}" placeholder="${esc(pats.replace(/<[^>]+>/g, ""))}" title="이 도수의 패턴명 — 직접 수정할 수 있습니다"><span class="lp-db" data-dbplate="${esc(plate)}" data-lplayer="${esc(l)}"></span></label>`;
+            return `<div class="lp-row"><span class="lp-l">${esc(l)}</span>
+              <span class="lp-k">동판</span><input data-lp="${esc(l)}" value="${esc(plate)}" placeholder="동판 번호">
+              <span class="lp-k">패턴</span><input class="lp-pat" data-lpat="${esc(l)}" value="${esc(((v.layerPatterns || {})[l]) || "")}" placeholder="${esc(pats.replace(/<[^>]+>/g, ""))}" title="이 도수의 패턴명 — 직접 수정할 수 있습니다">
+              <span class="lp-db" data-dbplate="${esc(plate)}" data-lplayer="${esc(l)}"></span></div>`;
           }).join("")}
         </div>
         <div class="ink-tags">
@@ -1403,7 +1406,8 @@
             const num = parseFloat(el.value); m[f] = isNaN(num) ? null : num;
           } else m[f] = el.value;
         };
-        el.oninput = handler; el.onchange = handler;
+        el.oninput = handler;
+        el.onchange = () => { handler(); if (el.dataset.mf === "layer") renderDrawer(); };
       });
       $$("[data-dbplate]").forEach(async (el) => {
         const plate = el.dataset.dbplate;

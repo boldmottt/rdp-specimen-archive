@@ -513,3 +513,4 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .lp-db b.cur{color:#141517;background:#efece5;border-radius:4px;padding:0 4px}
 .lp-db i{font-style:normal;font-size:9px;color:var(--ink-3);margin-right:3px}
 .lp-db.empty{color:#b0aca2}
+.layer-plates .lp-k{font-size:9px;letter-spacing:.1em;color:var(--ink-3);text-transform:uppercase}
