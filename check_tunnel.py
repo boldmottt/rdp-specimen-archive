@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -42,7 +43,13 @@ def main():
     port = CFG.get("port", 8791)
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as r:
-            line(OK, "로컬 서버", f"실행 중 · 포트 {port}")
+            body = r.read().decode(errors="ignore")
+            if "ok" in body:
+                line(OK, "로컬 서버", f"실행 중 · 포트 {port}")
+            else:
+                raise ValueError("not our app")
+    except urllib.error.HTTPError:
+        line(NG, "로컬 서버", f"포트 {port}를 다른 프로그램이 사용 중 → lsof -nP -iTCP:{port} -sTCP:LISTEN")
     except Exception:
         line(NG, "로컬 서버", f"응답 없음 · 포트 {port} (앱을 켜세요)")
 

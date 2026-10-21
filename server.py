@@ -23,6 +23,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1240,14 +1241,21 @@ if __name__ == "__main__":
     ensure_dirs()
 
     if not port_free(PORT):
-        for cand in range(PORT + 1, PORT + 21):
-            if port_free(cand):
-                PORT = cand
-                break
-        else:
-            print(f"[!] {PORT} 근처에 빈 포트가 없습니다. --port 로 지정하세요.")
-            sys.exit(1)
-        print(f"[i] 기본 포트가 사용 중이라 {PORT} 로 엽니다.")
+        # (1) 같은 앱이 이미 떠 있으면 그걸 쓰라고 알려준다 (터널 주소가 바뀌면 안 되므로)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/health", timeout=2) as r:
+                if r.status == 200:
+                    print(f"[i] 이미 실행 중입니다 → http://localhost:{PORT}")
+                    if not args.no_browser:
+                        webbrowser.open(f"http://localhost:{PORT}")
+                    sys.exit(0)
+        except Exception:
+            pass
+        # (2) 다른 프로그램이 잡고 있으면 포트를 밀지 않고 멈춘다
+        print(f"[!] {PORT} 포트를 다른 프로그램이 쓰고 있습니다.")
+        print(f"    확인:  lsof -nP -iTCP:{PORT} -sTCP:LISTEN")
+        print(f"    정리:  kill <PID>     (또는 --port 로 다른 번호 지정)")
+        sys.exit(1)
 
     try:
         for doc in load_all()[0]:
