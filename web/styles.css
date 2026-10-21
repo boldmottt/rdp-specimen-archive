@@ -351,3 +351,9 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .p-note{margin-top:5mm;padding-top:4mm;border-top:1px solid #e4e1da}
 .p-note h4{margin:0 0 2mm;font-size:8.5px;letter-spacing:.16em;color:#8d9198;font-weight:600}
 .p-note p{margin:0;font-size:10.5px;line-height:1.7;color:#141517;white-space:pre-wrap}
+
+.ruler{display:inline-flex;align-items:center;gap:1.2mm;color:#b9b6ae;font-size:6.5px;letter-spacing:.08em}
+.ruler i{display:block;width:30mm;height:1px;background:#d8d5cd;position:relative}
+.ruler i:before,.ruler i:after{content:"";position:absolute;top:-1.2mm;width:1px;height:2.4mm;background:#d8d5cd}
+.ruler i:before{left:0}
+.ruler i:after{right:0}

@@ -379,7 +379,7 @@
         <div><dt>Prepared by</dt><dd>${esc(App.prop.by || "—")}</dd></div>
       </div>
       <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div><div class="cov-thumbs">${thumbs}</div></div>
-      <div class="cov-foot"><span>${esc(App.config.company || "")}</span><span>${flat.length} VARIATIONS</span></div>
+      <div class="cov-foot"><span>${esc(App.config.company || "")}</span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
   }
 
@@ -416,7 +416,7 @@
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::${esc(v.id)}">${esc((App.prop.comments || {})[p.id + "::" + v.id] || "")}</div>
       </div>
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. 배합 정보는 사내 검토용입니다.</div>
-      <div class="p-foot"><span>${esc(App.config.company || "")}</span><span>${esc(p.project)} / ${esc(p.pattern.code)}${v.colorName ? " / " + esc(v.colorName) : ""}</span></div>
+      <div class="p-foot"><span>${esc(App.config.company || "")}</span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}${v.colorName ? " / " + esc(v.colorName) : ""}</span></div>
     </section>`;
   }
 
@@ -439,8 +439,8 @@
     return p.join(" / ");
   }
 
-  const firstPageMax = () => Math.max(1, Number((App.config && App.config.firstPageMax) || 3));
-  const pageMax = () => Math.max(1, Number((App.config && App.config.pageMax) || 3));
+  const firstPageMax = () => Math.max(1, Number((App.config && App.config.firstPageMax) || 2));
+  const pageMax = () => Math.max(1, Number((App.config && App.config.pageMax) || 2));
 
   function splitVars(vars) {
     const n = vars.length;
@@ -459,8 +459,8 @@
     const rows = vars.map((v) => `<div class="cmp-item">
       ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="width:170mm;height:70mm;background:#efede8"></div>'}
       <div class="cmp-meta">
-        <b>${esc(v.colorName || v.colorCode || "기본")}</b>
-        ${v.colorName && v.colorCode ? `<span class="v">${esc(v.colorCode)}</span>` : ""}
+        <b>${esc(v.colorName || "기본")}</b>
+        ${v.colorCode ? `<span class="v">${esc(v.colorCode)}</span>` : ""}
         ${(v.coating || []).length ? `<span>도장 ${esc((v.coating || []).map((c) => c.code).filter(Boolean).join(", "))}</span>` : ""}
         ${v.status ? `<span>${esc(v.status)}</span>` : ""}
         ${v.date ? `<span>${esc(fmtDate(v.date))}</span>` : ""}
@@ -474,7 +474,7 @@
       </div><div class="ptag">${esc(p.project)}<br>${esc(p.client)}</div></div>
       <div class="cmp">${rows}</div>
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. 시편은 실물 크기(170×70mm)로 인쇄됩니다.</div>
-      <div class="p-foot"><span>${esc(App.config.company || "")}</span><span>${esc(p.project)} / ${esc(p.pattern.code)}</span></div>
+      <div class="p-foot"><span>${esc(App.config.company || "")}</span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}</span></div>
     </section>`;
   }
 

@@ -369,8 +369,8 @@ class Handler(BaseHTTPRequestHandler):
                                   "brand": CFG.get("brand", "RDP"),
                                   "brandSub": CFG.get("brandSub", "SPECIMEN ARCHIVE"),
                                   "company": CFG.get("company", ""),
-                                  "firstPageMax": CFG.get("firstPageMax", 3),
-                                  "pageMax": CFG.get("pageMax", 3)})
+                                  "firstPageMax": CFG.get("firstPageMax", 2),
+                                  "pageMax": CFG.get("pageMax", 2)})
             if p == "/api/ui":
                 if os.path.exists(UI_STATE):
                     try:
