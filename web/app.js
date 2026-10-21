@@ -525,6 +525,15 @@
     return Array.from(out.values());
   }
 
+  function layerPatLabel(v, layer, p) {
+    const custom = ((v && v.layerPatterns) || {})[layer];
+    if (custom && String(custom).trim()) return String(custom).trim();
+    const plate = layerPlate(v, layer);
+    const auto = plate ? platePatterns(plate).map((x) => x.label) : [];
+    if (auto.length) return auto.join(" · ");
+    return p ? p.pattern.code : "";
+  }
+
   function layerPlate(v, layer) {
     const lp = v.layerPlates || {};
     if (lp[layer]) return lp[layer];
@@ -644,7 +653,7 @@
       const extra = Array.from(new Set(rows.map((m) => m.plate).filter(Boolean))).filter((x) => x !== plate);
       return `<div class="mixgroup"><h4>${esc(layer)}
         <button class="plate-chip" data-layer-plate="${esc(layer)}" title="이 도수의 동판 — 클릭해서 변경">${plate ? "동판 " + esc(plate) : "동판 지정"}</button>
-        ${plate ? `<span class="plate-pats">${platePatterns(plate).map((x) => `<b class="${x.id === p.id ? "cur" : ""}">${esc(x.label)}</b>`).join(" · ") || `<b class="cur">${esc(p.pattern.code)}</b>`}</span>` : ""}
+        ${plate ? `<span class="plate-pats">${((v.layerPatterns || {})[layer]) ? `<b class="cur">${esc(v.layerPatterns[layer])}</b>` : (platePatterns(plate).map((x) => `<b class="${x.id === p.id ? "cur" : ""}">${esc(x.label)}</b>`).join(" · ") || `<b class="cur">${esc(p.pattern.code)}</b>`)}</span>` : ""}
         ${plate ? `<button class="plate-info" data-plate="${esc(plate)}" title="동판 정보">i</button>` : ""}
         <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
     }).join("");
@@ -1265,7 +1274,7 @@
             const pats = list.length
               ? list.map((x) => `<b class="${x.id === d.id ? "cur" : ""}" title="${esc([...x.layers].join(", "))} — ${esc(x.project || "")}">${esc(x.label)}</b>${x.name ? `<i>${esc(x.name)}</i>` : ""}`).join(" · ")
               : `<b class="cur">${esc(d.pattern.code)}</b>`;
-            return `<label class="lp-row"><span class="lp-l">${esc(l)}</span><input data-lp="${esc(l)}" value="${esc(plate)}" placeholder="동판"><span class="lp-pats">${pats}</span><span class="lp-db" data-dbplate="${esc(plate)}" data-lplayer="${esc(l)}"></span></label>`;
+            return `<label class="lp-row"><span class="lp-l">${esc(l)}</span><input data-lp="${esc(l)}" value="${esc(plate)}" placeholder="동판"><input class="lp-pat" data-lpat="${esc(l)}" value="${esc(((v.layerPatterns || {})[l]) || "")}" placeholder="${esc(pats.replace(/<[^>]+>/g, ""))}" title="이 도수의 패턴명 — 직접 수정할 수 있습니다"><span class="lp-db" data-dbplate="${esc(plate)}" data-lplayer="${esc(l)}"></span></label>`;
           }).join("")}
         </div>
         <div class="ink-tags">
@@ -1362,6 +1371,15 @@
 
     if (E.tab === "mixes") {
       const v = d.variations[E.vIdx];
+      $$("[data-lpat]").forEach((el) => {
+        const h = () => {
+          v.layerPatterns = v.layerPatterns || {};
+          const val = el.value.trim();
+          if (val) v.layerPatterns[el.dataset.lpat] = val;
+          else delete v.layerPatterns[el.dataset.lpat];
+        };
+        el.oninput = h; el.onchange = h;
+      });
       $$("[data-lp]").forEach((el) => (el.onchange = () => {
         setLayerPlate(v, el.dataset.lp, el.value.trim());
         renderDrawer();
@@ -1400,6 +1418,8 @@
           if (!map.size) { el.textContent = "DB 기록 없음"; el.className = "lp-db empty"; return; }
           el.innerHTML = "DB " + Array.from(map.entries()).map(([code, layers]) =>
             `<b class="${code === d.pattern.code ? "cur" : ""}">${esc(code)}</b><i>${esc([...layers].join("·"))}</i>`).join(" · ");
+          const patInput = el.closest(".lp-row")?.querySelector("[data-lpat]");
+          if (patInput && !patInput.value.trim()) patInput.placeholder = Array.from(map.keys()).join(" · ");
         } catch (e) {
           el.textContent = "";
         }
