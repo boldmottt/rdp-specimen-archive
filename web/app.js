@@ -20,6 +20,7 @@
     cart: [],
     prop: { title: "RDP 패턴 제안", client: "", date: "", by: "", comments: {}, showMix: false, note: "" },
     edit: null,
+    meeting: false,
     view: "catalog",
   };
 
@@ -29,11 +30,13 @@
   function loadLS() {
     try { App.cart = JSON.parse(localStorage.getItem(LS_CART)) || []; } catch (e) { App.cart = []; }
     try { App.prop = Object.assign(App.prop, JSON.parse(localStorage.getItem(LS_PROP)) || {}); } catch (e) {}
+    try { App.meeting = !!JSON.parse(localStorage.getItem("rdp2-meeting") || "false"); } catch (e) {}
   }
   let uiTimer = null;
   function saveLS() {
     try { localStorage.setItem(LS_CART, JSON.stringify(App.cart)); } catch (e) {}
     try { localStorage.setItem(LS_PROP, JSON.stringify(App.prop)); } catch (e) {}
+    try { localStorage.setItem("rdp2-meeting", JSON.stringify(!!App.meeting)); } catch (e) {}
     clearTimeout(uiTimer);
     uiTimer = setTimeout(() => {
       fetch("/api/ui", {
@@ -92,6 +95,36 @@
     saveLS();
   }
 
+  const colorCache = new Map();
+  function avgColor(url) {
+    if (colorCache.has(url)) return Promise.resolve(colorCache.get(url));
+    return new Promise((res) => {
+      const im = new Image();
+      im.onload = () => {
+        try {
+          const c = document.createElement("canvas");
+          c.width = c.height = 8;
+          const x = c.getContext("2d");
+          x.drawImage(im, 0, 0, 8, 8);
+          const d = x.getImageData(0, 0, 8, 8).data;
+          let r = 0, g = 0, b = 0;
+          for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+          const n = d.length / 4;
+          const col = `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`;
+          colorCache.set(url, col); res(col);
+        } catch (e) { res(null); }
+      };
+      im.onerror = () => res(null);
+      im.src = url;
+    });
+  }
+  function paintDots(root) {
+    $$(".vdot[data-src]", root || document).forEach(async (el) => {
+      const c = await avgColor(el.dataset.src);
+      if (c) el.style.background = c;
+    });
+  }
+
   function toast(msg) {
     const t = $("#toast");
     t.textContent = msg; t.classList.add("on");
@@ -126,13 +159,13 @@
     const v = varOf(p, vid) || vars[0];
     const picked = v && inCart(p.id, v.id);
     const nm = p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "";
-    const title = p.pattern.nameKo ? esc(nm || p.pattern.nameKo) + (nm ? ' <span class="ko">' + esc(p.pattern.nameKo) + "</span>" : "") : esc(nm || p.pattern.code);
-    const meta = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "배합 " + mixCount(p, v), v && v.status ? esc(v.status) : ""]
-      .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("");
+    const title = `<span class="c-code">${esc(p.pattern.code)}</span><span class="c-name">${esc([nm, p.pattern.nameKo].filter(Boolean).join(" ") || "")}</span>`;
+    const meta = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : ""]
+      .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("") + `<span class="layer-pill">${esc(layers(v).join("·") || "—")}</span>`;
     const chips = vars.length > 1
       ? vars.map((x) => `
       <button class="vchip${x.id === (v && v.id) ? " on" : ""}" data-sel="${esc(x.id)}" title="${esc(vName(x))}">
-        ${x.images && x.images.length ? `<img class="th" src="${imgUrl(p.id, x.images[0])}" alt="">` : '<span class="plus">·</span>'}
+        ${x.images && x.images.length ? `<span class="vdot" data-src="${imgUrl(p.id, x.images[0])}"></span>` : '<span class="vdot"></span>'}
         <span class="nm">${esc(vName(x))}</span>
       </button>`).join("")
       : (v && v.colorCode && v.colorCode !== "-" ? `<span class="vchip" style="cursor:default"><span class="nm" style="font-family:var(--mono)">${esc(v.colorCode)}</span></span>` : "");
@@ -145,8 +178,6 @@
         </div>
       </div>
       <div class="card-body">
-        <div class="card-top"><span class="code">${esc(p.pattern.code)}</span>
-          <span class="layer-pill">${esc(layers(v).join("·") || "—")}</span></div>
         <div class="card-title">${title}</div>
         <div class="card-meta">${meta}</div>
         <div class="vchips">${chips}</div>
@@ -195,6 +226,7 @@
 
     const of = $("#openfolder");
     if (of) of.onclick = (e) => { e.preventDefault(); fetch("/api/open-folder").then(() => toast("Finder에서 열었습니다")).catch(() => {}); };
+    paintDots();
     $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
     const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
     $$(".card").forEach((el) => {
@@ -263,7 +295,7 @@
 
     $("#view").innerHTML = `<div class="wrap">
       <div class="back" id="back"><svg viewBox="0 0 24 24" style="width:13px;height:13px;stroke:currentColor;stroke-width:2;fill:none"><path d="M15 5 8 12l7 7"/></svg>목차로</div>
-      <div class="detail">
+      <div class="detail${App.meeting ? " meeting" : ""}">
         <div class="span2 d-head-row">
           <div>
             <div class="kicker"><span class="proj">${esc(p.projectName)}</span><span class="mini">${esc(p.client)}</span></div>
@@ -272,6 +304,7 @@
           </div>
           <div class="d-actions">
             <button class="btn-dark${inCart(p.id, v.id) ? " on" : ""}" id="addbtn">${inCart(p.id, v.id) ? "✓ 담김" : "제안서에 담기"}</button>
+            <button class="btn-line${App.meeting ? " on" : ""}" id="meetingbtn" title="고객 미팅용: 메모·배합·작업일지·동판 숨김">${App.meeting ? "미팅 모드 ON" : "미팅 모드"}</button>
             <button class="btn-line" id="editbtn">편집</button>
           </div>
         </div>
@@ -285,14 +318,14 @@
         <div class="side">
           <div class="colorcard">
             <div class="eyebrow" style="margin:0">Color</div>
-            <div class="cc-name">${esc(vName(v))}</div>
-            ${v.colorName && v.colorCode ? `<div class="cc-code">${esc(v.colorCode)}</div>` : ""}
+            <div class="cc-name">${esc(v.colorName || "기본")}</div>
+            ${v.colorCode ? `<div class="cc-code">${esc(v.colorCode)}</div>` : ""}
             <div class="cc-row"><span>${esc(dash(v.status))}</span><span>${esc(fmtDate(v.date))}</span><span>${mixes.length} 배합</span></div>
           </div>
           <section class="sec sec-tight"><h3>도장</h3>
             ${(v.coating || []).length ? (v.coating || []).map((c) => `<div style="margin-bottom:8px;font-size:12.5px"><b style="font-family:var(--mono);font-weight:600">${esc(c.code || "—")}</b><div style="color:#8d9198;font-size:11.5px">${esc([c.maker, c.lot].filter(Boolean).join(" · ") || "")}</div></div>`).join("") : '<p style="color:#8d9198;font-size:12.5px">—</p>'}
           </section>
-          <section class="sec"><h3>동판</h3>
+          <section class="sec sec-plate"><h3>동판</h3>
             ${(p.work.plate || []).length ? `<span class="chipline">${p.work.plate.map((x) => `<span class="mini">${esc(x)}</span>`).join("")}</span>` : "—"}
           </section>
           ${v.note ? `<div class="d-note">${esc(v.note)}</div>` : ""}
@@ -305,10 +338,8 @@
               <dt>Project</dt><dd class="mono">${esc(p.project)}</dd>
               <dt>Pattern Code</dt><dd class="mono">${esc(p.pattern.code)}</dd>
               <dt>Pattern Name</dt><dd>${esc(dash(p.pattern.name))}</dd>
-              <dt>Color Code</dt><dd class="mono">${esc(dash(v.colorCode))}</dd>
               <dt>Item</dt><dd>${esc(dash(p.label.item))}</dd>
               <dt>Type</dt><dd>${esc(dash(p.label.type))}</dd>
-              <dt>Date</dt><dd class="mono">${esc(fmtDate(v.date))}</dd>
               <dt>Supplier</dt><dd>${esc(dash(p.label.supplier))}</dd>
               ${p.label.remark ? `<dt>Remark</dt><dd>${esc(p.label.remark)}</dd>` : ""}
             </dl>
@@ -326,8 +357,8 @@
         </div>
 
         <div class="span2">
-          <section class="sec"><h3>배합 정보 <span class="cnt">${mixes.length} 배합</span></h3>${byLayer || '<p style="color:#8d9198;font-size:12.5px">등록된 배합이 없습니다.</p>'}</section>
-          ${(p.history || []).length ? `<section class="sec"><h3>작업일지 <span class="cnt">${p.history.length}</span></h3><ul class="timeline">
+          <section class="sec sec-mix"><h3>배합 정보 <span class="cnt">${mixes.length} 배합</span></h3>${byLayer || '<p style="color:#8d9198;font-size:12.5px">등록된 배합이 없습니다.</p>'}</section>
+          ${(p.history || []).length ? `<section class="sec sec-hist"><h3>작업일지 <span class="cnt">${p.history.length}</span></h3><ul class="timeline">
             ${p.history.map((h) => `<li><span class="d">${esc(fmtDate(h.date))}</span><div><div>${esc(h.title)}</div>${h.summary ? `<div style="color:#8d9198;font-size:11.5px">${esc(h.summary)}</div>` : ""}</div></li>`).join("")}
           </ul></section>` : ""}
         </div>
@@ -337,6 +368,8 @@
     $("#back").onclick = () => (location.hash = "");
     $("#addbtn").onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
     $("#editbtn").onclick = () => openEditor(pid, v.id);
+    $("#meetingbtn").onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
+    paintDots();
     $$("[data-vsel]").forEach((el) => (el.onclick = () => { location.hash = `#/p/${encodeURIComponent(pid)}/${encodeURIComponent(el.dataset.vsel)}`; }));
     $$(".thumbs img").forEach((el) => (el.onclick = () => {
       const m = $("#mainimg img"); if (m) m.src = el.dataset.img;
@@ -371,15 +404,16 @@
       <figcaption>${esc(p.pattern.code)}${v.colorName ? " · " + esc(v.colorName) : ""}</figcaption></figure>`).join("");
     return `<section class="sheet s-cover">
       <div class="cov-top"><div class="cov-brand">${esc(App.config.brand || "RDP")}<span>${esc(App.config.brandSub || "SPECIMEN ARCHIVE")}</span></div>
-      <div class="dt">${esc(fmtDate(d))}</div></div>
+      <div class="dt">${esc(fmtDate(d))}<br><span class="docno">${esc(docLabel())}</span></div></div>
       <h1>${esc(App.prop.title || "RDP 패턴 제안")}</h1>
       <div class="cov-sub">패턴 ${groups.length}종 · 컬러 ${flat.length}종</div>
       <div class="cov-client">
         <div><dt>Client</dt><dd>${esc(App.prop.client || "—")}</dd></div>
         <div><dt>Prepared by</dt><dd>${esc(App.prop.by || "—")}</dd></div>
       </div>
-      <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div><div class="cov-thumbs">${thumbs}</div></div>
-      <div class="cov-foot"><span>${esc(App.config.company || "")}</span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
+      <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div>
+        <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : 3},1fr)">${thumbs}</div></div>
+      <div class="cov-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
   }
 
@@ -416,7 +450,7 @@
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::${esc(v.id)}">${esc((App.prop.comments || {})[p.id + "::" + v.id] || "")}</div>
       </div>
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. 배합 정보는 사내 검토용입니다.</div>
-      <div class="p-foot"><span>${esc(App.config.company || "")}</span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}${v.colorName ? " / " + esc(v.colorName) : ""}</span></div>
+      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}${v.colorName ? " / " + esc(v.colorName) : ""}</span></div>
     </section>`;
   }
 
@@ -456,30 +490,55 @@
   }
 
   function pageCompare(p, vars, idx, total, part, parts) {
-    const rows = vars.map((v) => `<div class="cmp-item">
-      ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="width:170mm;height:70mm;background:#efede8"></div>'}
-      <div class="cmp-meta">
-        <b>${esc(v.colorName || "기본")}</b>
-        ${v.colorCode ? `<span class="v">${esc(v.colorCode)}</span>` : ""}
+    const letters = "ABCDEFGH";
+    const cells = vars.map((v, i) => `<div class="cmp-cell">
+        ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="width:170mm;height:70mm;background:#efede8"></div>'}
+        <span class="ab">${letters[i]}</span>
+      </div>`).join("");
+    const legend = vars.map((v, i) => `<div>
+        <b>${letters[i]}</b>
+        <span class="cn">${esc(v.colorName || "기본")}</span>
+        ${v.colorCode ? `<span>${esc(v.colorCode)}</span>` : ""}
         ${(v.coating || []).length ? `<span>도장 ${esc((v.coating || []).map((c) => c.code).filter(Boolean).join(", "))}</span>` : ""}
         ${v.status ? `<span>${esc(v.status)}</span>` : ""}
         ${v.date ? `<span>${esc(fmtDate(v.date))}</span>` : ""}
-        ${(v.mixes || []).length ? `<span>${(v.mixes || []).length} 배합</span>` : ""}
-      </div></div>`).join("");
+      </div>`).join("");
     return `<section class="sheet s-page">
       <div class="p-head"><div>
         <div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div>
         <h2>${esc(p.pattern.code)}</h2>
         <div class="pname">컬러 비교 · ${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · "))}${parts > 1 ? ` (계속 ${part}/${parts})` : ""}</div>
       </div><div class="ptag">${esc(p.project)}<br>${esc(p.client)}</div></div>
-      <div class="cmp">${rows}</div>
-      <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. 시편은 실물 크기(170×70mm)로 인쇄됩니다.</div>
-      <div class="p-foot"><span>${esc(App.config.company || "")}</span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}</span></div>
+      <div class="cmp-stack">${cells}</div>
+      <div class="cmp-legend">${legend}</div>
+      <div class="p-strip">
+        ${p.label.item ? `<div><span>ITEM</span>${esc(p.label.item)}</div>` : ""}
+        ${p.label.type ? `<div><span>TYPE</span>${esc(p.label.type)}</div>` : ""}
+        ${p.label.supplier ? `<div><span>SUPPLIER</span>${esc(p.label.supplier)}</div>` : ""}
+        ${(p.work.plate || []).length ? `<div><span>동판</span>${esc((p.work.plate || []).join(", "))}</div>` : ""}
+        ${p.work.sop ? `<div><span>양산</span>${esc(p.work.sop)}</div>` : ""}
+        ${p.work.emboss ? `<div><span>엠보</span>${esc(p.work.emboss)}</div>` : ""}
+      </div>
+      <div class="p-comment"><h4>제안 포인트</h4>
+        <div class="c" contenteditable="true" data-comment="${esc(p.id)}::all">${esc((App.prop.comments || {})[p.id + "::all"] || "")}</div>
+      </div>
+      <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다. A~${letters[vars.length - 1]}는 실물 크기(170×70mm)로 인쇄됩니다.</div>
+      <div class="p-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${esc(p.project)} / ${esc(p.pattern.code)}</span></div>
     </section>`;
+  }
+
+  function docLabel() {
+    const no = (App.prop.docNo || "").trim();
+    const rev = (App.prop.rev || "0").toString().trim();
+    return no ? `${no} Rev.${rev}` : `Rev.${rev}`;
   }
 
   function renderProposal() {
     document.body.classList.add("prop-mode");
+    if (!App.prop.docNo) {
+      App.prop.docNo = "RDP-P-" + String(App.prop.date || todayLocal()).replace(/-/g, "") + "-01";
+      saveLS();
+    }
     const groups = grouped();
     $("#cartbar").className = "cartbar";
     if (!groups.length) {
