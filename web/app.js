@@ -340,6 +340,49 @@
     }));
   }
 
+  /* ---------------- plate popover ---------------- */
+  const plateCache = new Map();
+  async function showPlate(lot, anchor) {
+    const pop = $("#plate-pop");
+    if (!pop) return;
+    if (pop.dataset.lot === lot && pop.classList.contains("on")) { pop.classList.remove("on"); return; }
+    const r = anchor.getBoundingClientRect();
+    pop.dataset.lot = lot;
+    pop.innerHTML = '<div class="pp-load">불러오는 중…</div>';
+    pop.style.left = Math.max(12, Math.min(window.innerWidth - 320, r.left)) + "px";
+    pop.style.top = "0px";
+    pop.classList.add("on");
+    const ph = pop.offsetHeight || 200;
+    const below = r.bottom + 8;
+    const top = below + ph > window.innerHeight - 12 ? Math.max(12, r.top - ph - 8) : below;
+    pop.style.top = top + "px";
+    let info = plateCache.get(lot);
+    if (!info) {
+      try { info = await apiGet(`/api/plate/${encodeURIComponent(lot)}`); plateCache.set(lot, info); }
+      catch (e) { info = null; }
+    }
+    if (!info || info.ok === false) { pop.innerHTML = '<div class="pp-load">동판 정보가 없습니다</div>'; return; }
+    const used = (info.usedBy || []).map((u) => {
+      const p = byId(u.id);
+      const vid = p && p.variations && p.variations[0] ? p.variations[0].id : "";
+      const href = `#/p/${encodeURIComponent(u.id)}${vid ? "/" + encodeURIComponent(vid) : ""}`;
+      return `<li><a href="${href}" data-goto="1">${esc(u.project)} ${esc(u.code)}</a><span>${esc(u.layer || "")}</span></li>`;
+    }).join("");
+    pop.innerHTML = `<div class="pp-title">${esc(info.lot)}</div>
+      <div class="pp-meta">${esc([info.type, info.size].filter(Boolean).join(" · ") || "—")}</div>
+      ${info.note ? `<div class="pp-note">${esc(info.note)}</div>` : ""}
+      ${info.created ? `<div class="pp-date">${esc(fmtDate(info.created))}</div>` : ""}
+      ${used ? `<div class="pp-sub">이 동판을 쓰는 패턴</div><ul>${used}</ul>` : ""}`;
+    $$("[data-goto]", pop).forEach((a) => (a.onclick = () => pop.classList.remove("on")));
+  }
+
+  document.addEventListener("click", (e) => {
+    const pop = $("#plate-pop");
+    if (!pop || !pop.classList.contains("on")) return;
+    if (pop.contains(e.target) || e.target.closest("[data-plate]")) return;
+    pop.classList.remove("on");
+  });
+
   /* ---------------- detail ---------------- */
   function mixTable(mixes) {
     const cols = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
@@ -347,7 +390,7 @@
     const head = `<tr><th>배합</th><th>동판</th>${used.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>잉크합</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
-      <td style="color:#8d9198">${esc(m.plate || "—")}</td>
+      <td>${m.plate ? `<button class="plate-link" data-plate="${esc(m.plate)}">${esc(m.plate)}</button>` : "—"}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
       <td>${m.mattingG != null ? m.mattingG : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>
       <td>${m.thinnerG != null ? m.thinnerG : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
@@ -379,7 +422,8 @@
     const mixes = v.mixes || [];
     const byLayer = layers(v).map((layer) => {
       const rows = mixes.filter((m) => m.layer === layer);
-      return `<div class="mixgroup"><h4>${esc(layer)}<span>${rows.length} 배합</span></h4>${mixTable(rows)}</div>`;
+      const plates = Array.from(new Set(rows.map((m) => m.plate).filter(Boolean)));
+      return `<div class="mixgroup"><h4>${esc(layer)}<span>${rows.length} 배합${plates.length ? " · 동판 " + plates.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
     }).join("");
 
     $("#view").innerHTML = `<div class="wrap">
@@ -462,6 +506,7 @@
     $("#editbtn").onclick = () => openEditor(pid, v.id);
     $("#meetingbtn").onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
     paintDots();
+    $$("[data-plate]").forEach((el) => (el.onclick = (e) => { e.stopPropagation(); showPlate(el.dataset.plate, el); }));
     $$("[data-f]").forEach((el) => {
       el.title = "클릭해서 수정";
       el.onclick = (e) => { e.stopPropagation(); startInline(el, pid, v.id); };
@@ -921,6 +966,7 @@
         <div style="display:flex;gap:6px;margin-top:12px">
           <button class="mini-btn" id="add-mix">+ 배합 추가</button>
           <button class="mini-btn" id="dup-mix">마지막 배합 복제</button>
+          <button class="mini-btn" id="add-layer">+ 도수 추가</button>
         </div>
         ${d.variations.length > 1 ? `<div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap">
           <span style="font-size:11px;color:#8d9198">체크한 배합을</span>
@@ -1082,6 +1128,18 @@
         }
       };
       $("#add-mix").onclick = () => { v.mixes.push({ layer: "1도", batch: "", inks: { MT: 0, BK: 0 }, mattingPct: 2, thinnerPct: 30, hardenerPct: 20, result: "", isReference: false, note: "", change: "" }); renderDrawer(); };
+      const al = $("#add-layer");
+      if (al) al.onclick = () => {
+        const nums = Array.from(new Set((v.mixes || []).map((m) => {
+          const mm = /(\d+)/.exec(String(m.layer || ""));
+          return mm ? Number(mm[1]) : 0;
+        })));
+        const next = Math.max(0, ...nums) + 1;
+        const layer = next + "도";
+        v.mixes.push({ layer, batch: "", plate: (d.work.plate || [])[0] || "", inks: {}, mattingPct: 2, thinnerPct: 30, hardenerPct: 20, result: "", isReference: false, note: "", change: "" });
+        renderDrawer();
+        toast(layer + " 추가 — 배합번호와 값을 입력하세요");
+      };
       $("#dup-mix").onclick = () => { if (!v.mixes.length) return; const c = clone(v.mixes[v.mixes.length - 1]); c.batch = (c.batch || "") + "-C"; c.isReference = false; v.mixes.push(c); renderDrawer(); };
       const mv = $("#move-mix");
       if (mv) mv.onclick = () => {

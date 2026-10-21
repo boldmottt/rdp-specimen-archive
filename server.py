@@ -435,6 +435,36 @@ def diff_db(doc, db_mixes):
             "archiveOnly": unmatched, "dbOnly": new}
 
 
+def read_plate_info(lot: str):
+    """rdp.db에서 동판 정보와 그 동판을 쓰는 패턴 목록을 읽는다."""
+    path = rdp_db_path()
+    if not path or not os.path.isfile(path):
+        return None
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute("SELECT * FROM plates WHERE lot_no=?", (lot,)).fetchone()
+        if not row:
+            return None
+        used = con.execute("""
+            SELECT pr.code AS project, pa.code AS pattern_code, pp.layer, pa.project_id
+            FROM plate_patterns pp
+            JOIN plates pl ON pl.id = pp.plate_id
+            JOIN patterns pa ON pa.id = pp.pattern_id
+            JOIN projects pr ON pr.id = pa.project_id
+            WHERE pl.lot_no = ?
+            ORDER BY pr.code, pa.code, pp.layer""", (lot,)).fetchall()
+    finally:
+        con.close()
+    return {
+        "lot": row["lot_no"], "size": row["size"] or "", "type": row["type"] or "",
+        "note": row["note"] or "", "created": row["created_date"] or "",
+        "usedBy": [{"id": f"{u['project']}-{u['pattern_code']}",
+                    "project": u["project"], "code": u["pattern_code"],
+                    "layer": u["layer"] or ""} for u in used],
+    }
+
+
 def load_all():
     out, errors = [], []
     if not os.path.isdir(PATTERNS):
@@ -679,6 +709,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"ok": True, **diff_db(doc, db_mixes)})
                 except Exception as e:
                     return self.error(400, str(e))
+            if p.startswith("/api/plate/"):
+                lot = p[len("/api/plate/"):].strip("/")
+                try:
+                    info = read_plate_info(lot)
+                    if not info:
+                        return self.json({"ok": False, "error": "동판 정보 없음"}, 404)
+                    return self.json({"ok": True, **info})
+                except Exception as e:
+                    return self.error(400, str(e))
             if p == "/api/rdp/status":
                 path = rdp_db_path()
                 exists = bool(path) and os.path.isfile(path)
@@ -745,6 +784,15 @@ class Handler(BaseHTTPRequestHandler):
                         doc = json.load(f)
                     db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
                     return self.json({"ok": True, **diff_db(doc, db_mixes)})
+                except Exception as e:
+                    return self.error(400, str(e))
+            if p.startswith("/api/plate/"):
+                lot = p[len("/api/plate/"):].strip("/")
+                try:
+                    info = read_plate_info(lot)
+                    if not info:
+                        return self.json({"ok": False, "error": "동판 정보 없음"}, 404)
+                    return self.json({"ok": True, **info})
                 except Exception as e:
                     return self.error(400, str(e))
             if p == "/api/rdp/status":
