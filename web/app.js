@@ -123,7 +123,7 @@
         ${x.images && x.images.length ? `<img class="th" src="${imgUrl(p.id, x.images[0])}" alt="">` : '<span class="plus">·</span>'}
         <span class="nm">${esc(vName(x))}</span>
       </button>`).join("")
-      : (v && v.colorCode ? `<span class="vchip" style="cursor:default"><span class="nm" style="font-family:var(--mono)">${esc(v.colorCode)}</span></span>` : "");
+      : (v && v.colorCode && v.colorCode !== "-" ? `<span class="vchip" style="cursor:default"><span class="nm" style="font-family:var(--mono)">${esc(v.colorCode)}</span></span>` : "");
     return `<article class="card${picked ? " picked" : ""}" data-pid="${esc(p.id)}">
       <div class="media">
         ${v && v.images && v.images.length ? `<img loading="lazy" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="empty">IMAGE N/A</div>'}
@@ -856,7 +856,9 @@
         d.id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
       }
       E.msg = "저장 중…"; renderDrawer();
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(d.id)}`, d);
+      const payload = {};
+      Object.keys(d).forEach((k) => { if (!k.startsWith("_")) payload[k] = d[k]; });
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(d.id)}`, payload);
       const idx = App.patterns.findIndex((x) => x.id === d.id);
       const saved = clone(d); saved._mtime = Date.now();
       if (idx >= 0) App.patterns[idx] = saved; else App.patterns.push(saved);
@@ -1009,6 +1011,10 @@
     try {
       const data = await apiGet("/api/patterns");
       App.patterns = data.patterns || [];
+      if (data.errors && data.errors.length) {
+        console.warn("load errors", data.errors);
+        toast("동기화 충돌/깨진 파일 " + data.errors.length + "건 — 콘솔 확인");
+      }
     } catch (e) {
       $("#view").innerHTML = `<div class="wrap"><div class="empty-state"><h2>서버에 연결할 수 없습니다</h2>
         <p>터미널에서 <code>python3 server.py</code> 를 실행하거나, 폴더의 <b>RDP Archive.command</b> 를 더블클릭하세요.</p>

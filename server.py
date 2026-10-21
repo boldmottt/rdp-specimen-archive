@@ -9,6 +9,7 @@ RDP 시편 아카이브 v2 — 로컬 서버
        python3 server.py --port 9000
 """
 import argparse
+import io
 import json
 import mimetypes
 import os
@@ -37,7 +38,8 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 
 RATIO_W, RATIO_H = 170, 70
 TARGET_W, TARGET_H = 2400, 988
-ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+SAFE_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 
 # ---------------------------------------------------------------- config
@@ -79,7 +81,21 @@ def ensure_dirs():
 
 # ---------------------------------------------------------------- helpers
 def now_stamp() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
+    return datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+
+
+def safe_id(seg: str) -> str:
+    if not ID_RE.match(seg or ""):
+        raise ValueError(f"invalid id: {seg!r}")
+    return seg
+
+
+def safe_join(base: str, *parts: str) -> str:
+    root = os.path.realpath(base)
+    p = os.path.realpath(os.path.join(root, *parts))
+    if os.path.commonpath([p, root]) != root:
+        raise ValueError("path escape")
+    return p
 
 
 def atomic_write(path: str, data: bytes):
@@ -99,7 +115,12 @@ def atomic_write(path: str, data: bytes):
 def move_to_trash(path: str, label: str = ""):
     if not os.path.exists(path):
         return
-    dest = os.path.join(TRASH, f"{now_stamp()}_{label or os.path.basename(path)}")
+    base = f"{now_stamp()}_{label or os.path.basename(path)}"
+    dest = os.path.join(TRASH, base)
+    n = 1
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(TRASH, f"{base}~{n}")
     os.makedirs(TRASH, exist_ok=True)
     shutil.move(path, dest)
 
@@ -130,10 +151,10 @@ def validate_pattern(doc: dict):
     return errors
 
 
-def load_all() -> list:
-    out = []
+def load_all():
+    out, errors = [], []
     if not os.path.isdir(PATTERNS):
-        return out
+        return out, errors
     for name in sorted(os.listdir(PATTERNS)):
         if not name.endswith(".json") or name.startswith("."):
             continue
@@ -141,12 +162,16 @@ def load_all() -> list:
         try:
             with open(path, encoding="utf-8") as f:
                 doc = json.load(f)
+            stem = name[:-5]
+            if doc.get("id") != stem:
+                errors.append(f"{name}: 파일명과 id가 다름 (id={doc.get('id')}) — 동기화 충돌 사본일 수 있음, 건너뜀")
+                continue
             doc["_file"] = name
             doc["_mtime"] = os.path.getmtime(path)
             out.append(doc)
         except Exception as e:
-            print(f"[warn] 읽기 실패 {name}: {e}")
-    return out
+            errors.append(f"{name}: 읽기 실패 — {e}")
+    return out, errors
 
 
 def gc_images(pid: str, doc: dict) -> list:
@@ -160,8 +185,15 @@ def gc_images(pid: str, doc: dict) -> list:
     pdir = os.path.join(IMAGES, pid)
     if not os.path.isdir(pdir):
         return moved
+    now = time.time()
     for f in sorted(os.listdir(pdir)):
         if not f.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            continue
+        fp = os.path.join(pdir, f)
+        try:
+            if now - os.path.getmtime(fp) < 600:   # 10분 이내 업로드는 보존
+                continue
+        except OSError:
             continue
         if f not in ref:
             move_to_trash(os.path.join(pdir, f), f"{pid}_{f}")
@@ -206,6 +238,18 @@ def open_image(raw: bytes):
             os.unlink(tmp.name)
 
 
+def sniff_ext(raw: bytes) -> str:
+    if raw[:2] == b"\xff\xd8":
+        return ".jpg"
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if raw[4:12] in (b"ftypheic", b"ftypheix", b"ftyphevc", b"ftypmif1"):
+        return ".heic"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return ".webp"
+    return ".bin"
+
+
 def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
     im = open_image(raw)
     W, H = im.size
@@ -246,19 +290,27 @@ def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
     out_dir = os.path.join(IMAGES, pid)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, name)
+
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=85, optimize=True)
+    tmp_path = out_path + ".part"
+    with open(tmp_path, "wb") as f:
+        f.write(buf.getvalue())
+        f.flush()
+        os.fsync(f.fileno())
     if os.path.exists(out_path):
         move_to_trash(out_path, f"{pid}_{name}")
-    im.save(out_path, quality=85, optimize=True)
+    os.replace(tmp_path, out_path)
 
+    # 원본 바이트 그대로 보관 (HEIC/EXIF/ICC 보존)
     o_dir = os.path.join(ORIG, pid)
     os.makedirs(o_dir, exist_ok=True)
-    try:
-        src = open_image(raw).convert("RGB")
-        src.save(os.path.join(o_dir, f"{vid}-{slot}_src.jpg"), quality=92)
-    except Exception:
-        pass
+    ext = sniff_ext(raw)
+    src_path = os.path.join(o_dir, f"{vid}-{slot}_{now_stamp()}{ext}")
+    atomic_write(src_path, raw)
 
-    return {"file": name, "w": im.width, "h": im.height, "sourceWidth": src_w, "lowRes": low_res}
+    return {"file": name, "w": im.width, "h": im.height,
+            "sourceWidth": src_w, "lowRes": low_res, "original": os.path.basename(src_path)}
 
 
 # ---------------------------------------------------------------- handler
@@ -268,6 +320,10 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         if "/api/" in (self.path or ""):
             sys.stderr.write("  %s\n" % (fmt % args))
+
+    def _host_ok(self) -> bool:
+        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+        return host in SAFE_HOSTS
 
     # ---------- responses
     def _send(self, code, body: bytes, ctype="application/json; charset=utf-8", extra=None):
@@ -289,6 +345,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- routing
     def do_GET(self):
+        if not self._host_ok():
+            return self.error(403, "forbidden host")
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -298,7 +356,8 @@ class Handler(BaseHTTPRequestHandler):
                                   "brandSub": CFG.get("brandSub", "SPECIMEN ARCHIVE"),
                                   "company": CFG.get("company", "")})
             if p == "/api/patterns":
-                return self.json({"ok": True, "patterns": load_all(), "dataRoot": DATA})
+                pats, errs = load_all()
+                return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
             if p.startswith("/img/"):
                 return self.serve_image(p[len("/img/"):])
             if p.startswith("/api/open-folder"):
@@ -311,6 +370,8 @@ class Handler(BaseHTTPRequestHandler):
             self.error(500, str(e))
 
     def do_PUT(self):
+        if not self._host_ok():
+            return self.error(403, "forbidden host")
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -321,6 +382,10 @@ class Handler(BaseHTTPRequestHandler):
                 parts = p[len("/api/image/"):].strip("/").split("/")
                 if len(parts) != 2:
                     return self.error(400, "경로 형식 오류")
+                try:
+                    safe_id(parts[0]); safe_id(parts[1])
+                except ValueError as e:
+                    return self.error(400, str(e))
                 q = parse_qs(u.query)
                 slot = int(q.get("slot", ["1"])[0])
                 crop = {k: q.get(k, [None])[0] for k in ("x", "y", "w", "h")}
@@ -332,6 +397,8 @@ class Handler(BaseHTTPRequestHandler):
             self.error(500, str(e))
 
     def do_POST(self):
+        if not self._host_ok():
+            return self.error(403, "forbidden host")
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -349,18 +416,30 @@ class Handler(BaseHTTPRequestHandler):
             self.error(500, str(e))
 
     def do_DELETE(self):
+        if not self._host_ok():
+            return self.error(403, "forbidden host")
         p = unquote(urlparse(self.path).path)
         try:
             if p.startswith("/api/patterns/"):
                 pid = p[len("/api/patterns/"):].strip("/")
-                src = os.path.join(PATTERNS, pid + ".json")
+                try:
+                    safe_id(pid)
+                except ValueError as e:
+                    return self.error(400, str(e))
+                src = safe_join(PATTERNS, pid + ".json")
                 move_to_trash(src, pid + ".json")
                 move_to_trash(os.path.join(IMAGES, pid), pid + "_images")
                 return self.json({"ok": True})
             if p.startswith("/api/image/"):
                 parts = p[len("/api/image/"):].strip("/").split("/")
                 if len(parts) == 3:
-                    path = os.path.join(IMAGES, parts[0], parts[2])
+                    try:
+                        safe_id(parts[0])
+                        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", parts[2], re.I):
+                            raise ValueError("bad image name")
+                    except ValueError as e:
+                        return self.error(400, str(e))
+                    path = safe_join(IMAGES, parts[0], parts[2])
                     move_to_trash(path, f"{parts[0]}_{parts[2]}")
                     return self.json({"ok": True})
             return self.error(404, "not found")
@@ -375,26 +454,29 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(n)
 
     def save_pattern(self, pid):
-        if not ID_RE.match(pid):
+        try:
+            safe_id(pid)
+        except ValueError:
             return self.error(400, "id 형식 오류")
         raw = self.read_body()
         try:
             doc = json.loads(raw.decode("utf-8"))
         except Exception as e:
             return self.error(400, f"JSON 파싱 실패: {e}")
+        doc = {k: v for k, v in doc.items() if not str(k).startswith("_")}
         doc["id"] = pid
         errs = validate_pattern(doc)
         if errs:
             return self.json({"ok": False, "errors": errs}, 400)
         doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-        path = os.path.join(PATTERNS, pid + ".json")
+        path = safe_join(PATTERNS, pid + ".json")
         if os.path.exists(path):
             try:
                 with open(path, encoding="utf-8") as f:
                     old = f.read()
                 atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
-            except Exception:
-                pass
+            except Exception as e:
+                return self.error(500, f"백업 실패로 저장을 중단했습니다: {e}")
         atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
         warns = []
         for v in doc.get("variations", []):
@@ -409,8 +491,16 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True, "savedAt": doc["updatedAt"], "warnings": warns, "removedImages": removed})
 
     def serve_image(self, rel):
-        rel = rel.replace("..", "")
-        path = os.path.join(IMAGES, rel)
+        try:
+            parts = [p for p in rel.split("/") if p]
+            if len(parts) != 2:
+                raise ValueError("bad image path")
+            safe_id(parts[0])
+            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", parts[1], re.I):
+                raise ValueError("bad image name")
+            path = safe_join(IMAGES, parts[0], parts[1])
+        except ValueError as e:
+            return self.error(400, str(e))
         if not os.path.isfile(path):
             return self.error(404, "이미지 없음")
         ctype = mimetypes.guess_type(path)[0] or "image/jpeg"
@@ -481,9 +571,14 @@ if __name__ == "__main__":
     ensure_dirs()
 
     if not port_free(PORT):
-        print(f"[!] {PORT} 포트가 이미 사용 중입니다. 기존 서버가 떠 있으면 그대로 쓰세요.")
-        print(f"    http://localhost:{PORT}")
-        sys.exit(0)
+        for cand in range(PORT + 1, PORT + 21):
+            if port_free(cand):
+                PORT = cand
+                break
+        else:
+            print(f"[!] {PORT} 근처에 빈 포트가 없습니다. --port 로 지정하세요.")
+            sys.exit(1)
+        print(f"[i] 기본 포트가 사용 중이라 {PORT} 로 엽니다.")
 
     srv = Server(("127.0.0.1", PORT), Handler)
     print("=" * 54)
