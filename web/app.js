@@ -174,9 +174,15 @@
       </div>
       ${list.length ? `<div class="grid">${list.map(cardHTML).join("")}</div>`
         : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
-      <div class="foot"><span>${esc(App.config.company || "")} · RDP</span><span>데이터 ${esc(App.config.dataRoot || "")}</span></div>
+      <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
+        <span style="display:flex;gap:12px;align-items:center">
+          <a href="#" id="openfolder" style="text-decoration:underline;text-underline-offset:3px">데이터 폴더 열기</a>
+          <span style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(App.config.dataRoot || "")}</span>
+        </span></div>
     </div>`;
 
+    const of = $("#openfolder");
+    if (of) of.onclick = (e) => { e.preventDefault(); fetch("/api/open-folder").then(() => toast("Finder에서 열었습니다")).catch(() => {}); };
     $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
     const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
     $$(".card").forEach((el) => {

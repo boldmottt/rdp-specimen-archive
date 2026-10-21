@@ -149,6 +149,26 @@ def load_all() -> list:
     return out
 
 
+def gc_images(pid: str, doc: dict) -> list:
+    """JSON에서 참조하지 않는 이미지 파일을 _trash로 이동."""
+    ref = set()
+    for v in doc.get("variations", []):
+        for name in (v.get("images") or []):
+            if name:
+                ref.add(os.path.basename(str(name)))
+    moved = []
+    pdir = os.path.join(IMAGES, pid)
+    if not os.path.isdir(pdir):
+        return moved
+    for f in sorted(os.listdir(pdir)):
+        if not f.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            continue
+        if f not in ref:
+            move_to_trash(os.path.join(pdir, f), f"{pid}_{f}")
+            moved.append(f)
+    return moved
+
+
 def image_meta(pid: str) -> dict:
     d = {}
     pdir = os.path.join(IMAGES, pid)
@@ -189,7 +209,8 @@ def open_image(raw: bytes):
 def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
     im = open_image(raw)
     W, H = im.size
-    if crop and all(k in crop for k in ("x", "y", "w", "h")):
+    has_crop = bool(crop) and all(crop.get(k) not in (None, "", "None") for k in ("x", "y", "w", "h"))
+    if has_crop:
         x, y, w, h = (float(crop[k]) for k in ("x", "y", "w", "h"))
         x = max(0.0, min(x, W - 1))
         y = max(0.0, min(y, H - 1))
@@ -384,7 +405,8 @@ class Handler(BaseHTTPRequestHandler):
             for layer, cnt in per.items():
                 if cnt > 1:
                     warns.append(f"{v.get('id')} {layer}에 기준 배합이 {cnt}개")
-        return self.json({"ok": True, "savedAt": doc["updatedAt"], "warnings": warns})
+        removed = gc_images(pid, doc)
+        return self.json({"ok": True, "savedAt": doc["updatedAt"], "warnings": warns, "removedImages": removed})
 
     def serve_image(self, rel):
         rel = rel.replace("..", "")
