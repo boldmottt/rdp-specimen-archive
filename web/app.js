@@ -318,9 +318,9 @@
         <div class="side">
           <div class="colorcard">
             <div class="eyebrow" style="margin:0">Color</div>
-            <div class="cc-name">${esc(v.colorName || "기본")}</div>
-            ${v.colorCode ? `<div class="cc-code">${esc(v.colorCode)}</div>` : ""}
-            <div class="cc-row"><span>${esc(dash(v.status))}</span><span>${esc(fmtDate(v.date))}</span><span>${mixes.length} 배합</span></div>
+            <div class="cc-name">${esc(vName(v))}</div>
+            ${v.colorName && v.colorCode ? `<div class="cc-code">${esc(v.colorCode)}</div>` : ""}
+            <div class="cc-row"><span>${esc(dash(v.status))}</span><span>${esc(fmtDate(v.date))}</span>${App.meeting ? "" : `<span>${mixes.length} 배합</span>`}</div>
           </div>
           <section class="sec sec-tight"><h3>도장</h3>
             ${(v.coating || []).length ? (v.coating || []).map((c) => `<div style="margin-bottom:8px;font-size:12.5px"><b style="font-family:var(--mono);font-weight:600">${esc(c.code || "—")}</b><div style="color:#8d9198;font-size:11.5px">${esc([c.maker, c.lot].filter(Boolean).join(" · ") || "")}</div></div>`).join("") : '<p style="color:#8d9198;font-size:12.5px">—</p>'}
@@ -427,8 +427,8 @@
       ${v.images && v.images.length ? `<img class="p-img" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="p-img"></div>'}
       <div class="p-body">
         <div class="p-sec"><h4>SPECIFICATION</h4><dl>
-          ${v.colorName ? `<dt>Color</dt><dd>${esc(v.colorName)}</dd>` : ""}
-          <dt>Color Code</dt><dd class="mono">${esc(dash(v.colorCode))}</dd>
+          <dt>Color</dt><dd>${esc(vName(v))}</dd>
+          ${v.colorName && v.colorCode ? `<dt>Color Code</dt><dd class="mono">${esc(v.colorCode)}</dd>` : ""}
           <dt>Item</dt><dd>${esc(dash(p.label.item))}</dd>
           <dt>Type</dt><dd>${esc(dash(p.label.type))}</dd>
           <dt>동판</dt><dd class="mono">${esc((p.work.plate || []).join(", ") || "—")}</dd>
@@ -495,16 +495,17 @@
         ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="width:170mm;height:70mm;background:#efede8"></div>'}
         <span class="ab">${letters[i]}</span>
       </div>`).join("");
-    const legend = vars.map((v, i) => `<div>
+    const legend = vars.map((v, i) => {
+      const codes = (v.coating || []).map((c) => c.code).filter(Boolean).filter((c) => c !== v.colorCode);
+      const nm = [vName(v), v.colorName ? v.colorCode : ""].filter(Boolean).join(" · ");
+      return `<div>
         <b>${letters[i]}</b>
-        <span class="cn">${esc(v.colorName || "기본")}</span>
-        ${v.colorCode ? `<span>${esc(v.colorCode)}</span>` : ""}
-        ${(() => { const cs = (v.coating || []).map((c) => c.code).filter(Boolean);
-                   const uniq = cs.filter((c) => c !== v.colorCode);
-                   return uniq.length ? `<span>도장 ${esc(uniq.join(", "))}</span>` : ""; })()}
-        ${v.status ? `<span>${esc(v.status)}</span>` : ""}
-        ${v.date ? `<span>${esc(fmtDate(v.date))}</span>` : ""}
-      </div>`).join("");
+        <span class="cn">${esc(nm)}</span>
+        <span>${codes.length ? "도장 " + esc(codes.join(", ")) : "—"}</span>
+        <span>${esc(v.status || "—")}</span>
+        <span class="dt">${v.date ? esc(fmtDate(v.date)) : "—"}</span>
+      </div>`;
+    }).join("");
     return `<section class="sheet s-page">
       <div class="p-head"><div>
         <div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div>
@@ -512,7 +513,10 @@
         <div class="pname">컬러 비교 · ${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · "))}${parts > 1 ? ` (계속 ${part}/${parts})` : ""}</div>
       </div><div class="ptag">${esc(p.project)}<br>${esc(p.client)}</div></div>
       <div class="cmp-stack">${cells}</div>
-      <div class="cmp-legend">${legend}</div>
+      <div class="cmp-legend">
+        <div class="lg-head"><b></b><span>COLOR</span><span>도장</span><span>상태</span><span class="dt">날짜</span></div>
+        ${legend}
+      </div>
       <div class="p-strip">
         ${p.label.item ? `<div><span>ITEM</span>${esc(p.label.item)}</div>` : ""}
         ${p.label.type ? `<div><span>TYPE</span>${esc(p.label.type)}</div>` : ""}
