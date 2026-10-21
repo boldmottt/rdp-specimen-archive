@@ -132,6 +132,80 @@
     clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 1800);
   }
 
+  /* ---------------- inline edit ---------------- */
+  async function inlineSave(pid, mutate) {
+    const p = byId(pid);
+    if (!p) return;
+    const draft = clone(p);
+    delete draft._file; delete draft._mtime;
+    if (mutate(draft) === false) return;
+    const payload = {};
+    Object.keys(draft).forEach((k) => { if (!k.startsWith("_")) payload[k] = draft[k]; });
+    try {
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(pid)}`, payload, p.updatedAt);
+      const saved = draft;
+      saved.updatedAt = r.savedAt || saved.updatedAt;
+      saved._mtime = Date.now();
+      const i = App.patterns.findIndex((x) => x.id === pid);
+      if (i >= 0) App.patterns[i] = saved;
+      toast("저장됨");
+    } catch (e) {
+      if (e.status === 409) toast("다른 곳에서 먼저 저장되었습니다 — 새로고침하세요");
+      else toast("저장 실패: " + e.message);
+    }
+  }
+
+  function startInline(el, pid, vid) {
+    if (el.dataset.editing) return;
+    const path = el.dataset.f;
+    const isVar = path.startsWith("v.");
+    const rel = isVar ? path.slice(2) : path;
+    const p = byId(pid);
+    const v = varOf(p, vid);
+    const src = isVar ? v : p;
+    if (!src) return;
+    let cur = rel.split(".").reduce((a, k) => (a == null ? null : a[k]), src);
+    if (Array.isArray(cur)) cur = cur.join(", ");
+    const prev = el.innerHTML;
+    const multi = /note|remark/.test(rel);
+    el.dataset.editing = "1";
+    el.innerHTML = multi ? '<textarea class="inline-input" rows="3"></textarea>' : '<input class="inline-input">';
+    const inp = el.firstElementChild;
+    inp.value = cur == null ? "" : String(cur);
+    if (path === "v.colorName") inp.placeholder = "컬러명 (비우면 컬러코드로 표시)";
+    if (path === "v.colorCode") inp.placeholder = "컬러코드";
+    inp.focus();
+    if (inp.select) inp.select();
+
+    const restore = () => { delete el.dataset.editing; el.innerHTML = prev; };
+    const commit = async () => {
+      if (!el.dataset.editing) return;
+      const val = inp.value.trim();
+      restore();
+      if ((cur == null ? "" : String(cur)) === val) return;
+      await inlineSave(pid, (d) => {
+        const tgt = isVar ? (d.variations || []).find((x) => x.id === v.id) : d;
+        if (!tgt) return false;
+        const keys = rel.split(".");
+        let o = tgt;
+        for (let i = 0; i < keys.length - 1; i++) {
+          if (o[keys[i]] == null || typeof o[keys[i]] !== "object") o[keys[i]] = {};
+          o = o[keys[i]];
+        }
+        o[keys[keys.length - 1]] = /plate/i.test(rel)
+          ? val.split(",").map((s) => s.trim()).filter(Boolean)
+          : val;
+        return true;
+      });
+      renderDetail(pid, v.id);
+    };
+    inp.onblur = commit;
+    inp.onkeydown = (e) => {
+      if (e.key === "Enter" && !multi) { e.preventDefault(); inp.blur(); }
+      if (e.key === "Escape") { e.preventDefault(); inp.onblur = null; restore(); }
+    };
+  }
+
   /* ---------------- catalog ---------------- */
   function filtered() {
     const q = App.q.trim().toLowerCase();
@@ -309,7 +383,7 @@
     }).join("");
 
     $("#view").innerHTML = `<div class="wrap">
-      <div class="back" id="back"><svg viewBox="0 0 24 24" style="width:13px;height:13px;stroke:currentColor;stroke-width:2;fill:none"><path d="M15 5 8 12l7 7"/></svg>목차로</div>
+
       <div class="detail${App.meeting ? " meeting" : ""}">
         <div class="span2 d-head-row">
           <div>
@@ -333,40 +407,44 @@
         <div class="side">
           <div class="colorcard">
             <div class="eyebrow" style="margin:0">Color</div>
-            <div class="cc-name">${esc(vName(v))}</div>
-            ${v.colorName && v.colorCode ? `<div class="cc-code">${esc(v.colorCode)}</div>` : ""}
-            <div class="cc-row"><span>${esc(dash(v.status))}</span><span>${esc(fmtDate(v.date))}</span>${App.meeting ? "" : `<span>${mixes.length} 배합</span>`}</div>
+            <div class="cc-name${v.colorName ? "" : " is-code"}" data-f="v.colorName" title="클릭해서 컬러명 수정">${esc(vName(v))}</div>
+            ${v.colorName ? `<div class="cc-code" data-f="v.colorCode" title="클릭해서 컬러코드 수정">${esc(v.colorCode || "컬러코드")}</div>` : ""}
+            <div class="cc-row">
+              <span class="${v.status ? "" : "is-empty"}" data-f="v.status">${esc(v.status || "상태")}</span>
+              <span data-f="v.date">${esc(v.date ? fmtDate(v.date) : "날짜")}</span>
+              ${App.meeting ? "" : `<span>${mixes.length} 배합</span>`}
+            </div>
           </div>
           <section class="sec sec-tight"><h3>도장</h3>
             ${(v.coating || []).length ? (v.coating || []).map((c) => `<div style="margin-bottom:8px;font-size:12.5px"><b style="font-family:var(--mono);font-weight:600">${esc(c.code || "—")}</b><div style="color:#8d9198;font-size:11.5px">${esc([c.maker, c.lot].filter(Boolean).join(" · ") || "")}</div></div>`).join("") : '<p style="color:#8d9198;font-size:12.5px">—</p>'}
           </section>
           <section class="sec sec-plate"><h3>동판</h3>
-            ${(p.work.plate || []).length ? `<span class="chipline">${p.work.plate.map((x) => `<span class="mini">${esc(x)}</span>`).join("")}</span>` : "—"}
+            <div class="plate-edit" data-f="work.plate">${(p.work.plate || []).length ? `<span class="chipline">${p.work.plate.map((x) => `<span class="mini">${esc(x)}</span>`).join("")}</span>` : '<span class="is-empty">동판</span>'}</div>
           </section>
-          ${v.note ? `<div class="d-note">${esc(v.note)}</div>` : ""}
+          <div class="d-note" data-f="v.note">${esc(v.note || "메모 추가")}</div>
         </div>
 
         <div class="span2 split2">
           <section class="sec"><h3>라벨 정보</h3>
             <dl class="kv">
-              <dt>Company</dt><dd>${esc(dash(p.client))}</dd>
-              <dt>Project</dt><dd class="mono">${esc(p.project)}</dd>
-              <dt>Pattern Code</dt><dd class="mono">${esc(p.pattern.code)}</dd>
-              <dt>Pattern Name</dt><dd>${esc(dash(p.pattern.name))}</dd>
-              <dt>Item</dt><dd>${esc(dash(p.label.item))}</dd>
-              <dt>Type</dt><dd>${esc(dash(p.label.type))}</dd>
-              <dt>Supplier</dt><dd>${esc(dash(p.label.supplier))}</dd>
-              ${p.label.remark ? `<dt>Remark</dt><dd>${esc(p.label.remark)}</dd>` : ""}
+              <dt>Company</dt><dd data-f="client">${esc(dash(p.client))}</dd>
+              <dt>Project</dt><dd class="mono" data-f="project">${esc(p.project)}</dd>
+              <dt>Pattern Code</dt><dd class="mono" data-f="pattern.code">${esc(p.pattern.code)}</dd>
+              <dt>Pattern Name</dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
+              <dt>Item</dt><dd data-f="label.item">${esc(dash(p.label.item))}</dd>
+              <dt>Type</dt><dd data-f="label.type">${esc(dash(p.label.type))}</dd>
+              <dt>Supplier</dt><dd data-f="label.supplier">${esc(dash(p.label.supplier))}</dd>
+              <dt>Remark</dt><dd data-f="label.remark">${esc(p.label.remark || "—")}</dd>
             </dl>
           </section>
           <section class="sec"><h3>작업 정보</h3>
             <dl class="kv">
-              <dt>작업 장소</dt><dd>${esc(dash(p.work.place))}</dd>
-              <dt>작업자</dt><dd>${esc(dash(p.work.worker))}</dd>
-              <dt>설비</dt><dd>${esc(dash(p.work.machine))}</dd>
-              <dt>양산 일정</dt><dd>${esc(dash(p.work.sop))}</dd>
-              <dt>엠보</dt><dd>${esc(dash(p.work.emboss))}</dd>
-              <dt>패드</dt><dd>${esc(dash(p.work.pad))}</dd>
+              <dt>작업 장소</dt><dd data-f="work.place">${esc(dash(p.work.place))}</dd>
+              <dt>작업자</dt><dd data-f="work.worker">${esc(dash(p.work.worker))}</dd>
+              <dt>설비</dt><dd data-f="work.machine">${esc(dash(p.work.machine))}</dd>
+              <dt>양산 일정</dt><dd data-f="work.sop">${esc(dash(p.work.sop))}</dd>
+              <dt>엠보</dt><dd data-f="work.emboss">${esc(dash(p.work.emboss))}</dd>
+              <dt>패드</dt><dd data-f="work.pad">${esc(dash(p.work.pad))}</dd>
             </dl>
           </section>
         </div>
@@ -380,11 +458,14 @@
       </div>
     </div>`;
 
-    $("#back").onclick = () => (location.hash = "");
     $("#addbtn").onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
     $("#editbtn").onclick = () => openEditor(pid, v.id);
     $("#meetingbtn").onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
     paintDots();
+    $$("[data-f]").forEach((el) => {
+      el.title = "클릭해서 수정";
+      el.onclick = (e) => { e.stopPropagation(); startInline(el, pid, v.id); };
+    });
     $$("[data-vsel]").forEach((el) => (el.onclick = () => { location.hash = `#/p/${encodeURIComponent(pid)}/${encodeURIComponent(el.dataset.vsel)}`; }));
     $$(".thumbs img").forEach((el) => (el.onclick = () => {
       const m = $("#mainimg img"); if (m) m.src = el.dataset.img;
@@ -658,7 +739,8 @@
     pruneCart();
     const bar = $("#cartbar");
     $("#cartbtn-n").textContent = App.cart.length;
-    if (!App.cart.length) { bar.className = "cartbar"; bar.innerHTML = ""; return; }
+    const onCatalog = !location.hash || location.hash === "#";
+    if (!App.cart.length || !onCatalog) { bar.className = "cartbar"; bar.innerHTML = ""; return; }
     const items = cartItems();
     const thumbs = items.slice(0, 4).map(({ p, v }) => v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : "").join("");
     bar.className = "cartbar show";
@@ -1258,6 +1340,8 @@
   /* ---------------- router ---------------- */
   function rerender() {
     const h = location.hash.replace(/^#/, "");
+    const nav = $("#navhome");
+    if (nav) nav.style.display = h ? "" : "none";
     if (h.indexOf("/p/") === 0) {
       const parts = h.slice(3).split("/");
       renderDetail(decodeURIComponent(parts[0]), parts[1] ? decodeURIComponent(parts[1]) : null);
@@ -1276,6 +1360,7 @@
     loadLS();
     bindCrop();
     $("#brand").onclick = () => (location.hash = "");
+    $("#navhome").onclick = () => (location.hash = "");
     $("#cartbtn").onclick = () => (location.hash = "#/proposal");
     $("#newbtn").onclick = () => openEditor(null, null);
     $("#drawer-close").onclick = () => closeEditor();

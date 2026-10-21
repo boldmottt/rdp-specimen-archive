@@ -417,3 +417,14 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .p-title span{font-size:7.5px;letter-spacing:.16em;color:#8d9198}
 .p-title h2{margin:1.5mm 0 0;font-size:26px;letter-spacing:-.035em;font-family:var(--mono);font-weight:600;line-height:1.1}
 .p-title .pname{font-size:11.5px;color:#5b5f66;margin-top:1.2mm}
+
+/* 인라인 편집 */
+[data-f]{cursor:text;border-bottom:1px dotted rgba(20,21,23,.16);transition:border-color .15s,background .15s;border-radius:2px}
+[data-f]:hover{border-bottom-color:rgba(20,21,23,.55);background:rgba(20,21,23,.03)}
+[data-f] .is-empty,.is-empty{color:#b9b6ae}
+.d-note[data-f]{min-height:1.6em}
+.d-note[data-f]:empty:before{content:"메모 추가";color:#b9b6ae}
+.inline-input{width:100%;font:inherit;font-size:inherit;line-height:inherit;color:var(--ink);padding:2px 6px;border:1px solid var(--ink);border-radius:5px;background:#fff;outline:none}
+textarea.inline-input{min-height:64px;resize:vertical}
+.cc-name.is-empty{color:#b9b6ae;font-weight:500}
+.cc-name.is-code{font-family:var(--mono);font-size:16px;letter-spacing:.01em}
