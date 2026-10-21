@@ -9,6 +9,7 @@ RDP 시편 아카이브 v2 — 로컬 서버
        python3 server.py --port 9000
 """
 import argparse
+import base64
 import io
 import json
 import mimetypes
@@ -677,6 +678,38 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _access_ok(self) -> bool:
+        """Cloudflare Access 뒤에 있을 때, 인증된 요청만 통과시킨다.
+        (Access를 꺼먹거나 잘못 설정해도 앱이 인터넷에 그냥 열리지 않게 하는 안전장치)"""
+        if not CFG.get("requireCfAccess"):
+            return True
+        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+        if host in ("localhost", "127.0.0.1", "[::1]", "::1"):
+            return True  # 이 맥에서 직접 접속
+        jwt = (self.headers.get("Cf-Access-Jwt-Assertion") or "").strip()
+        if not jwt:
+            return False
+        try:
+            part = jwt.split(".")[1]
+            part += "=" * (-len(part) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(part.encode()))
+        except Exception:
+            return False
+        exp = payload.get("exp")
+        if exp and time.time() > float(exp):
+            return False
+        aud = CFG.get("cfAccessAud")
+        if aud:
+            allowed = aud if isinstance(aud, list) else [aud]
+            have = payload.get("aud")
+            have = have if isinstance(have, list) else [have]
+            if not set(map(str, have)) & set(map(str, allowed)):
+                return False
+        want_mail = (CFG.get("cfAccessEmail") or "").strip().lower()
+        if want_mail and (payload.get("email") or "").strip().lower() != want_mail:
+            return False
+        return True
+
     def _write_ok(self) -> bool:
         """상태 변경 요청이 같은 오리진에서 왔는지 확인 (CSRF 방지)."""
         origin = (self.headers.get("Origin") or "").strip()
@@ -715,6 +748,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if not self._access_ok():
+            return self.error(403, "Cloudflare Access 인증이 필요합니다")
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -796,6 +831,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if not self._access_ok():
+            return self.error(403, "Cloudflare Access 인증이 필요합니다")
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
@@ -895,6 +932,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if not self._access_ok():
+            return self.error(403, "Cloudflare Access 인증이 필요합니다")
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
@@ -987,6 +1026,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if not self._access_ok():
+            return self.error(403, "Cloudflare Access 인증이 필요합니다")
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         p = unquote(urlparse(self.path).path)
@@ -1168,6 +1209,11 @@ def port_free(port, host="127.0.0.1"):
 PORT = CFG.get("port", 8791)
 
 if __name__ == "__main__":
+    try:  # launchd/파이프로 실행해도 배너가 바로 보이게
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=CFG.get("port", 8791))
     ap.add_argument("--no-browser", action="store_true")
@@ -1221,10 +1267,14 @@ if __name__ == "__main__":
         SAFE_HOSTS.add(socket.gethostname().lower())
 
     srv = Server((bind_addr, PORT), Handler)
+    tunnel_hosts = [h for h in (CFG.get("allowHosts") or []) if h and h not in ("localhost", "127.0.0.1")]
     print("=" * 54)
     print("  RDP 시편 아카이브 v2")
     print(f"  데이터  {DATA}")
     print(f"  주소    http://localhost:{PORT}")
+    if tunnel_hosts:
+        mode = "Cloudflare Access 인증 필수" if CFG.get("requireCfAccess") else "인증 없음 (위험)"
+        print(f"  터널    https://{tunnel_hosts[0]}   ({mode})")
     if bind_addr == "0.0.0.0":
         for ip in sorted(lan_ips):
             print(f"  외부    http://{ip}:{PORT}   (같은 네트워크에서 접속)")
