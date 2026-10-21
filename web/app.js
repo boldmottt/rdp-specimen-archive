@@ -713,7 +713,7 @@
     const flat = groups.reduce((a, g) => a.concat(g.vars.map((v) => ({ p: g.p, v }))), []);
     const thumbs = flat.map(({ p, v }) => `<figure>
       ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="aspect-ratio:170/70;background:#efede8"></div>'}
-      <figcaption>${esc(p.pattern.code)}${v.colorName ? " · " + esc(v.colorName) : ""}</figcaption></figure>`).join("");
+      <figcaption>${esc(p.pattern.code)}${(v.colorName || v.colorCode) ? " · " + esc(v.colorName || v.colorCode) : ""}</figcaption></figure>`).join("");
     return `<section class="sheet s-cover">
       <div class="cov-top"><div class="cov-brand">${esc(App.config.brand || "RDP")}<span>${esc(App.config.brandSub || "SPECIMEN ARCHIVE")}</span></div>
       <div class="dt">${esc(fmtDate(d))}<br><span class="docno">${esc(docLabel())}</span></div></div>
@@ -724,7 +724,7 @@
         <div><dt>Prepared by</dt><dd>${esc(App.prop.by || "—")}</dd></div>
       </div>
       <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div>
-        <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : flat.length <= 9 ? 3 : flat.length <= 16 ? 4 : 5},1fr)">${thumbs}</div></div>
+        <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : 4},1fr)">${thumbs}</div></div>
       <div class="cov-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
   }
