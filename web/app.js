@@ -68,8 +68,6 @@
     return j;
   }
   async function apiUpload(pid, vid, slot, blob, crop) {
-    const qs = new URLSearchParams({ slot: String(slot) });
-    if (crop) qs.set("crop", JSON.stringify(crop));
     const q = crop ? `?slot=${slot}&x=${crop.x}&y=${crop.y}&w=${crop.w}&h=${crop.h}` : `?slot=${slot}`;
     const r = await fetch(`/api/image/${encodeURIComponent(pid)}/${encodeURIComponent(vid)}${q}`, {
       method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: blob,
@@ -349,7 +347,8 @@
   /* ---------------- proposal ---------------- */
   function cartItems() {
     return App.cart.map((c) => {
-      const p = byId(c.pid); const v = p ? varOf(p, c.vid) : null;
+      const p = byId(c.pid);
+      const v = p ? (p.variations || []).find((x) => x.id === c.vid) : null;
       return p && v ? { p, v } : null;
     }).filter(Boolean);
   }
@@ -559,7 +558,17 @@
   }
 
   /* ---------------- cart bar ---------------- */
+  function pruneCart() {
+    const before = App.cart.length;
+    App.cart = App.cart.filter((c) => {
+      const p = byId(c.pid);
+      return p && (p.variations || []).some((v) => v.id === c.vid);
+    });
+    if (App.cart.length !== before) saveLS();
+  }
+
   function renderCart() {
+    pruneCart();
     const bar = $("#cartbar");
     $("#cartbtn-n").textContent = App.cart.length;
     if (!App.cart.length) { bar.className = "cartbar"; bar.innerHTML = ""; return; }
@@ -586,15 +595,22 @@
     if (pid) { delete E.draft._file; delete E.draft._mtime; }
     E.vIdx = Math.max(0, E.draft.variations.findIndex((v) => v.id === vid));
     if (E.vIdx < 0) E.vIdx = 0;
-    E.tab = "base"; E.msg = "";
+    E.tab = "base"; E.msg = ""; E.origJson = JSON.stringify(E.draft); E.jsonErr = null;
     $("#drawer-title").textContent = pid ? byId(pid).pattern.code + " 편집" : "새 시편";
     syncTabs();
     renderDrawer();
     $("#drawer").classList.add("on"); $("#drawer-scrim").classList.add("on");
   }
-  function closeEditor() {
+  function isDirty() {
+    return !!(E.draft && E.origJson && JSON.stringify(E.draft) !== E.origJson);
+  }
+
+  function closeEditor(force) {
+    if (!force && isDirty()) {
+      if (!confirm("저장하지 않은 변경이 있습니다. 닫을까요?")) return;
+    }
     $("#drawer").classList.remove("on"); $("#drawer-scrim").classList.remove("on");
-    E.draft = null;
+    E.draft = null; E.origJson = null;
   }
   function syncTabs() { $$("#drawer-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === E.tab)); }
 
@@ -881,8 +897,18 @@
       const saved = clone(d); saved._mtime = Date.now();
       if (r.savedAt) { saved.updatedAt = r.savedAt; E.baseRev = r.savedAt; }
       if (idx >= 0) App.patterns[idx] = saved; else App.patterns.push(saved);
+      const vids = new Set((d.variations || []).map((v) => v.id));
+      App.cart = App.cart.filter((c) => c.pid !== d.id || vids.has(c.vid));
+      if (App.prop.comments) {
+        Object.keys(App.prop.comments).forEach((k) => {
+          const [pid, vid] = k.split("::");
+          if (pid === d.id && !vids.has(vid)) delete App.prop.comments[k];
+        });
+      }
+      saveLS();
       E.msg = "저장됨 " + (r.savedAt || "");
       E.isNew = false;
+      E.origJson = JSON.stringify(saved);
       toast("저장됨");
       rerender();
       closeEditor();
@@ -906,10 +932,56 @@
   }
 
   /* ---------------- crop ---------------- */
-  const C = { file: null, img: null, z: 1, tx: 0, ty: 0, W: 0, H: 0, slot: 1 };
+  const C = { file: null, img: null, z: 1, cx: 0.5, cy: 0.5, slot: 1 };
+
+  function stageSize() {
+    const el = $("#crop-stage");
+    return { W: el.clientWidth, H: el.clientHeight };
+  }
+  function baseScale(W, H) {
+    return Math.max(W / C.img.naturalWidth, H / C.img.naturalHeight);
+  }
+  function clampC() {
+    if (!C.img) return;
+    const { W, H } = stageSize();
+    if (!W || !H) return;
+    const s = baseScale(W, H) * C.z;
+    const visW = W / s / C.img.naturalWidth;
+    const visH = H / s / C.img.naturalHeight;
+    const mx = Math.max(0, (1 - visW) / 2);
+    const my = Math.max(0, (1 - visH) / 2);
+    C.cx = Math.min(1 - mx, Math.max(mx, C.cx));
+    C.cy = Math.min(1 - my, Math.max(my, C.cy));
+  }
+  function layoutCrop() {
+    if (!C.img) return;
+    const { W, H } = stageSize();
+    if (!W || !H) return;
+    clampC();
+    const s = baseScale(W, H) * C.z;
+    const dw = C.img.naturalWidth * s, dh = C.img.naturalHeight * s;
+    const left = W / 2 - C.cx * dw;
+    const top = H / 2 - C.cy * dh;
+    const el = $("#crop-img");
+    el.style.width = dw + "px";
+    el.style.height = dh + "px";
+    el.style.transform = `translate(${left}px, ${top}px)`;
+  }
+  function cropRect() {
+    const { W, H } = stageSize();
+    const s = baseScale(W, H) * C.z;
+    const sw = W / s, sh = H / s;
+    const iw = C.img.naturalWidth, ih = C.img.naturalHeight;
+    let x = C.cx * iw - sw / 2;
+    let y = C.cy * ih - sh / 2;
+    x = Math.max(0, Math.min(x, Math.max(0, iw - sw)));
+    y = Math.max(0, Math.min(y, Math.max(0, ih - sh)));
+    return { x, y, w: Math.min(sw, iw), h: Math.min(sh, ih) };
+  }
 
   function startCrop(file, opt) {
-    C.file = file; C.slot = (opt && opt.slot) || 1; C.z = 1; C.tx = 0; C.ty = 0;
+    C.file = file; C.slot = (opt && opt.slot) || 1;
+    C.z = 1; C.cx = 0.5; C.cy = 0.5;
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
@@ -918,55 +990,65 @@
       $("#crop-modal").classList.add("on");
       $("#crop-zoom").value = 100;
       $("#crop-info").textContent = `원본 ${img.naturalWidth}×${img.naturalHeight}`;
-      requestAnimationFrame(() => {
-        const stage = $("#crop-stage");
-        C.W = stage.clientWidth; C.H = stage.clientHeight;
-        layoutCrop();
-      });
+      requestAnimationFrame(layoutCrop);
     };
-    img.onerror = () => { toast("이미지를 읽을 수 없습니다"); URL.revokeObjectURL(url); };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      if (/\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type || "")) {
+        toast("HEIC 미리보기 불가 — 가운데 기준으로 잘라 저장합니다");
+        uploadCenter();
+      } else {
+        toast("이미지를 읽을 수 없습니다");
+      }
+    };
     img.src = url;
   }
 
-  function baseScale() {
-    if (!C.img) return 1;
-    return Math.max(C.W / C.img.naturalWidth, C.H / C.img.naturalHeight);
+  async function commitUpload(res) {
+    const v = E.draft.variations[E.vIdx];
+    v.images = v.images || [];
+    v.images[C.slot - 1] = res.file;
+    v.images = v.images.filter(Boolean);
+    renderDrawer();
+    toast(res.lowRes ? "저장됨 · 해상도가 낮습니다 (" + res.sourceWidth + "px)" : "이미지 저장됨");
   }
-  function clampT() {
-    const s = baseScale() * C.z;
-    const dw = C.img.naturalWidth * s, dh = C.img.naturalHeight * s;
-    const mx = Math.max(0, (dw - C.W) / 2), my = Math.max(0, (dh - C.H) / 2);
-    C.tx = Math.min(mx, Math.max(-mx, C.tx));
-    C.ty = Math.min(my, Math.max(-my, C.ty));
-  }
-  function layoutCrop() {
-    if (!C.img) return;
-    clampT();
-    const s = baseScale() * C.z;
-    const dw = C.img.naturalWidth * s, dh = C.img.naturalHeight * s;
-    const left = (C.W - dw) / 2 + C.tx;
-    const top = (C.H - dh) / 2 + C.ty;
-    const el = $("#crop-img");
-    el.style.width = dw + "px"; el.style.height = dh + "px";
-    el.style.transform = `translate(${left}px, ${top}px)`;
-  }
-  function cropRect() {
-    const s = baseScale() * C.z;
-    const dw = C.img.naturalWidth * s, dh = C.img.naturalHeight * s;
-    const left = (C.W - dw) / 2 + C.tx;
-    const top = (C.H - dh) / 2 + C.ty;
-    const x = -left / s, y = -top / s, w = C.W / s, h = C.H / s;
-    return { x: Math.max(0, x), y: Math.max(0, y), w: Math.min(w, C.img.naturalWidth - Math.max(0, x)), h: Math.min(h, C.img.naturalHeight - Math.max(0, y)) };
+
+  async function uploadCenter() {
+    try {
+      const pid = E.draft.id || (E.draft.project + "-" + E.draft.pattern.code).replace(/[^\w.-]/g, "-");
+      const vid = E.draft.variations[E.vIdx].id;
+      const res = await apiUpload(pid, vid, C.slot, C.file, null);
+      await commitUpload(res);
+    } catch (e) { toast("업로드 실패: " + e.message); }
   }
 
   function bindCrop() {
     const stage = $("#crop-stage");
-    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
-    stage.addEventListener("pointerdown", (e) => { dragging = true; sx = e.clientX; sy = e.clientY; ox = C.tx; oy = C.ty; stage.setPointerCapture(e.pointerId); });
-    stage.addEventListener("pointermove", (e) => { if (!dragging) return; C.tx = ox + (e.clientX - sx); C.ty = oy + (e.clientY - sy); layoutCrop(); });
-    stage.addEventListener("pointerup", () => (dragging = false));
-    stage.addEventListener("pointercancel", () => (dragging = false));
-    $("#crop-zoom").addEventListener("input", (e) => { C.z = Number(e.target.value) / 100; layoutCrop(); });
+    let dragging = false, sx = 0, sy = 0, scx = 0.5, scy = 0.5;
+    stage.addEventListener("pointerdown", (e) => {
+      if (!C.img) return;
+      dragging = true; sx = e.clientX; sy = e.clientY; scx = C.cx; scy = C.cy;
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    stage.addEventListener("pointermove", (e) => {
+      if (!dragging || !C.img) return;
+      const { W, H } = stageSize();
+      const s = baseScale(W, H) * C.z;
+      const dw = C.img.naturalWidth * s, dh = C.img.naturalHeight * s;
+      C.cx = scx - (e.clientX - sx) / dw;
+      C.cy = scy - (e.clientY - sy) / dh;
+      layoutCrop();
+    });
+    const stop = () => (dragging = false);
+    stage.addEventListener("pointerup", stop);
+    stage.addEventListener("pointercancel", stop);
+    $("#crop-zoom").addEventListener("input", (e) => {
+      C.z = Number(e.target.value) / 100;
+      layoutCrop();
+    });
+    window.addEventListener("resize", () => {
+      if ($("#crop-modal").classList.contains("on")) layoutCrop();
+    });
     $("#crop-cancel").onclick = $("#crop-cancel2").onclick = () => $("#crop-modal").classList.remove("on");
     $("#crop-ok").onclick = async () => {
       const rect = cropRect();
@@ -975,13 +1057,8 @@
         const pid = E.draft.id || (E.draft.project + "-" + E.draft.pattern.code).replace(/[^\w.-]/g, "-");
         const vid = E.draft.variations[E.vIdx].id;
         const res = await apiUpload(pid, vid, C.slot, C.file, rect);
-        const v = E.draft.variations[E.vIdx];
-        v.images = v.images || [];
-        v.images[C.slot - 1] = res.file;
-        v.images = v.images.filter(Boolean);
         $("#crop-modal").classList.remove("on");
-        renderDrawer();
-        toast(res.lowRes ? "저장됨 · 해상도가 낮습니다 (" + res.sourceWidth + "px)" : "이미지 저장됨");
+        await commitUpload(res);
       } catch (e) {
         toast("업로드 실패: " + e.message);
       } finally {
@@ -1013,11 +1090,14 @@
     $("#brand").onclick = () => (location.hash = "");
     $("#cartbtn").onclick = () => (location.hash = "#/proposal");
     $("#newbtn").onclick = () => openEditor(null, null);
-    $("#drawer-close").onclick = closeEditor;
-    $("#drawer-cancel").onclick = closeEditor;
-    $("#drawer-scrim").onclick = closeEditor;
+    $("#drawer-close").onclick = () => closeEditor();
+    $("#drawer-cancel").onclick = () => closeEditor();
+    $("#drawer-scrim").onclick = () => closeEditor();
     $("#drawer-save").onclick = saveDraft;
-    $$("#drawer-tabs button").forEach((b) => (b.onclick = () => { E.tab = b.dataset.tab; syncTabs(); renderDrawer(); }));
+    $$("#drawer-tabs button").forEach((b) => (b.onclick = () => {
+      if (E.tab === "json" && E.jsonErr) { E.msg = "JSON 문법 오류를 먼저 고치세요"; renderDrawer(); return; }
+      E.tab = b.dataset.tab; syncTabs(); renderDrawer();
+    }));
 
     try {
       const ui = await apiGet("/api/ui");

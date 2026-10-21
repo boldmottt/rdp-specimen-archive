@@ -300,7 +300,7 @@ def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
     low_res = src_w < 1700
     im = im.resize((TARGET_W, TARGET_H), Image.LANCZOS)
 
-    name = f"{vid}-{slot}.jpg"
+    name = f"{vid}-{slot}-{datetime.now().strftime('%H%M%S%f')[:9]}.jpg"
     out_dir = os.path.join(IMAGES, pid)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, name)
@@ -629,6 +629,14 @@ if __name__ == "__main__":
             print(f"[!] {PORT} 근처에 빈 포트가 없습니다. --port 로 지정하세요.")
             sys.exit(1)
         print(f"[i] 기본 포트가 사용 중이라 {PORT} 로 엽니다.")
+
+    try:
+        for doc in load_all()[0]:
+            moved = gc_images(doc["id"], doc)
+            if moved:
+                print(f"[gc] {doc['id']}: {len(moved)}개 정리")
+    except Exception as e:
+        print(f"[gc] 건너뜀: {e}")
 
     srv = Server(("127.0.0.1", PORT), Handler)
     print("=" * 54)

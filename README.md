@@ -97,7 +97,7 @@ python3 server.py --demo    # sample-data 를 임시 폴더에 복사해 실행 
 | GET | `/api/patterns` | 전체 패턴 JSON |
 | PUT | `/api/patterns/<id>` | 저장 (검증 → `_backup` → 원자적 쓰기) |
 | DELETE | `/api/patterns/<id>` | `_trash`로 이동 |
-| PUT | `/api/image/<pid>/<vid>?slot=1&x=..&y=..&w=..&h=..` | 원본 바이트 + 크롭 좌표 → 2400×988 JPEG |
+| PUT | `/api/image/<pid>/<vid>?slot=1&x=..&y=..&w=..&h=..` | 원본 바이트 + 크롭 좌표 → 2400×988 JPEG (파일명은 `v01-1-<시각>.jpg`처럼 매번 새로 생성) |
 | DELETE | `/api/image/<pid>/<filename>` | `_trash`로 이동 |
 | POST | `/api/proposals` | 제안서 스냅샷 저장 |
 | GET/PUT | `/api/ui` | 장바구니·제안서 설정(제목/고객/코멘트) 서버 보관 |
@@ -128,6 +128,8 @@ HEIC는 Pillow가 못 열면 `sips`로 변환한다.
 - **베리에이션**: 추가·복제·삭제. 배합표에서 체크한 행을 **다른 베리에이션으로 이동**할 수 있다
 - **저장**: 명시적 저장 버튼. 서버가 스키마 검증 → `_backup` → 원자적 쓰기
 - **삭제**: `_trash`로 이동 (복구 가능)
+- **업로드는 항상 새 파일명**으로 저장한다. 저장을 누르기 전에 업로드만 하고 닫아도 원본을 덮어쓰지 않으며, 참조되지 않는 파일은 다음 저장(또는 서버 시작) 때 `_trash`로 정리된다
+- **저장하지 않은 변경**이 있으면 드로어를 닫을 때 확인을 받는다
 
 ## 제안서 스냅샷
 
