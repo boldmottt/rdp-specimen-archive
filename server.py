@@ -1105,10 +1105,28 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def port_free(port):
+def local_ips() -> set:
+    ips = set()
+    try:
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sk.settimeout(0.3)
+        sk.connect(("8.8.8.8", 80))
+        ips.add(sk.getsockname()[0])
+        sk.close()
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except Exception:
+        pass
+    return {ip for ip in ips if ip and not ip.startswith("127.")}
+
+
+def port_free(port, host="127.0.0.1"):
     s = socket.socket()
     try:
-        s.bind(("127.0.0.1", port))
+        s.bind((host, port))
         return True
     except OSError:
         return False
@@ -1123,6 +1141,7 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=CFG.get("port", 8791))
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--demo", action="store_true", help="sample-data 로 임시 실행")
+    ap.add_argument("--lan", action="store_true", help="같은 네트워크의 다른 기기에서도 접속 허용")
     args = ap.parse_args()
     PORT = args.port
 
@@ -1161,11 +1180,24 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[gc] 건너뜀: {e}")
 
-    srv = Server(("127.0.0.1", PORT), Handler)
+    bind_addr = "127.0.0.1"
+    lan_ips = set()
+    if args.lan or CFG.get("lan"):
+        bind_addr = "0.0.0.0"
+        lan_ips = local_ips()
+        SAFE_HOSTS.update(lan_ips)
+        SAFE_HOSTS.add(socket.gethostname().lower())
+
+    srv = Server((bind_addr, PORT), Handler)
     print("=" * 54)
     print("  RDP 시편 아카이브 v2")
     print(f"  데이터  {DATA}")
     print(f"  주소    http://localhost:{PORT}")
+    if bind_addr == "0.0.0.0":
+        for ip in sorted(lan_ips):
+            print(f"  외부    http://{ip}:{PORT}   (같은 네트워크에서 접속)")
+    else:
+        print("  외부    꺼짐  (다른 기기에서 열려면 --lan)")
     print("  종료    Ctrl+C  (또는 이 창을 닫기)")
     print("=" * 54)
 

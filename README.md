@@ -72,6 +72,18 @@ python3 server.py                         # http://localhost:8791
 
 `RDP Archive.command` 를 더블클릭하면 같은 일을 한다 (macOS).
 
+### 다른 기기에서 접속
+
+| 범위 | 방법 |
+|---|---|
+| 이 맥만 (기본) | `RDP Archive.command` → `http://localhost:8791` |
+| 같은 와이파이/사내망 | `RDP Archive (LAN).command` → 실행 로그에 찍히는 `http://<맥 IP>:8791` |
+| 다른 네트워크(집 밖) | **Tailscale 권장** — 맥과 접속할 기기에 설치하고 맥의 Tailscale IP로 접속. 포트포워딩·공인 IP 불필요 |
+
+- `--lan`은 서버를 `0.0.0.0`에 바인딩하고, 그 맥의 LAN IP를 Host 허용목록에 자동 추가한다(모르는 Host는 여전히 403).
+- **로그인이 없다.** 같은 네트워크의 누구나 읽고 수정할 수 있으니 신뢰하는 망에서만 켤 것. 외부 공개가 필요하면 Cloudflare Tunnel + Access 같은 인증을 앞에 두는 편이 안전하다.
+- 맥이 잠자기면 접속이 끊긴다. 서버 창을 닫아도 종료된다.
+
 `config.json`:
 
 ```json
