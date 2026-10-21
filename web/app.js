@@ -211,6 +211,7 @@
         </div>
       </section>
       <div class="toolbar">${chips}<div class="spacer"></div>
+        <button class="chip" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
         <div class="selwrap"><select id="sort">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
@@ -230,6 +231,18 @@
     paintDots();
     $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
     const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
+    const sa = $("#syncall");
+    if (sa) sa.onclick = async () => {
+      if (!confirm("RDP-DB의 배합을 모든 시편에 반영할까요?\n(기존 배합 수치는 DB 값으로 갱신되고, 메모는 유지됩니다)")) return;
+      sa.disabled = true; sa.textContent = "동기화 중…";
+      try {
+        const r = await fetch("/api/rdp/sync-all", { method: "POST" }).then((x) => x.json());
+        const fresh = await apiGet("/api/patterns");
+        App.patterns = fresh.patterns || [];
+        renderCatalog();
+        toast(`동기화 완료 · ${r.patterns}개 시편 / 추가 ${r.added} · 갱신 ${r.updated}`);
+      } catch (e) { toast("동기화 실패: " + e.message); sa.disabled = false; sa.textContent = "DB 동기화"; }
+    };
     $$(".card").forEach((el) => {
       el.onclick = (e) => {
         if (e.target.closest("[data-check]") || e.target.closest("[data-sel]")) return;
@@ -782,20 +795,27 @@
 
     if (E.tab === "mixes") {
       const v = d.variations[E.vIdx];
-      const inkCols = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
-      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}<th>소광%</th><th>신나%</th><th>경화%</th><th>결과</th><th>기준</th><th></th></tr>`;
+      const allCols = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
+      const baseCols = ["MT", "BK", "WH", "YE", "RD"];
+      const usedInk = allCols.filter((c) => baseCols.includes(c) || (v.mixes || []).some((m) => m.inks && m.inks[c] != null));
+      const inkCols = usedInk;
+      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = (v.mixes || []).map((m, mi) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:66px"></td>
-        ${inkCols.map((c) => `<td><input data-mf="ink:${c}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:38px"></td>`).join("")}
-        <td><input data-mf="mattingPct" value="${m.mattingPct != null ? m.mattingPct : ""}" style="width:42px"></td>
-        <td><input data-mf="thinnerPct" value="${m.thinnerPct != null ? m.thinnerPct : ""}" style="width:42px"></td>
-        <td><input data-mf="hardenerPct" value="${m.hardenerPct != null ? m.hardenerPct : ""}" style="width:42px"></td>
+        ${inkCols.map((c) => `<td><input data-mf="ink:${c}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
+        <td><input data-mf="mattingPct" value="${m.mattingPct != null ? m.mattingPct : ""}" style="width:36px"></td>
+        <td><input data-mf="thinnerPct" value="${m.thinnerPct != null ? m.thinnerPct : ""}" style="width:36px"></td>
+        <td><input data-mf="hardenerPct" value="${m.hardenerPct != null ? m.hardenerPct : ""}" style="width:36px"></td>
         <td><select data-mf="result" style="width:74px">${Object.keys(RESULT_LABEL).map((k) => `<option value="${k}"${k === (m.result || "") ? " selected" : ""}>${RESULT_LABEL[k]}</option>`).join("")}</select></td>
         <td><input type="checkbox" data-mf="isReference" ${m.isReference ? "checked" : ""}></td>
         <td class="act"><button class="mini-btn danger" data-delmix="${mi}">✕</button></td></tr>`).join("");
-      body = `<div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
+      body = `<div class="rdp-bar">
+          <button class="mini-btn" id="rdpsync">RDP-DB에서 가져오기</button>
+          <span class="hint" id="rdpstat">${App.rdpStatus ? (App.rdpStatus.exists ? "DB 연결됨 · " + (App.rdpStatus.total || 0) + "행" : "DB 경로 없음") : "확인 중…"}</span>
+        </div>
+        <div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
         <div class="tbl-wrap" style="margin:0 -6px"><table class="mix-edit">${head}${rows}</table></div>
         <div style="display:flex;gap:6px;margin-top:12px">
           <button class="mini-btn" id="add-mix">+ 배합 추가</button>
@@ -902,6 +922,27 @@
         el.oninput = handler; el.onchange = handler;
       });
       $$("[data-delmix]").forEach((el) => (el.onclick = () => { v.mixes.splice(Number(el.dataset.delmix), 1); renderDrawer(); }));
+      const sy = $("#rdpsync");
+      if (sy) sy.onclick = async () => {
+        if (isDirty()) { toast("먼저 저장한 뒤 가져오세요"); return; }
+        sy.disabled = true; sy.textContent = "가져오는 중…";
+        try {
+          const r = await fetch(`/api/rdp/sync/${encodeURIComponent(d.id)}`, { method: "POST" }).then((x) => x.json());
+          if (!r.ok) throw new Error(r.error || "동기화 실패");
+          const fresh = await apiGet("/api/patterns");
+          const p2 = (fresh.patterns || []).find((x) => x.id === d.id);
+          const idx = App.patterns.findIndex((x) => x.id === d.id);
+          if (idx >= 0 && p2) App.patterns[idx] = p2;
+          const nv = p2 && (p2.variations || []).find((x) => x.id === r.variation);
+          if (nv) E.draft.variations[E.vIdx].mixes = clone(nv.mixes || []);
+          E.origJson = JSON.stringify(E.draft);
+          renderDrawer();
+          toast(`DB에서 ${r.added}건 추가 · ${r.updated}건 갱신`);
+        } catch (e) {
+          toast("동기화 실패: " + e.message);
+          sy.disabled = false; sy.textContent = "RDP-DB에서 가져오기";
+        }
+      };
       $("#add-mix").onclick = () => { v.mixes.push({ layer: "1도", batch: "", inks: { MT: 0, BK: 0 }, mattingPct: 2, thinnerPct: 30, hardenerPct: 20, result: "", isReference: false, note: "", change: "" }); renderDrawer(); };
       $("#dup-mix").onclick = () => { if (!v.mixes.length) return; const c = clone(v.mixes[v.mixes.length - 1]); c.batch = (c.batch || "") + "-C"; c.isReference = false; v.mixes.push(c); renderDrawer(); };
       const mv = $("#move-mix");
@@ -1189,6 +1230,8 @@
       if (E.tab === "json" && E.jsonErr) { E.msg = "JSON 문법 오류를 먼저 고치세요"; renderDrawer(); return; }
       E.tab = b.dataset.tab; syncTabs(); renderDrawer();
     }));
+
+    try { App.rdpStatus = await apiGet("/api/rdp/status"); } catch (e) {}
 
     try {
       const ui = await apiGet("/api/ui");

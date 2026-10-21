@@ -101,6 +101,9 @@ python3 server.py --demo    # sample-data 를 임시 폴더에 복사해 실행 
 | DELETE | `/api/image/<pid>/<filename>` | `_trash`로 이동 |
 | POST | `/api/proposals` | 제안서 스냅샷 저장 (참조 이미지를 `proposals/<slug>/images/`로 함께 복사) |
 | GET/PUT | `/api/ui` | 장바구니·제안서 설정(제목/고객/코멘트) 서버 보관 |
+| GET | `/api/rdp/status` | rdp.db 연결 상태와 패턴별 배합 수 |
+| POST | `/api/rdp/sync/<id>` | 그 시편의 배합을 rdp.db에서 가져와 병합 |
+| POST | `/api/rdp/sync-all` | 전체 시편 일괄 병합 |
 
 저장 요청에는 `X-Base-Rev: <updatedAt>` 헤더를 함께 보낸다. 서버의 현재 값과 다르면 **409 + 최신 문서**를 돌려주고, 화면은 "다른 곳에서 먼저 저장되었습니다"를 띄운 뒤 최신 내용을 불러올지 묻는다. 패턴 단위 `threading.Lock`으로 같은 파일 동시 쓰기도 막는다.
 
@@ -132,6 +135,16 @@ HEIC는 Pillow가 못 열면 `sips`로 변환한다.
 - **삭제**: `_trash`로 이동 (복구 가능)
 - **업로드는 항상 새 파일명**으로 저장한다. 저장을 누르기 전에 업로드만 하고 닫아도 원본을 덮어쓰지 않으며, 참조되지 않는 파일은 다음 저장(또는 서버 시작) 때 `_trash`로 정리된다
 - **저장하지 않은 변경**이 있으면 드로어를 닫을 때 확인을 받는다
+
+## RDP-DB 배합 연동
+
+`config.json`의 `rdpDbPath`가 가리키는 SQLite(기본 `~/MySecondBrain/Areas/NIFCO/RDP-DB/rdp.db`)를 **읽기 전용**으로 열어 배합만 가져온다.
+
+- 병합 키는 `(layer, batch_no)`. 같은 배합이 있으면 잉크/비율/결과/날짜를 DB 값으로 갱신하고, 없으면 추가한다.
+- **메모(`note`)와 기준 배합 표시는 건드리지 않는다.** 앱에서 적은 코멘트가 날아가지 않는다.
+- **삭제는 하지 않는다.** DB에서 사라진 배합도 아카이브에는 남는다.
+- 베리에이션이 여러 개면 DB의 `coating_code`와 `colorCode`가 같은 베리에이션에 넣고, 없으면 첫 번째에 넣는다.
+- 화면: 상세 → 편집 → 배합 탭의 `RDP-DB에서 가져오기`, 또는 목차 툴바의 `DB 동기화`(전체).
 
 ## 제안서 스냅샷
 

@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -163,6 +164,96 @@ def validate_pattern(doc: dict):
         if not isinstance(v.get("mixes", []), list):
             errors.append(f"variations[{i}].mixes가 배열이 아닙니다")
     return errors
+
+
+RDP_RESULT = {"✅": "ok", "⚠️": "warn", "❌": "ng"}
+
+
+def rdp_db_path() -> str:
+    raw = CFG.get("rdpDbPath") or ""
+    return os.path.abspath(os.path.expanduser(raw)) if raw else ""
+
+
+def read_rdp_mixes(project: str, code: str):
+    path = rdp_db_path()
+    if not path or not os.path.isfile(path):
+        raise ValueError(f"rdp.db를 찾을 수 없습니다: {path or '(경로 미설정)'}")
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            "SELECT * FROM rdp_mixes WHERE project=? AND pattern_code=? ORDER BY layer, date, id",
+            (project, code)).fetchall()
+    finally:
+        con.close()
+    out = []
+    for r in rows:
+        res = (r["result"] or "").strip()
+        code_enum = next((v for k, v in RDP_RESULT.items() if k in res), "")
+        if not code_enum and "예정" in res:
+            code_enum = "planned"
+        inks = {}
+        for k, col in (("MT", "mt"), ("BK", "bk"), ("WH", "wh"), ("YE", "ye"), ("RD", "rd"), ("CL", "cl"), ("YE-D", "ye_d")):
+            v = r[col]
+            if v not in (None, 0, 0.0):
+                inks[k] = v
+        out.append({
+            "layer": r["layer"] or "", "batch": r["batch_no"] or "",
+            "inks": inks,
+            "mattingPct": r["matting_agent_pct"], "mattingG": r["matting_agent_g"],
+            "thinnerPct": r["thinner_pct"], "thinnerG": r["thinner_g"],
+            "hardenerPct": r["hardener_pct"], "hardenerG": r["hardener_g"],
+            "result": code_enum, "isReference": bool(r["is_base"]),
+            "change": (r["change_summary"] or "").strip(),
+            "note": "", "date": r["date"] or "",
+            "_notes": (r["notes"] or "").strip(),
+            "_coating": (r["coating_code"] or "").strip(),
+        })
+    return out
+
+
+def pick_variation(doc, db_mixes):
+    vars_ = doc.get("variations") or []
+    if len(vars_) <= 1:
+        return vars_[0] if vars_ else None
+    codes = {b["_coating"] for b in db_mixes if b.get("_coating")}
+    for v in vars_:
+        if v.get("colorCode") and v["colorCode"] in codes:
+            return v
+    return vars_[0]
+
+
+def merge_mixes(v, db_mixes):
+    cur = v.setdefault("mixes", [])
+    idx = {}
+    for i, m in enumerate(cur):
+        idx[(m.get("layer"), m.get("batch"))] = i
+    added = updated = 0
+    for dm in db_mixes:
+        dm = dict(dm)
+        dm.pop("_coating", None)
+        dm.pop("_notes", None)
+        key = (dm["layer"], dm["batch"])
+        if key in idx:
+            m = cur[idx[key]]
+            if dm.get("inks"):
+                m["inks"] = dm["inks"]
+            for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
+                if dm.get(f) is not None:
+                    m[f] = dm[f]
+            if dm.get("result"):
+                m["result"] = dm["result"]
+            if dm.get("date"):
+                m["date"] = dm["date"]
+            if not m.get("change") and dm.get("change"):
+                m["change"] = dm["change"]
+            updated += 1
+        else:
+            cur.append(dm)
+            idx[key] = len(cur) - 1
+            added += 1
+    cur.sort(key=lambda m: ((m.get("layer") or ""), (m.get("date") or ""), (m.get("batch") or "")))
+    return added, updated
 
 
 def load_all():
@@ -384,6 +475,21 @@ class Handler(BaseHTTPRequestHandler):
                                   "company": CFG.get("company", ""),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
                                   "pageMax": CFG.get("pageMax", 2)})
+            if p == "/api/rdp/status":
+                path = rdp_db_path()
+                exists = bool(path) and os.path.isfile(path)
+                info = {"ok": True, "path": path, "exists": exists}
+                if exists:
+                    try:
+                        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                        rows = con.execute(
+                            "SELECT project, pattern_code, COUNT(*) c FROM rdp_mixes GROUP BY 1,2").fetchall()
+                        con.close()
+                        info["patterns"] = [{"project": a, "code": b, "rows": c} for a, b, c in rows]
+                        info["total"] = sum(r[2] for r in rows)
+                    except Exception as e:
+                        info["error"] = str(e)
+                return self.json(info)
             if p == "/api/ui":
                 if os.path.exists(UI_STATE):
                     try:
@@ -412,6 +518,21 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p == "/api/rdp/status":
+                path = rdp_db_path()
+                exists = bool(path) and os.path.isfile(path)
+                info = {"ok": True, "path": path, "exists": exists}
+                if exists:
+                    try:
+                        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                        rows = con.execute(
+                            "SELECT project, pattern_code, COUNT(*) c FROM rdp_mixes GROUP BY 1,2").fetchall()
+                        con.close()
+                        info["patterns"] = [{"project": a, "code": b, "rows": c} for a, b, c in rows]
+                        info["total"] = sum(r[2] for r in rows)
+                    except Exception as e:
+                        info["error"] = str(e)
+                return self.json(info)
             if p == "/api/ui":
                 raw = self.read_body()
                 try:
@@ -441,12 +562,67 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self.error(500, str(e))
 
+    def sync_one(self, pid):
+        with pid_lock(pid):
+            path = safe_join(PATTERNS, pid + ".json")
+            if not os.path.isfile(path):
+                return {"ok": False, "error": "패턴 없음"}
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+            db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
+            if not db_mixes:
+                return {"ok": True, "added": 0, "updated": 0, "variation": None}
+            v = pick_variation(doc, db_mixes)
+            if not v:
+                return {"ok": False, "error": "베리에이션 없음"}
+            added, updated = merge_mixes(v, db_mixes)
+            if added or updated:
+                doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                with open(path, encoding="utf-8") as f:
+                    old = f.read()
+                atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
+                atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+            return {"ok": True, "added": added, "updated": updated,
+                    "variation": v.get("id"), "total": len(v.get("mixes", []))}
+
+    def sync_pattern(self, pid):
+        try:
+            safe_id(pid)
+        except ValueError:
+            return self.error(400, "id 형식 오류")
+        try:
+            r = self.sync_one(pid)
+        except Exception as e:
+            return self.error(400, str(e))
+        if not r.get("ok"):
+            return self.error(400, r.get("error") or "동기화 실패")
+        return self.json(r)
+
     def do_POST(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p == "/api/rdp/sync-all":
+                total = {"added": 0, "updated": 0, "patterns": 0, "skipped": []}
+                for doc in load_all()[0]:
+                    pid = doc["id"]
+                    try:
+                        r = self.sync_one(pid)
+                        if r.get("ok"):
+                            total["added"] += r.get("added", 0)
+                            total["updated"] += r.get("updated", 0)
+                            if r.get("added") or r.get("updated"):
+                                total["patterns"] += 1
+                        else:
+                            total["skipped"].append(pid)
+                    except Exception:
+                        total["skipped"].append(pid)
+                return self.json({"ok": True, **total})
+            if p.startswith("/api/rdp/sync/"):
+                pid = p[len("/api/rdp/sync/"):].strip("/")
+                return self.sync_pattern(pid)
             if p == "/api/proposals":
                 doc = json.loads(self.read_body().decode("utf-8"))
                 slug = doc.get("slug") or ("proposal-" + now_stamp())
