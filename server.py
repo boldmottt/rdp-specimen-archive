@@ -208,6 +208,7 @@ def read_rdp_mixes(project: str, code: str):
             "note": "", "date": r["date"] or "",
             "_notes": (r["notes"] or "").strip(),
             "_coating": (r["coating_code"] or "").strip(),
+            "plate": (r["plate"] or "").strip(),
         })
     return out
 
@@ -223,36 +224,58 @@ def pick_variation(doc, db_mixes):
     return vars_[0]
 
 
+def apply_db_mix(m, dm):
+    """DB 행 값을 m에 반영. 실제로 바뀐 게 있으면 True."""
+    changed = False
+    if dm.get("plate") and m.get("plate") != dm["plate"]:
+        m["plate"] = dm["plate"]; changed = True
+    if dm.get("inks") and m.get("inks") != dm["inks"]:
+        m["inks"] = dm["inks"]; changed = True
+    for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
+        if dm.get(f) is not None and m.get(f) != dm[f]:
+            m[f] = dm[f]; changed = True
+    if dm.get("result") and m.get("result") != dm["result"]:
+        m["result"] = dm["result"]; changed = True
+    if dm.get("date") and m.get("date") != dm["date"]:
+        m["date"] = dm["date"]; changed = True
+    if not m.get("change") and dm.get("change"):
+        m["change"] = dm["change"]; changed = True
+    return changed
+
+
 def merge_mixes(v, db_mixes):
+    """(도수, 배치) 키로 병합. 같은 키가 동판별로 여러 개면 동판까지 본다."""
     cur = v.setdefault("mixes", [])
-    idx = {}
-    for i, m in enumerate(cur):
-        idx[(m.get("layer"), m.get("batch"))] = i
-    added = updated = 0
+    groups = {}
     for dm in db_mixes:
         dm = dict(dm)
-        dm.pop("_coating", None)
-        dm.pop("_notes", None)
-        key = (dm["layer"], dm["batch"])
-        if key in idx:
-            m = cur[idx[key]]
-            if dm.get("inks"):
-                m["inks"] = dm["inks"]
-            for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
-                if dm.get(f) is not None:
-                    m[f] = dm[f]
-            if dm.get("result"):
-                m["result"] = dm["result"]
-            if dm.get("date"):
-                m["date"] = dm["date"]
-            if not m.get("change") and dm.get("change"):
-                m["change"] = dm["change"]
-            updated += 1
-        else:
-            cur.append(dm)
-            idx[key] = len(cur) - 1
-            added += 1
-    cur.sort(key=lambda m: ((m.get("layer") or ""), (m.get("date") or ""), (m.get("batch") or "")))
+        groups.setdefault((dm["layer"], dm["batch"]), []).append(dm)
+
+    idx = {}
+    for i, m in enumerate(cur):
+        idx.setdefault((m.get("layer"), m.get("batch")), []).append(i)
+
+    added = updated = 0
+    for key, rows in groups.items():
+        rows.sort(key=lambda r: (r.get("plate") or ""))
+        used = set()
+        for dm in rows:
+            dm.pop("_notes", None)
+            dm.pop("_coating", None)
+            cands = [i for i in idx.get(key, []) if i not in used]
+            pick = next((i for i in cands if cur[i].get("plate") == dm.get("plate")), None)
+            if pick is None and len(cands) == 1:
+                pick = cands[0]
+            if pick is None:
+                cur.append(dm)
+                idx.setdefault(key, []).append(len(cur) - 1)
+                added += 1
+            else:
+                used.add(pick)
+                if apply_db_mix(cur[pick], dm):
+                    updated += 1
+
+    cur.sort(key=lambda m: (m.get("layer") or "", m.get("date") or "", m.get("batch") or "", m.get("plate") or ""))
     return added, updated
 
 

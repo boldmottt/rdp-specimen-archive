@@ -220,7 +220,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 /* drawer */
 .drawer-scrim{position:fixed;inset:0;background:rgba(20,21,23,.35);opacity:0;pointer-events:none;transition:.25s;z-index:90}
 .drawer-scrim.on{opacity:1;pointer-events:auto}
-.drawer{position:fixed;top:0;right:0;bottom:0;width:660px;max-width:100vw;background:#fff;z-index:100;display:flex;flex-direction:column;transform:translateX(102%);transition:transform .3s cubic-bezier(.2,.8,.3,1);box-shadow:-20px 0 60px -30px rgba(0,0,0,.5)}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:780px;max-width:100vw;background:#fff;z-index:100;display:flex;flex-direction:column;transform:translateX(102%);transition:transform .3s cubic-bezier(.2,.8,.3,1);box-shadow:-20px 0 60px -30px rgba(0,0,0,.5)}
 .drawer.on{transform:none}
 .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
 .drawer-head strong{font-size:15px;letter-spacing:-.02em}
@@ -252,7 +252,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .mini-btn.danger:hover{border-color:var(--ng);color:var(--ng)}
 .mix-edit{width:100%;border-collapse:collapse;font-size:11px}
 .mix-edit th{font-size:9px;color:var(--ink-3);font-weight:500;padding:0 3px 5px;text-align:center}
-.mix-edit td{padding:2px}
+.mix-edit td{padding:2px 1px}
 .mix-edit input,.mix-edit select{width:100%;border:1px solid var(--line);border-radius:5px;padding:5px 3px;font:inherit;font-size:11px;text-align:center;font-family:var(--mono)}
 .mix-edit input:focus,.mix-edit select:focus{border-color:var(--ink);outline:none}
 .mix-edit td.act{width:34px}
