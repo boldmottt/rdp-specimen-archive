@@ -347,3 +347,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .split2{display:grid;grid-template-columns:1fr 1fr;gap:46px}
 .split2 .sec{margin-top:8px}
 @media (max-width:900px){.split2{grid-template-columns:1fr;gap:0}}
+
+.p-note{margin-top:5mm;padding-top:4mm;border-top:1px solid #e4e1da}
+.p-note h4{margin:0 0 2mm;font-size:8.5px;letter-spacing:.16em;color:#8d9198;font-weight:600}
+.p-note p{margin:0;font-size:10.5px;line-height:1.7;color:#141517;white-space:pre-wrap}

@@ -394,7 +394,7 @@
       ${v.images && v.images.length ? `<img class="p-img" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="p-img"></div>'}
       <div class="p-body">
         <div class="p-sec"><h4>SPECIFICATION</h4><dl>
-          <dt>Color</dt><dd>${esc(vName(v))}</dd>
+          ${v.colorName ? `<dt>Color</dt><dd>${esc(v.colorName)}</dd>` : ""}
           <dt>Color Code</dt><dd class="mono">${esc(dash(v.colorCode))}</dd>
           <dt>Item</dt><dd>${esc(dash(p.label.item))}</dd>
           <dt>Type</dt><dd>${esc(dash(p.label.type))}</dd>
@@ -411,6 +411,7 @@
           <dt>배합</dt><dd>${(v.mixes || []).length}건</dd>
         </dl></div>
       </div>
+      ${v.note ? `<div class="p-note"><h4>NOTE</h4><p>${esc(v.note)}</p></div>` : ""}
       ${App.prop.showMix ? mixBlock(v) : ""}
       <div class="p-comment${((App.prop.comments || {})[p.id + "::" + v.id] || "").trim() ? "" : " empty"}"><h4>제안 포인트</h4>
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::${esc(v.id)}">${esc((App.prop.comments || {})[p.id + "::" + v.id] || "")}</div>
@@ -530,6 +531,8 @@
     $$("[data-comment]").forEach((el) => (el.oninput = () => {
       App.prop.comments = App.prop.comments || {};
       App.prop.comments[el.dataset.comment] = el.innerText;
+      const box = el.closest(".p-comment");
+      if (box) box.classList.toggle("empty", !el.innerText.trim());
       saveLS();
     }));
   }
