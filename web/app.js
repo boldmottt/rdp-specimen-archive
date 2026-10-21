@@ -324,6 +324,8 @@
         </div>
       </section>
       <div class="toolbar">${chips}<div class="spacer"></div>
+        <button class="chip" id="selall" title="지금 보이는 시편을 모두 제안서에 담기">전체 선택<span class="n">${list.reduce((a, p) => a + (p.variations || []).length, 0)}</span></button>
+        <button class="chip" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
         <button class="chip" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
         <div class="selwrap"><select id="sort">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
@@ -343,6 +345,19 @@
     if (of) of.onclick = (e) => { e.preventDefault(); fetch("/api/open-folder", { method: "POST" }).then(() => toast("Finder에서 열었습니다")).catch(() => {}); };
     paintDots();
     $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
+    const btnAll = $("#selall");
+    if (btnAll) btnAll.onclick = () => {
+      filtered().forEach((p) => (p.variations || []).forEach((v) => {
+        if (!inCart(p.id, v.id)) App.cart.push({ pid: p.id, vid: v.id });
+      }));
+      saveLS(); renderCatalog(); renderCart();
+    };
+    const btnNone = $("#selnone");
+    if (btnNone) btnNone.onclick = () => {
+      const ids = new Set(filtered().map((p) => p.id));
+      App.cart = ids.size === App.patterns.length ? [] : App.cart.filter((c) => !ids.has(c.pid));
+      saveLS(); renderCatalog(); renderCart();
+    };
     const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
     const sa = $("#syncall");
     if (sa) sa.onclick = async () => {
