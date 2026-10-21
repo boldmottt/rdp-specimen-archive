@@ -581,11 +581,12 @@
 
   function mixTable(mixes) {
     const used = inkOrder(Array.from(new Set(mixes.flatMap((m) => Object.keys(m.inks || {})))));
-    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>잉크합</th><th>결과</th><th>비고</th></tr>`;
+    const hasMatting = mixes.some((m) => m.mattingPct != null || m.mattingG != null);
+    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}${hasMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>잉크합</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
-      <td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>
+      ${hasMatting ? `<td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>` : ""}
       <td>${m.thinnerG != null ? m.thinnerG + "g" : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
       <td>${m.hardenerG != null ? m.hardenerG + "g" : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
       <td>${pigmentTotal(m)}</td>
@@ -1191,13 +1192,15 @@
       const usedInk = Array.from(new Set((v.mixes || []).flatMap((m) => Object.keys(m.inks || {}))));
       const inkCols = inkOrder(Array.from(new Set([...usedInk, ...(v._inkCols || [])])));
       const pool = inkPool();
-      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}<th>소광</th><th>신나</th><th>경화</th><th>결과</th><th>기준</th><th></th></tr>`;
+      const showMatting = v._showMatting != null ? v._showMatting
+        : (v.mixes || []).some((m) => m.mattingPct != null || m.mattingG != null);
+      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = (v.mixes || []).map((m, mi) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
         ${inkCols.map((c) => `<td><input data-mf="ink:${c}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
-        <td><input data-mf="mattingPct" value="${m.mattingPct != null ? m.mattingPct : ""}" style="width:36px"></td>
+        ${showMatting ? `<td><input data-mf="mattingPct" value="${m.mattingPct != null ? m.mattingPct : ""}" style="width:36px"></td>` : ""}
         <td><input data-mf="thinnerPct" value="${m.thinnerPct != null ? m.thinnerPct : ""}" style="width:36px"></td>
         <td><input data-mf="hardenerPct" value="${m.hardenerPct != null ? m.hardenerPct : ""}" style="width:36px"></td>
         <td><select data-mf="result" style="width:74px">${Object.keys(RESULT_LABEL).map((k) => `<option value="${k}"${k === (m.result || "") ? " selected" : ""}>${RESULT_LABEL[k]}</option>`).join("")}</select></td>
@@ -1217,6 +1220,8 @@
         </div>
         <div class="ink-tags">
           <span class="it-head">잉크</span>
+          <button class="itag${showMatting ? " on" : ""}" data-matttog="1" title="소광(매트) 열 켜기/끄기">소광</button>
+          <span class="it-sep"></span>
           ${pool.map((t) => `<button class="itag${inkCols.includes(t) ? " on" : ""}" data-inkadd="${esc(t)}" title="${inkCols.includes(t) ? "이 컬러에 사용 중" : "이 컬러에 열 추가"}">${esc(t)}</button>`).join("")}
           <input id="ink-new" placeholder="+ 새 잉크" maxlength="10" autocomplete="off">
         </div>
@@ -1332,6 +1337,13 @@
         };
         el.oninput = handler; el.onchange = handler;
       });
+      const mattBtn = document.querySelector("[data-matttog]");
+      if (mattBtn) mattBtn.onclick = () => {
+        const cur = v._showMatting != null ? v._showMatting
+          : (v.mixes || []).some((m) => m.mattingPct != null || m.mattingG != null);
+        v._showMatting = !cur;
+        renderDrawer();
+      };
       $$("[data-inkadd]").forEach((el) => (el.onclick = () => {
         const t = el.dataset.inkadd;
         const has = (v._inkCols || []).includes(t) || (v.mixes || []).some((m) => m.inks && m.inks[t] != null);

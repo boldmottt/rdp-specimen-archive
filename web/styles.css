@@ -486,3 +486,4 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .ink-tags #ink-new:focus{outline:none;border-style:solid;border-color:var(--ink)}
 .ink-note{font-size:10.5px;color:var(--ink-3);line-height:1.5;margin:-4px 0 10px}
 .ink-note b{color:var(--ink-2);font-weight:600}
+.it-sep{width:1px;height:16px;background:var(--line-2);margin:0 2px}
