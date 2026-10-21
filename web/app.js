@@ -271,7 +271,7 @@
     const title = `<span class="c-code">${esc(p.pattern.code)}</span><span class="c-name">${esc([nm, p.pattern.nameKo].filter(Boolean).join(" ") || "")}</span>`;
     const when = (v && v.date) ? fmtDate(v.date).slice(2) : (p.updatedAt ? String(p.updatedAt).slice(2, 10).replace(/-/g, ".") : "");
     const meta = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : (when ? esc(when) : "")]
-      .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("") + `<span class="layer-pill">${esc(layers(v).join("·") || "—")}</span>`;
+      .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("") + (layers(v).length ? `<span class="layer-pill">${esc(layers(v).join("·"))}</span>` : "");
     const chips = vars.length > 1
       ? vars.map((x) => `
       <button class="vchip${x.id === (v && v.id) ? " on" : ""}" data-sel="${esc(x.id)}" title="${esc(vName(x))}">
