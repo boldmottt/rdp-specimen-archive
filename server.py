@@ -167,6 +167,12 @@ def validate_pattern(doc: dict):
 
 
 RDP_RESULT = {"✅": "ok", "⚠️": "warn", "❌": "ng"}
+PLAN_LABEL = "테스트예정"
+
+
+def norm_symbol(txt: str) -> str:
+    """이모지 변형선택자/공백 제거 후 비교용 문자열로."""
+    return (txt or "").replace("\ufe0f", "").replace("\ufe0e", "").strip()
 
 
 def rdp_db_path() -> str:
@@ -189,9 +195,10 @@ def read_rdp_mixes(project: str, code: str):
     out = []
     for r in rows:
         res = (r["result"] or "").strip()
-        code_enum = next((v for k, v in RDP_RESULT.items() if k in res), "")
+        res_n = norm_symbol(res)
+        code_enum = next((v for k, v in RDP_RESULT.items() if norm_symbol(k) and norm_symbol(k) in res_n), "")
         if not code_enum and "예정" in res:
-            code_enum = "planned"
+            code_enum = "plan"
         inks = {}
         for k, col in (("MT", "mt"), ("BK", "bk"), ("WH", "wh"), ("YE", "ye"), ("RD", "rd"), ("CL", "cl"), ("YE-D", "ye_d")):
             v = r[col]
@@ -208,6 +215,7 @@ def read_rdp_mixes(project: str, code: str):
             "note": "", "date": r["date"] or "",
             "_notes": (r["notes"] or "").strip(),
             "_coating": (r["coating_code"] or "").strip(),
+            "_id": r["id"],
             "plate": (r["plate"] or "").strip(),
         })
     return out
@@ -262,13 +270,16 @@ def merge_mixes(v, db_mixes):
         for dm in rows:
             dm.pop("_notes", None)
             dm.pop("_coating", None)
+            dm.pop("_id", None)
             cands = [i for i in idx.get(key, []) if i not in used]
             pick = next((i for i in cands if cur[i].get("plate") == dm.get("plate")), None)
             if pick is None and len(cands) == 1:
                 pick = cands[0]
             if pick is None:
                 cur.append(dm)
-                idx.setdefault(key, []).append(len(cur) - 1)
+                new_i = len(cur) - 1
+                idx.setdefault(key, []).append(new_i)
+                used.add(new_i)
                 added += 1
             else:
                 used.add(pick)
@@ -279,7 +290,7 @@ def merge_mixes(v, db_mixes):
     return added, updated
 
 
-RESULT_TO_DB = {"ok": "✅", "warn": "⚠️", "ng": "❌", "planned": "테스트예정", "": ""}
+RESULT_TO_DB = {"ok": "✅", "warn": "⚠️", "ng": "❌", "plan": PLAN_LABEL, "planned": PLAN_LABEL, "": ""}
 INK_COLS = (("MT", "mt"), ("BK", "bk"), ("WH", "wh"), ("YE", "ye"), ("RD", "rd"), ("CL", "cl"), ("YE-D", "ye_d"))
 PCT_COLS = (("mattingPct", "matting_agent_pct"), ("mattingG", "matting_agent_g"),
             ("thinnerPct", "thinner_pct"), ("thinnerG", "thinner_g"),
@@ -318,12 +329,13 @@ def plan_push(doc, db_mixes):
             if ov is None or abs(float(nv) - float(ov)) > 1e-9:
                 fields.append({"name": f, "from": ov, "to": float(nv)})
         enum = m.get("result") or ""
-        if enum != (cur.get("result") or ""):
-            fields.append({"name": "result", "from": cur.get("result") or "", "to": RESULT_TO_DB.get(enum, "")})
+        if enum and enum in RESULT_TO_DB and enum != (cur.get("result") or ""):
+            fields.append({"name": "result", "from": cur.get("result") or "", "to": RESULT_TO_DB[enum]})
         if m.get("date") and m["date"] != (cur.get("date") or ""):
             fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
         if fields:
-            updates.append({"batch": m.get("batch"), "layer": m.get("layer"), "plate": plate, "fields": fields})
+            updates.append({"id": cur.get("_id"), "batch": m.get("batch"), "layer": m.get("layer"),
+                            "plate": plate, "fields": fields})
     return {"updates": updates, "inserts": inserts, "skipped": skipped}
 
 
@@ -331,7 +343,14 @@ def apply_push(project, code, doc, db_mixes, plan):
     path = rdp_db_path()
     os.makedirs(BACKUP, exist_ok=True)
     bpath = os.path.join(BACKUP, f"rdp.db.{now_stamp()}")
-    shutil.copy2(path, bpath)
+    src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    dst = sqlite3.connect(bpath)
+    try:
+        with dst:
+            src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
 
     v = pick_variation(doc, db_mixes)
     by_key = {(m.get("layer"), m.get("batch"), (m.get("plate") or "").strip()): m for m in v.get("mixes", [])}
@@ -355,8 +374,12 @@ def apply_push(project, code, doc, db_mixes, plan):
                     sets.append(f"{dict(INK_COLS)[f['name']]}=?"); vals.append(f["to"])
                 else:
                     sets.append(f"{dict(PCT_COLS)[f['name']]}=?"); vals.append(f["to"])
-            vals += [project, code, u["plate"], u["layer"], u["batch"]]
-            cur.execute(f"UPDATE rdp_mixes SET {', '.join(sets)} WHERE project=? AND pattern_code=? AND plate=? AND layer=? AND batch_no=?", vals)
+            if u.get("id") is not None:
+                vals.append(u["id"])
+                cur.execute(f"UPDATE rdp_mixes SET {', '.join(sets)} WHERE id=?", vals)
+            else:
+                vals += [project, code, u["plate"], u["layer"], u["batch"]]
+                cur.execute(f"UPDATE rdp_mixes SET {', '.join(sets)} WHERE project=? AND pattern_code=? AND plate=? AND layer=? AND batch_no=?", vals)
             n_upd += cur.rowcount
         for ins in plan["inserts"]:
             m = by_key.get((ins["layer"], ins["batch"], ins["plate"]))
@@ -648,6 +671,18 @@ class Handler(BaseHTTPRequestHandler):
         if "/api/" in (self.path or ""):
             sys.stderr.write("  %s\n" % (fmt % args))
 
+    def _write_ok(self) -> bool:
+        """상태 변경 요청이 같은 오리진에서 왔는지 확인 (CSRF 방지)."""
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            host = (urlparse(origin).hostname or "").lower()
+            if host not in SAFE_HOSTS:
+                return False
+        sfs = (self.headers.get("Sec-Fetch-Site") or "").strip()
+        if sfs and sfs not in ("same-origin", "none"):
+            return False
+        return True
+
     def _host_ok(self) -> bool:
         host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
         return host in SAFE_HOSTS
@@ -684,55 +719,6 @@ class Handler(BaseHTTPRequestHandler):
                                   "company": CFG.get("company", ""),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
                                   "pageMax": CFG.get("pageMax", 2)})
-            if p.startswith("/api/rdp/push-preview/"):
-                pid = p[len("/api/rdp/push-preview/"):].strip("/")
-                try:
-                    safe_id(pid)
-                    path = safe_join(PATTERNS, pid + ".json")
-                    with open(path, encoding="utf-8") as f:
-                        doc = json.load(f)
-                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
-                    plan = plan_push(doc, db_mixes)
-                    return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
-                except Exception as e:
-                    return self.error(400, str(e))
-            if p.startswith("/api/rdp/diff/"):
-                pid = p[len("/api/rdp/diff/"):].strip("/")
-                try:
-                    safe_id(pid)
-                    path = safe_join(PATTERNS, pid + ".json")
-                    if not os.path.isfile(path):
-                        return self.error(404, "패턴이 없습니다")
-                    with open(path, encoding="utf-8") as f:
-                        doc = json.load(f)
-                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
-                    return self.json({"ok": True, **diff_db(doc, db_mixes)})
-                except Exception as e:
-                    return self.error(400, str(e))
-            if p.startswith("/api/plate/"):
-                lot = p[len("/api/plate/"):].strip("/")
-                try:
-                    info = read_plate_info(lot)
-                    if not info:
-                        return self.json({"ok": False, "error": "동판 정보 없음"}, 404)
-                    return self.json({"ok": True, **info})
-                except Exception as e:
-                    return self.error(400, str(e))
-            if p == "/api/rdp/status":
-                path = rdp_db_path()
-                exists = bool(path) and os.path.isfile(path)
-                info = {"ok": True, "path": path, "exists": exists}
-                if exists:
-                    try:
-                        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-                        rows = con.execute(
-                            "SELECT project, pattern_code, COUNT(*) c FROM rdp_mixes GROUP BY 1,2").fetchall()
-                        con.close()
-                        info["patterns"] = [{"project": a, "code": b, "rows": c} for a, b, c in rows]
-                        info["total"] = sum(r[2] for r in rows)
-                    except Exception as e:
-                        info["error"] = str(e)
-                return self.json(info)
             if p == "/api/ui":
                 if os.path.exists(UI_STATE):
                     try:
@@ -758,6 +744,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if not self._write_ok():
+            return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -878,6 +866,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if not self._write_ok():
+            return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -961,6 +951,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if not self._write_ok():
+            return self.error(403, "cross-site request blocked")
         p = unquote(urlparse(self.path).path)
         try:
             if p.startswith("/api/patterns/"):

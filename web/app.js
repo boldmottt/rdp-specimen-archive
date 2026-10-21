@@ -133,7 +133,19 @@
   }
 
   /* ---------------- inline edit ---------------- */
+  const saveChain = new Map();
+  function queueSave(pid, fn) {
+    const prev = saveChain.get(pid) || Promise.resolve();
+    const next = prev.then(fn, fn);
+    saveChain.set(pid, next.catch(() => {}));
+    return next;
+  }
+
   async function inlineSave(pid, mutate) {
+    return queueSave(pid, () => doInlineSave(pid, mutate));
+  }
+
+  async function doInlineSave(pid, mutate) {
     const p = byId(pid);
     if (!p) return;
     const draft = clone(p);
@@ -206,9 +218,15 @@
           if (o[keys[i]] == null || typeof o[keys[i]] !== "object") o[keys[i]] = {};
           o = o[keys[i]];
         }
+        let out = val;
+        if (/date$/i.test(rel) && val) {
+          const m2 = /^(\d{4})[.\-/]?(\d{2})[.\-/]?(\d{2})$/.exec(val.replace(/\s/g, ""));
+          if (!m2) { toast("날짜는 2026-10-22 형식으로 입력하세요"); return false; }
+          out = `${m2[1]}-${m2[2]}-${m2[3]}`;
+        }
         o[keys[keys.length - 1]] = /plate/i.test(rel)
           ? val.split(",").map((s) => s.trim()).filter(Boolean)
-          : val;
+          : out;
         return true;
       });
       renderDetail(pid, v.id);
@@ -325,6 +343,7 @@
       sa.disabled = true; sa.textContent = "동기화 중…";
       try {
         const r = await fetch("/api/rdp/sync-all", { method: "POST" }).then((x) => x.json());
+        if (!r || r.ok === false) throw new Error(r && r.error ? r.error : "동기화 실패");
         const fresh = await apiGet("/api/patterns");
         App.patterns = fresh.patterns || [];
         renderCatalog();
@@ -360,10 +379,11 @@
     if (!d.project) { toast("프로젝트를 입력하세요"); return; }
     if (!d.pattern.code) { toast("패턴 코드를 입력하세요"); return; }
     const id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
-    if (byId(id) && !confirm(`'${id}' 시편이 이미 있습니다. 덮어쓸까요?`)) return;
+    const exists = byId(id);
+    if (exists && !confirm(`'${id}' 시편이 이미 있습니다. 덮어쓸까요?`)) return;
     const payload = { ...JSON.parse(JSON.stringify(d)), id };
     try {
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, "", true);
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, exists ? (exists.updatedAt || "") : "", !exists);
       const saved = JSON.parse(JSON.stringify(payload));
       saved.updatedAt = r.savedAt || "";
       saved._mtime = Date.now();
@@ -469,7 +489,7 @@
         const hit = (v.mixes || []).find((m) => m.layer === l && m.plate);
         if (hit) v.layerPlates[l] = hit.plate;
       }
-      if (v.layerPlates[l]) (v.mixes || []).forEach((m) => { if (m.layer === l) m.plate = v.layerPlates[l]; });
+      if (v.layerPlates[l]) (v.mixes || []).forEach((m) => { if (m.layer === l && !m.plate) m.plate = v.layerPlates[l]; });
     });
   }
 
@@ -569,8 +589,8 @@
           <section class="sec"><h3>라벨 정보</h3>
             <dl class="kv">
               <dt>Company</dt><dd data-f="client">${esc(dash(p.client))}</dd>
-              <dt>Project</dt><dd class="mono" data-f="project">${esc(p.project)}</dd>
-              <dt>Pattern Code</dt><dd class="mono" data-f="pattern.code">${esc(p.pattern.code)}</dd>
+              <dt>Project</dt><dd class="mono"${isNew ? ' data-f="project"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.project)}</dd>
+              <dt>Pattern Code</dt><dd class="mono"${isNew ? ' data-f="pattern.code"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.pattern.code)}</dd>
               <dt>Pattern Name</dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
               <dt>Item</dt><dd data-f="label.item">${esc(dash(p.label.item))}</dd>
               <dt>Type</dt><dd data-f="label.type">${esc(dash(p.label.type))}</dd>
@@ -860,7 +880,6 @@
         <div class="field"><label>고객</label><input class="w-md" id="f-client" value="${esc(App.prop.client || "")}" placeholder="고객사"></div>
         <div class="field"><label>날짜</label><input class="w-sm" id="f-date" value="${esc(App.prop.date || todayLocal())}"></div>
         <div class="field"><label>작성</label><input class="w-sm" id="f-by" value="${esc(App.prop.by || "")}"></div>
-        <label class="toggle"><input type="checkbox" id="f-mix" ${App.prop.showMix ? "checked" : ""}> 배합 표시(사내용)</label>
         <div class="grow"></div>
         <button class="btn-line" id="psnapshot">확정 저장</button>
         <button class="btn-dark" id="pprint">인쇄 / PDF</button>
@@ -875,7 +894,6 @@
       el.oninput = () => { App.prop[key] = el.value; saveLS(); if (key !== "showMix") { const c = $(".s-cover"); if (c) c.outerHTML = coverSheet(groups); } };
     };
     bindField("#f-title", "title"); bindField("#f-client", "client"); bindField("#f-date", "date"); bindField("#f-by", "by");
-    $("#f-mix").onchange = (e) => { App.prop.showMix = e.target.checked; saveLS(); renderProposal(); };
     $$("[data-comment]").forEach((el) => (el.oninput = () => {
       App.prop.comments = App.prop.comments || {};
       App.prop.comments[el.dataset.comment] = el.innerText;
@@ -896,7 +914,7 @@
         pattern: { id: g.p.id, code: g.p.pattern.code, name: g.p.pattern.name, nameKo: g.p.pattern.nameKo, project: g.p.project, projectName: g.p.projectName, client: g.p.client,
           label: g.p.label, work: g.p.work },
         variations: g.vars.map((v) => ({ id: v.id, colorName: v.colorName, colorCode: v.colorCode, coating: v.coating, status: v.status, date: v.date,
-          images: v.images, mixes: App.prop.showMix ? v.mixes : undefined,
+          images: v.images, mixes: v.mixes,
           comment: (App.prop.comments || {})[g.p.id + "::" + v.id] || "",
           pageComment: (App.prop.comments || {})[g.p.id + "::all"] || "" })),
       })),
@@ -1267,11 +1285,15 @@
           if (!r.ok) throw new Error(r.error || "동기화 실패");
           const fresh = await apiGet("/api/patterns");
           const p2 = (fresh.patterns || []).find((x) => x.id === d.id);
-          const idx = App.patterns.findIndex((x) => x.id === d.id);
-          if (idx >= 0 && p2) App.patterns[idx] = p2;
-          const nv = p2 && (p2.variations || []).find((x) => x.id === r.variation);
-          if (nv) E.draft.variations[E.vIdx].mixes = clone(nv.mixes || []);
-          E.origJson = JSON.stringify(E.draft);
+          if (p2) {
+            const idx = App.patterns.findIndex((x) => x.id === d.id);
+            if (idx >= 0) App.patterns[idx] = p2; else App.patterns.push(p2);
+            E.draft = clone(p2);
+            delete E.draft._file; delete E.draft._mtime;
+            E.baseRev = p2.updatedAt || "";
+            E.vIdx = Math.max(0, (p2.variations || []).findIndex((x) => x.id === r.variation));
+            E.origJson = JSON.stringify(E.draft);
+          }
           renderDrawer();
           toast(`DB에서 ${r.added}건 추가 · ${r.updated}건 갱신`);
         } catch (e) {
@@ -1626,7 +1648,12 @@
 
     try {
       const data = await apiGet("/api/patterns");
-      App.patterns = data.patterns || [];
+      App.patterns = (data.patterns || []).map((pp) => {
+        (pp.variations || []).forEach((vv) => (vv.mixes || []).forEach((mm) => {
+          if (mm.result === "planned") mm.result = "plan";
+        }));
+        return pp;
+      });
       App.loadErrors = data.errors || [];
       if (data.errors && data.errors.length) {
         console.warn("load errors", data.errors);
