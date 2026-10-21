@@ -17,6 +17,7 @@
    _backup/<패턴ID>.<시각>.json  저장 전 스냅샷
    _trash/                     삭제 대신 이동
    proposals/<날짜>_<고객>/proposal.json  확정 스냅샷
+   _ui/state.json              장바구니·제안서 설정 (포트가 바뀌어도 유지)
 ```
 
 ## 왜 이 구조인가
@@ -99,6 +100,9 @@ python3 server.py --demo    # sample-data 를 임시 폴더에 복사해 실행 
 | PUT | `/api/image/<pid>/<vid>?slot=1&x=..&y=..&w=..&h=..` | 원본 바이트 + 크롭 좌표 → 2400×988 JPEG |
 | DELETE | `/api/image/<pid>/<filename>` | `_trash`로 이동 |
 | POST | `/api/proposals` | 제안서 스냅샷 저장 |
+| GET/PUT | `/api/ui` | 장바구니·제안서 설정(제목/고객/코멘트) 서버 보관 |
+
+저장 요청에는 `X-Base-Rev: <updatedAt>` 헤더를 함께 보낸다. 서버의 현재 값과 다르면 **409 + 최신 문서**를 돌려주고, 화면은 "다른 곳에서 먼저 저장되었습니다"를 띄운 뒤 최신 내용을 불러올지 묻는다. 패턴 단위 `threading.Lock`으로 같은 파일 동시 쓰기도 막는다.
 
 업로드는 **raw PUT**(`Content-Type: application/octet-stream`)이다. multipart 파싱이 필요 없어 표준 라이브러리만으로 충분하다.
 HEIC는 Pillow가 못 열면 `sips`로 변환한다.
@@ -114,6 +118,7 @@ HEIC는 Pillow가 못 열면 `sips`로 변환한다.
 - A4 세로, 여백 0, **배율 100%**(기본값), **배경 그래픽 켬**
 - 이미지는 170×70mm = 실물 시편 크기. 3개까지 한 장에 들어간다 (`FIRST_PAGE_MAX`, `PAGE_MAX`).
 - 4개를 3+1로 나누면 마지막 장이 비므로 `ceil(n/3)` 후 균등 분배한다 (4 → 2+2, 5 → 3+2).
+- 페이지 상한은 `config.json`의 `firstPageMax` / `pageMax`로 조정한다 (기본 3/3).
 - 페이지마다 "색상은 실물 시편 기준, 인쇄물은 참고용" 문구가 들어간다.
 
 ## 편집

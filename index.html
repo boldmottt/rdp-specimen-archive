@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDP 시편 아카이브</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand" id="brand">
+      <div class="brand-mark"><svg viewBox="0 0 24 24"><path d="M4 18V6l16 12V6"/></svg></div>
+      <div class="brand-txt"><b id="brand-name">RDP</b><span id="brand-sub">SPECIMEN ARCHIVE</span></div>
+    </div>
+    <div class="grow"></div>
+    <div class="search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
+      <input id="search" type="search" placeholder="패턴명 · 코드 · 컬러 · 동판" autocomplete="off">
+    </div>
+    <button class="ghost" id="newbtn">새 시편</button>
+    <button class="ghost" id="cartbtn">제안서 <span id="cartbtn-n">0</span></button>
+  </div>
+</header>
+
+<main id="view"></main>
+<div class="cartbar" id="cartbar"></div>
+
+<!-- 편집 드로어 -->
+<div class="drawer-scrim" id="drawer-scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div>
+      <div class="eyebrow" style="margin:0 0 4px">Edit</div>
+      <strong id="drawer-title">시편 편집</strong>
+    </div>
+    <button class="icon-btn" id="drawer-close" title="닫기">✕</button>
+  </div>
+  <div class="drawer-tabs" id="drawer-tabs">
+    <button data-tab="base" class="on">기본</button>
+    <button data-tab="var">베리에이션</button>
+    <button data-tab="mixes">배합</button>
+    <button data-tab="images">이미지</button>
+    <button data-tab="json">JSON</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+  <div class="drawer-foot">
+    <span id="drawer-msg" class="msg"></span>
+    <div class="grow"></div>
+    <button class="btn-line" id="drawer-cancel">취소</button>
+    <button class="btn-dark" id="drawer-save">저장</button>
+  </div>
+</aside>
+
+<!-- 이미지 크롭 -->
+<div class="crop-modal" id="crop-modal">
+  <div class="crop-box">
+    <div class="crop-head">
+      <strong>이미지 자르기</strong>
+      <span class="hint">170 : 70 고정 · 드래그로 위치, 슬라이더로 확대</span>
+      <button class="icon-btn" id="crop-cancel2">✕</button>
+    </div>
+    <div class="crop-stage" id="crop-stage">
+      <img id="crop-img" alt="">
+      <div class="crop-guide"></div>
+    </div>
+    <div class="crop-controls">
+      <label>확대</label>
+      <input type="range" id="crop-zoom" min="100" max="400" value="100">
+      <span id="crop-info" class="hint"></span>
+    </div>
+    <div class="crop-foot">
+      <button class="btn-line" id="crop-cancel">취소</button>
+      <button class="btn-dark" id="crop-ok">이 이미지 사용</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

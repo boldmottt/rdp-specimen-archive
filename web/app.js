@@ -30,10 +30,18 @@
     try { App.cart = JSON.parse(localStorage.getItem(LS_CART)) || []; } catch (e) { App.cart = []; }
     try { App.prop = Object.assign(App.prop, JSON.parse(localStorage.getItem(LS_PROP)) || {}); } catch (e) {}
   }
-  const saveLS = () => {
+  let uiTimer = null;
+  function saveLS() {
     try { localStorage.setItem(LS_CART, JSON.stringify(App.cart)); } catch (e) {}
     try { localStorage.setItem(LS_PROP, JSON.stringify(App.prop)); } catch (e) {}
-  };
+    clearTimeout(uiTimer);
+    uiTimer = setTimeout(() => {
+      fetch("/api/ui", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cart: App.cart, prop: App.prop }),
+      }).catch(() => {});
+    }, 400);
+  }
 
   /* ---------------- api ---------------- */
   async function apiGet(path) {
@@ -41,9 +49,15 @@
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
-  async function apiPut(path, body) {
-    const r = await fetch(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  async function apiPut(path, body, rev) {
+    const headers = { "Content-Type": "application/json" };
+    if (rev) headers["X-Base-Rev"] = rev;
+    const r = await fetch(path, { method: "PUT", headers, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      const err = new Error(j.message || "다른 곳에서 먼저 저장되었습니다");
+      err.status = 409; err.payload = j; throw err;
+    }
     if (!r.ok || j.ok === false) throw new Error((j.errors || [j.error || "저장 실패"]).join(", "));
     return j;
   }
@@ -425,13 +439,13 @@
     return p.join(" / ");
   }
 
-  const FIRST_PAGE_MAX = 3;
-  const PAGE_MAX = 3;
+  const firstPageMax = () => Math.max(1, Number((App.config && App.config.firstPageMax) || 3));
+  const pageMax = () => Math.max(1, Number((App.config && App.config.pageMax) || 3));
 
   function splitVars(vars) {
     const n = vars.length;
-    if (n <= FIRST_PAGE_MAX) return [vars];
-    const count = Math.ceil(n / PAGE_MAX);
+    if (n <= firstPageMax()) return [vars];
+    const count = Math.ceil(n / pageMax());
     const base = Math.floor(n / count), rem = n % count;
     const out = []; let i = 0;
     for (let p = 0; p < count; p++) {
@@ -564,6 +578,7 @@
   function openEditor(pid, vid) {
     E.isNew = !pid;
     E.pid = pid;
+    E.baseRev = pid ? (byId(pid) || {}).updatedAt || "" : "";
     E.draft = pid ? clone(byId(pid)) : newDoc();
     if (pid) { delete E.draft._file; delete E.draft._mtime; }
     E.vIdx = Math.max(0, E.draft.variations.findIndex((v) => v.id === vid));
@@ -858,9 +873,10 @@
       E.msg = "저장 중…"; renderDrawer();
       const payload = {};
       Object.keys(d).forEach((k) => { if (!k.startsWith("_")) payload[k] = d[k]; });
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(d.id)}`, payload);
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(d.id)}`, payload, E.baseRev);
       const idx = App.patterns.findIndex((x) => x.id === d.id);
       const saved = clone(d); saved._mtime = Date.now();
+      if (r.savedAt) { saved.updatedAt = r.savedAt; E.baseRev = r.savedAt; }
       if (idx >= 0) App.patterns[idx] = saved; else App.patterns.push(saved);
       E.msg = "저장됨 " + (r.savedAt || "");
       E.isNew = false;
@@ -868,6 +884,19 @@
       rerender();
       closeEditor();
     } catch (e) {
+      if (e.status === 409 && e.payload && e.payload.current) {
+        const ok = confirm("다른 곳에서 먼저 저장되었습니다.\n최신 내용을 불러올까요? 지금 편집 중인 내용은 사라집니다.");
+        if (ok) {
+          const cur = e.payload.current;
+          const i = App.patterns.findIndex((x) => x.id === cur.id);
+          if (i >= 0) App.patterns[i] = cur; else App.patterns.push(cur);
+          closeEditor(); rerender(); toast("최신 내용을 불러왔습니다");
+        } else {
+          E.msg = "저장 취소 — 최신 내용을 확인하세요";
+          renderDrawer();
+        }
+        return;
+      }
       E.msg = "저장 실패: " + e.message;
       renderDrawer();
     }
@@ -986,6 +1015,14 @@
     $("#drawer-scrim").onclick = closeEditor;
     $("#drawer-save").onclick = saveDraft;
     $$("#drawer-tabs button").forEach((b) => (b.onclick = () => { E.tab = b.dataset.tab; syncTabs(); renderDrawer(); }));
+
+    try {
+      const ui = await apiGet("/api/ui");
+      if (ui && ui.state) {
+        if (Array.isArray(ui.state.cart)) App.cart = ui.state.cart;
+        if (ui.state.prop) App.prop = Object.assign(App.prop, ui.state.prop);
+      }
+    } catch (e) {}
 
     try {
       const health = await apiGet("/api/health");

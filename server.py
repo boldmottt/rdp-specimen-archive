@@ -72,14 +72,28 @@ ORIG = os.path.join(DATA, "_orig")
 BACKUP = os.path.join(DATA, "_backup")
 TRASH = os.path.join(DATA, "_trash")
 PROPOSALS = os.path.join(DATA, "proposals")
+UI_STATE = os.path.join(DATA, "_ui", "state.json")
 
 
 def ensure_dirs():
-    for d in (PATTERNS, IMAGES, ORIG, BACKUP, TRASH, PROPOSALS):
+    for d in (PATTERNS, IMAGES, ORIG, BACKUP, TRASH, PROPOSALS, os.path.dirname(UI_STATE)):
         os.makedirs(d, exist_ok=True)
 
 
 # ---------------------------------------------------------------- helpers
+_LOCKS = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def pid_lock(pid: str) -> threading.Lock:
+    with _LOCKS_GUARD:
+        lk = _LOCKS.get(pid)
+        if lk is None:
+            lk = threading.Lock()
+            _LOCKS[pid] = lk
+        return lk
+
+
 def now_stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
 
@@ -354,7 +368,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"ok": True, "dataRoot": DATA, "port": PORT,
                                   "brand": CFG.get("brand", "RDP"),
                                   "brandSub": CFG.get("brandSub", "SPECIMEN ARCHIVE"),
-                                  "company": CFG.get("company", "")})
+                                  "company": CFG.get("company", ""),
+                                  "firstPageMax": CFG.get("firstPageMax", 3),
+                                  "pageMax": CFG.get("pageMax", 3)})
+            if p == "/api/ui":
+                if os.path.exists(UI_STATE):
+                    try:
+                        with open(UI_STATE, encoding="utf-8") as f:
+                            return self.json({"ok": True, "state": json.load(f)})
+                    except Exception as e:
+                        return self.json({"ok": True, "state": {}, "error": str(e)})
+                return self.json({"ok": True, "state": {}})
             if p == "/api/patterns":
                 pats, errs = load_all()
                 return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
@@ -375,6 +399,14 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p == "/api/ui":
+                raw = self.read_body()
+                try:
+                    state = json.loads(raw.decode("utf-8"))
+                except Exception as e:
+                    return self.error(400, f"JSON 파싱 실패: {e}")
+                atomic_write(UI_STATE, json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8"))
+                return self.json({"ok": True})
             if p.startswith("/api/patterns/"):
                 pid = p[len("/api/patterns/"):].strip("/")
                 return self.save_pattern(pid)
@@ -458,6 +490,10 @@ class Handler(BaseHTTPRequestHandler):
             safe_id(pid)
         except ValueError:
             return self.error(400, "id 형식 오류")
+        with pid_lock(pid):
+            return self._save_pattern_locked(pid)
+
+    def _save_pattern_locked(self, pid):
         raw = self.read_body()
         try:
             doc = json.loads(raw.decode("utf-8"))
@@ -468,8 +504,21 @@ class Handler(BaseHTTPRequestHandler):
         errs = validate_pattern(doc)
         if errs:
             return self.json({"ok": False, "errors": errs}, 400)
-        doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
         path = safe_join(PATTERNS, pid + ".json")
+        base_rev = (self.headers.get("X-Base-Rev") or "").strip()
+        if os.path.exists(path) and base_rev:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    prev = json.load(f)
+            except Exception:
+                prev = None
+            prev_rev = (prev or {}).get("updatedAt") or ""
+            if prev_rev and base_rev != prev_rev:
+                return self.json({"ok": False, "conflict": True,
+                                  "message": "다른 곳에서 먼저 저장되었습니다",
+                                  "current": prev}, 409)
+        doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         if os.path.exists(path):
             try:
                 with open(path, encoding="utf-8") as f:
@@ -566,6 +615,7 @@ if __name__ == "__main__":
         BACKUP = os.path.join(DATA, "_backup")
         TRASH = os.path.join(DATA, "_trash")
         PROPOSALS = os.path.join(DATA, "proposals")
+        UI_STATE = os.path.join(DATA, "_ui", "state.json")
         print(f"[demo] {tmp}")
 
     ensure_dirs()
