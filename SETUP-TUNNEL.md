@@ -93,16 +93,23 @@ sudo /opt/homebrew/bin/cloudflared service install eyJhIjoi...   # 대시보드�
 
 ```bash
 cd ~/.aside/artifacts/rdp-archive
-python3 setup_tunnel.py rdp.내도메인.com me@nifco.co.kr
+python3 setup_tunnel.py rdp.내도메인.com me@nifco.co.kr 내팀이름
 ```
+
+세 번째 값은 Zero Trust **팀 이름**입니다 (Settings → Custom Pages 의 Team domain `내팀이름.cloudflareaccess.com`).
+서버가 이 주소의 공개키로 Access 토큰 **서명을 검증**합니다. 비워 두면 외부 접속은 전부 403입니다.
 
 `config.json`에 이렇게 들어갑니다:
 
 ```json
 "allowHosts": ["rdp.내도메인.com", "localhost", "127.0.0.1"],
 "requireCfAccess": true,
-"cfAccessEmail": "me@nifco.co.kr"
+"cfAccessEmail": "me@nifco.co.kr",
+"cfAccessTeamDomain": "내팀이름.cloudflareaccess.com"
 ```
+
+(선택) Access 애플리케이션의 **AUD 태그**를 `"cfAccessAud"`에 넣으면 다른 Access 앱의 토큰도 거절합니다.
+`config.json`이 깨져서 읽히지 않으면 서버는 외부 접속을 모두 거절한 채로 시작합니다(localhost만 허용).
 
 `cfAccessEmail`을 넣으면 **그 이메일 토큰만** 통과합니다(다른 사람 초대 시 비우거나 추가).
 

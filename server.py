@@ -10,6 +10,7 @@ RDP 시편 아카이브 v2 — 로컬 서버
 """
 import argparse
 import base64
+import contextlib
 import io
 import json
 import mimetypes
@@ -39,6 +40,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, "web")
 CONFIG_PATH = os.path.join(HERE, "config.json")
 _CFG_MTIME = None
+_CFG_GUARD = threading.Lock()
 try:
     _CFG_MTIME = os.path.getmtime(CONFIG_PATH)
 except Exception:
@@ -63,14 +65,25 @@ def default_data_root() -> str:
     return os.path.join(home, "RDP-Archive")
 
 
+def read_config_file() -> dict:
+    with open(CONFIG_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("최상위가 객체가 아닙니다")
+    return data
+
+
 def load_config() -> dict:
     cfg = {"dataRoot": default_data_root(), "port": 8791}
     if os.path.exists(CONFIG_PATH):
         try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                cfg.update(json.load(f))
+            cfg.update(read_config_file())
         except Exception as e:
-            print(f"[warn] config.json을 읽지 못해 기본값을 사용합니다: {e}")
+            # 깨진 설정 때문에 인증이 꺼지면 안 된다 → 외부 접속은 막고(localhost만) 시작
+            cfg["requireCfAccess"] = True
+            cfg["_cfgBroken"] = True
+            print(f"[warn] config.json을 읽지 못했습니다: {e}\n"
+                   "       기본값으로 시작하며, 고칠 때까지 외부(터널) 접속은 모두 거절합니다.")
     return cfg
 
 
@@ -150,6 +163,34 @@ def move_to_trash(path: str, label: str = ""):
     shutil.move(path, dest)
 
 
+def rename_pattern(old_id: str, new_id: str, data: bytes):
+    """이미지 → 원본 → 새 JSON → 옛 JSON(_trash) 순서로 옮긴다.
+    중간에 실패하면 이미 옮긴 것을 역순으로 되돌린다. (호출 전에 대상이 비어 있는지 확인할 것)"""
+    old_path = safe_join(PATTERNS, old_id + ".json")
+    new_path = safe_join(PATTERNS, new_id + ".json")
+    undo = []
+    try:
+        for base in (IMAGES, ORIG):
+            src = os.path.join(base, old_id)
+            dst = os.path.join(base, new_id)
+            if os.path.isdir(src):
+                if os.path.exists(dst):
+                    raise FileExistsError(dst)
+                os.rename(src, dst)   # shutil.move와 달리 기존 폴더 '안으로' 들어가지 않는다
+                undo.append(lambda s=src, d=dst: os.rename(d, s))
+        if os.path.exists(new_path):
+            raise FileExistsError(new_path)
+        atomic_write(new_path, data)
+        undo.append(lambda: os.unlink(new_path))
+        move_to_trash(old_path, f"renamed-{new_id}.json")
+    except Exception:
+        for fn in reversed(undo):
+            try:
+                fn()
+            except Exception as e2:
+                print(f"[warn] 되돌리기 실패 ({old_id} → {new_id}): {e2}")
+        raise
+
 def validate_pattern(doc: dict):
     errors = []
     if not isinstance(doc, dict):
@@ -174,6 +215,109 @@ def validate_pattern(doc: dict):
         if not isinstance(v.get("mixes", []), list):
             errors.append(f"variations[{i}].mixes가 배열이 아닙니다")
     return errors
+
+
+# ---------------------------------------------------------------- Cloudflare Access JWT
+# 서명까지 검증한다 (페이로드만 읽으면 누구나 위조 토큰을 만들 수 있음).
+# 외부 라이브러리 없이 RS256(PKCS#1 v1.5 + SHA-256)을 직접 검증한다.
+_SHA256_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
+_JWKS = {"team": "", "keys": {}, "fetched": 0.0, "tried": 0.0}
+_JWKS_GUARD = threading.Lock()
+JWKS_TTL = 3600
+JWKS_RETRY = 60
+
+
+def b64url_decode(s: str) -> bytes:
+    s = (s or "").strip()
+    return base64.urlsafe_b64decode((s + "=" * (-len(s) % 4)).encode("ascii"))
+
+
+def cf_team_domain() -> str:
+    raw = str(CFG.get("cfAccessTeamDomain") or "").strip().lower()
+    raw = re.sub(r"^https?://", "", raw).strip("/")
+    if not raw:
+        return ""
+    if "." not in raw:
+        raw += ".cloudflareaccess.com"
+    return raw if re.fullmatch(r"[a-z0-9.-]+", raw) else ""
+
+
+def fetch_jwks(team: str) -> dict:
+    url = f"https://{team}/cdn-cgi/access/certs"
+    with urllib.request.urlopen(url, timeout=5) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    keys = {}
+    for k in data.get("keys") or []:
+        if k.get("kty") == "RSA" and k.get("kid") and k.get("n") and k.get("e"):
+            keys[k["kid"]] = (int.from_bytes(b64url_decode(k["n"]), "big"),
+                              int.from_bytes(b64url_decode(k["e"]), "big"))
+    return keys
+
+
+def jwks_key(team: str, kid: str):
+    with _JWKS_GUARD:
+        now = time.time()
+        stale = _JWKS["team"] != team or now - _JWKS["fetched"] > JWKS_TTL
+        unknown = kid not in _JWKS["keys"]
+        if (stale or unknown) and now - _JWKS["tried"] > JWKS_RETRY:
+            _JWKS["tried"] = now
+            try:
+                keys = fetch_jwks(team)
+                _JWKS.update(team=team, keys=keys, fetched=now)
+            except Exception as e:
+                print(f"[warn] Cloudflare Access 공개키를 받지 못했습니다: {e}")
+        if _JWKS["team"] != team:
+            return None
+        return _JWKS["keys"].get(kid)
+
+
+def rs256_verify(signing_input: bytes, sig: bytes, n: int, e: int) -> bool:
+    import hashlib
+    import hmac
+    k = (n.bit_length() + 7) // 8
+    if len(sig) != k:
+        return False
+    s = int.from_bytes(sig, "big")
+    if s >= n:
+        return False
+    em = pow(s, e, n).to_bytes(k, "big")
+    t = _SHA256_PREFIX + hashlib.sha256(signing_input).digest()
+    if k < len(t) + 11:
+        return False
+    expected = b"\x00\x01" + b"\xff" * (k - len(t) - 3) + b"\x00" + t
+    return hmac.compare_digest(em, expected)
+
+
+def verify_cf_jwt(token: str, team: str, key_lookup=None):
+    """검증에 성공하면 payload, 아니면 None."""
+    try:
+        h64, p64, s64 = token.split(".")
+        header = json.loads(b64url_decode(h64))
+        payload = json.loads(b64url_decode(p64))
+        sig = b64url_decode(s64)
+    except Exception:
+        return None
+    if not isinstance(header, dict) or not isinstance(payload, dict):
+        return None
+    if header.get("alg") != "RS256" or not header.get("kid"):
+        return None
+    key = (key_lookup or jwks_key)(team, header["kid"])
+    if not key:
+        return None
+    if not rs256_verify(f"{h64}.{p64}".encode("ascii"), sig, *key):
+        return None
+    now = time.time()
+    try:
+        if float(payload.get("exp") or 0) < now:
+            return None
+        if payload.get("nbf") is not None and float(payload["nbf"]) > now + 60:
+            return None
+    except (TypeError, ValueError):
+        return None
+    iss = str(payload.get("iss") or "").rstrip("/")
+    if iss != f"https://{team}":
+        return None
+    return payload
 
 
 RDP_RESULT = {"✅": "ok", "⚠️": "warn", "❌": "ng"}
@@ -247,8 +391,13 @@ def apply_db_mix(m, dm):
     changed = False
     if dm.get("plate") and m.get("plate") != dm["plate"]:
         m["plate"] = dm["plate"]; changed = True
-    if dm.get("inks") and m.get("inks") != dm["inks"]:
-        m["inks"] = dm["inks"]; changed = True
+    if dm.get("inks"):
+        # DB에는 7종(INK_COLS)만 있다 → 그 외 커스텀 잉크는 아카이브 값을 그대로 둔다
+        cur = m.get("inks") or {}
+        merged = {k: x for k, x in cur.items() if k not in DB_INKS}
+        merged.update(dm["inks"])
+        if merged != cur:
+            m["inks"] = merged; changed = True
     for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
         if dm.get(f) is not None and m.get(f) != dm[f]:
             m[f] = dm[f]; changed = True
@@ -307,50 +456,105 @@ PCT_COLS = (("mattingPct", "matting_agent_pct"), ("mattingG", "matting_agent_g")
             ("hardenerPct", "hardener_pct"), ("hardenerG", "hardener_g"))
 
 
-def plan_push(doc, db_mixes):
-    """아카이브 -> DB 반영 계획. 실제 쓰기는 하지 않는다."""
-    v = pick_variation(doc, db_mixes) if db_mixes else ((doc.get("variations") or [None])[0])
-    if not v:
+DB_INKS = {k for k, _ in INK_COLS}
+
+
+def split_by_variation(vs, db_mixes):
+    """sync_one과 같은 규칙: 도장코드 == 컬러코드인 첫 베리에이션, 없으면 첫 베리에이션."""
+    out = [(v, []) for v in vs]
+    for dm in db_mixes:
+        c = (dm.get("_coating") or "").strip()
+        i = next((j for j, v in enumerate(vs) if c and (v.get("colorCode") or "").strip() == c), 0)
+        out[i][1].append(dm)
+    return out
+
+
+def renamed_from_rows(doc):
+    """코드/프로젝트가 바뀐 시편이면 옛 키로 DB에 남아 있는 행 수와 옛 키를 돌려준다."""
+    rf = doc.get("renamedFrom") or {}
+    old = (rf.get("project") or "", rf.get("code") or "")
+    cur = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")
+    if not old[1] or old == cur:
+        return 0, old
+    return len(read_rdp_mixes(*old)), old
+
+
+def plan_push(doc, db_mixes, old_rows=0, old_key=None):
+    """아카이브 -> DB 반영 계획. 실제 쓰기는 하지 않는다.
+    모든 베리에이션을 본다 (DB 행은 도장코드=컬러코드로 베리에이션에 나눔)."""
+    if old_rows:
+        op, oc = old_key or ("", "")
+        cp = doc.get("project") or ""
+        cc = (doc.get("pattern") or {}).get("code") or ""
+        return {"updates": [], "inserts": [], "skipped": [],
+                "blocked": (f"DB에 옛 코드({op}-{oc}) 행 {old_rows}개가 있습니다. "
+                            f"지금 보내면 {cp}-{cc}로 같은 배합이 새로 생깁니다. "
+                            "DB 쪽 코드도 바꿀지 먼저 결정하세요."),
+                "renamedFrom": {"project": op, "code": oc, "rows": old_rows}}
+    vs = doc.get("variations") or []
+    if not vs:
         return {"updates": [], "inserts": [], "skipped": [{"batch": "-", "reason": "베리에이션 없음"}]}
-    dbmap = {(d["layer"], d["batch"], d["plate"]): d for d in db_mixes}
     updates, inserts, skipped = [], [], []
-    for m in v.get("mixes", []):
-        plate = (m.get("plate") or "").strip()
-        if not plate:
-            skipped.append({"batch": m.get("batch"), "reason": "동판 없음"})
+    seen_codes = set()
+    for vi, (v, rows) in enumerate(split_by_variation(vs, db_mixes)):
+        vid = v.get("id")
+        coat = (v.get("colorCode") or "").strip()
+        if vi > 0 and not coat:
+            if v.get("mixes"):
+                skipped.append({"vid": vid, "batch": "-", "reason": "컬러코드 없음 — DB에서 컬러를 구분할 수 없어 건너뜀"})
             continue
-        key = (m.get("layer"), m.get("batch"), plate)
-        cur = dbmap.get(key)
-        if cur is None:
-            inserts.append({"batch": m.get("batch"), "layer": m.get("layer"), "plate": plate})
+        if vi > 0 and coat in seen_codes:
+            if v.get("mixes"):
+                skipped.append({"vid": vid, "batch": "-", "reason": f"컬러코드 {coat}가 다른 컬러와 같음"})
             continue
-        fields = []
-        cur_inks = cur.get("inks") or {}
-        for k, _col in INK_COLS:
-            nv = float(m.get("inks", {}).get(k) or 0)
-            ov = float(cur_inks.get(k) or 0)
-            if abs(nv - ov) > 1e-9:
-                fields.append({"name": k, "from": ov, "to": nv})
-        for f, _col in PCT_COLS:
-            nv = m.get(f)
-            if nv is None:
+        seen_codes.add(coat)
+        dbmap = {(d["layer"], d["batch"], d["plate"]): d for d in rows}
+        seen = set()
+        for m in v.get("mixes", []):
+            plate = (m.get("plate") or "").strip()
+            batch = (m.get("batch") or "").strip()
+            if not plate:
+                skipped.append({"vid": vid, "batch": m.get("batch"), "reason": "동판 없음"})
                 continue
-            ov = cur.get(f)
-            if ov is None or abs(float(nv) - float(ov)) > 1e-9:
-                fields.append({"name": f, "from": ov, "to": float(nv)})
-        enum = m.get("result") or ""
-        if enum and enum in RESULT_TO_DB and enum != (cur.get("result") or ""):
-            fields.append({"name": "result", "from": cur.get("result") or "", "to": RESULT_TO_DB[enum]})
-        if m.get("date") and m["date"] != (cur.get("date") or ""):
-            fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
-        if fields:
-            updates.append({"id": cur.get("_id"), "batch": m.get("batch"), "layer": m.get("layer"),
-                            "plate": plate, "fields": fields})
+            if not batch:
+                skipped.append({"vid": vid, "batch": "-", "layer": m.get("layer"), "reason": "배치번호 필요"})
+                continue
+            key = (m.get("layer"), m.get("batch"), plate)
+            if key in seen:
+                skipped.append({"vid": vid, "batch": batch, "reason": "같은 도수·배치·동판 중복"})
+                continue
+            seen.add(key)
+            cur = dbmap.get(key)
+            if cur is None:
+                inserts.append({"vid": vid, "coating": coat, "batch": m.get("batch"),
+                                "layer": m.get("layer"), "plate": plate})
+                continue
+            fields = []
+            cur_inks = cur.get("inks") or {}
+            for k, _col in INK_COLS:
+                nv = float((m.get("inks") or {}).get(k) or 0)
+                ov = float(cur_inks.get(k) or 0)
+                if abs(nv - ov) > 1e-9:
+                    fields.append({"name": k, "from": ov, "to": nv})
+            for f, _col in PCT_COLS:
+                nv = m.get(f)
+                if nv is None:
+                    continue
+                ov = cur.get(f)
+                if ov is None or abs(float(nv) - float(ov)) > 1e-9:
+                    fields.append({"name": f, "from": ov, "to": float(nv)})
+            enum = m.get("result") or ""
+            if enum and enum in RESULT_TO_DB and enum != (cur.get("result") or ""):
+                fields.append({"name": "result", "from": cur.get("result") or "", "to": RESULT_TO_DB[enum]})
+            if m.get("date") and m["date"] != (cur.get("date") or ""):
+                fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
+            if fields:
+                updates.append({"vid": vid, "id": cur.get("_id"), "batch": m.get("batch"),
+                                "layer": m.get("layer"), "plate": plate, "fields": fields})
     return {"updates": updates, "inserts": inserts, "skipped": skipped}
 
 
-def apply_push(project, code, doc, db_mixes, plan):
-    path = rdp_db_path()
+def backup_rdp_db(path: str) -> str:
     os.makedirs(BACKUP, exist_ok=True)
     bpath = os.path.join(BACKUP, f"rdp.db.{now_stamp()}")
     src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -361,9 +565,17 @@ def apply_push(project, code, doc, db_mixes, plan):
     finally:
         dst.close()
         src.close()
+    return bpath
 
-    v = pick_variation(doc, db_mixes)
-    by_key = {(m.get("layer"), m.get("batch"), (m.get("plate") or "").strip()): m for m in v.get("mixes", [])}
+
+def apply_push(project, code, doc, plan):
+    path = rdp_db_path()
+    bpath = backup_rdp_db(path)
+
+    by_key = {}
+    for v in doc.get("variations") or []:
+        for m in v.get("mixes", []):
+            by_key.setdefault((v.get("id"), m.get("layer"), m.get("batch"), (m.get("plate") or "").strip()), m)
 
     con = sqlite3.connect(path)
     try:
@@ -371,8 +583,8 @@ def apply_push(project, code, doc, db_mixes, plan):
         cur.execute("BEGIN IMMEDIATE")
         n_upd = n_ins = 0
         for u in plan["updates"]:
-            m = by_key.get((u["layer"], u["batch"], u["plate"]))
-            if not m:
+            m = by_key.get((u["vid"], u["layer"], u["batch"], u["plate"]))
+            if not m or u.get("id") is None:
                 continue
             sets, vals = [], []
             for f in u["fields"]:
@@ -380,34 +592,31 @@ def apply_push(project, code, doc, db_mixes, plan):
                     sets.append("result=?"); vals.append(f["to"])
                 elif f["name"] == "date":
                     sets.append("date=?"); vals.append(f["to"])
-                elif f["name"] in [k for k, _ in INK_COLS]:
+                elif f["name"] in DB_INKS:
                     sets.append(f"{dict(INK_COLS)[f['name']]}=?"); vals.append(f["to"])
                 else:
                     sets.append(f"{dict(PCT_COLS)[f['name']]}=?"); vals.append(f["to"])
-            if u.get("id") is not None:
-                vals.append(u["id"])
-                cur.execute(f"UPDATE rdp_mixes SET {', '.join(sets)} WHERE id=?", vals)
-            else:
-                vals += [project, code, u["plate"], u["layer"], u["batch"]]
-                cur.execute(f"UPDATE rdp_mixes SET {', '.join(sets)} WHERE project=? AND pattern_code=? AND plate=? AND layer=? AND batch_no=?", vals)
+            vals.append(u["id"])
+            cur.execute(f"UPDATE rdp_mixes SET {', '.join(sets)} WHERE id=?", vals)
             n_upd += cur.rowcount
         for ins in plan["inserts"]:
-            m = by_key.get((ins["layer"], ins["batch"], ins["plate"]))
+            m = by_key.get((ins["vid"], ins["layer"], ins["batch"], ins["plate"]))
             if not m:
                 continue
-            inks = {k: float(m.get("inks", {}).get(k) or 0) for k, _ in INK_COLS}
+            inks = {k: float((m.get("inks") or {}).get(k) or 0) for k, _ in INK_COLS}
             cur.execute("""INSERT INTO rdp_mixes
                 (date, project, pattern_code, plate, layer, batch_no, is_base,
                  mt, bk, wh, ye, rd, cl, ye_d,
                  matting_agent_pct, matting_agent_g, thinner_pct, thinner_g, hardener_pct, hardener_g,
-                 result, change_summary, notes)
-                VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?)""",
+                 result, change_summary, notes, coating_code)
+                VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)""",
                 (m.get("date") or datetime.now().strftime("%Y-%m-%d"), project, code, ins["plate"], ins["layer"], ins["batch"],
                  1 if m.get("isReference") else 0,
                  inks["MT"], inks["BK"], inks["WH"], inks["YE"], inks["RD"], inks["CL"], inks["YE-D"],
                  m.get("mattingPct"), m.get("mattingG"), m.get("thinnerPct"), m.get("thinnerG"),
                  m.get("hardenerPct"), m.get("hardenerG"),
-                 RESULT_TO_DB.get(m.get("result") or "", ""), m.get("change") or "", m.get("note") or ""))
+                 RESULT_TO_DB.get(m.get("result") or "", ""), m.get("change") or "", m.get("note") or "",
+                 ins.get("coating") or ""))
             n_ins += 1
         con.commit()
     except Exception:
@@ -416,6 +625,30 @@ def apply_push(project, code, doc, db_mixes, plan):
     finally:
         con.close()
     return {"updated": n_upd, "inserted": n_ins, "backup": os.path.basename(bpath)}
+
+
+def rename_db_rows(old_key, new_key):
+    """rdp_mixes의 (project, pattern_code)를 옛 키 → 새 키로 바꾼다. 백업 후 실행."""
+    path = rdp_db_path()
+    if not path or not os.path.isfile(path):
+        raise ValueError(f"rdp.db를 찾을 수 없습니다: {path or '(경로 미설정)'}")
+    if read_rdp_mixes(*new_key):
+        raise ValueError(f"DB에 이미 {new_key[0]}-{new_key[1]} 행이 있어 합칠 수 없습니다")
+    bpath = backup_rdp_db(path)
+    con = sqlite3.connect(path)
+    try:
+        cur = con.cursor()
+        cur.execute("BEGIN IMMEDIATE")
+        cur.execute("UPDATE rdp_mixes SET project=?, pattern_code=? WHERE project=? AND pattern_code=?",
+                    (new_key[0], new_key[1], old_key[0], old_key[1]))
+        n = cur.rowcount
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+    return {"renamed": n, "backup": os.path.basename(bpath)}
 
 
 def diff_db(doc, db_mixes):
@@ -442,7 +675,7 @@ def diff_db(doc, db_mixes):
             unmatched.append(m.get("batch"))
             continue
         fields = []
-        if dm.get("inks") and m.get("inks") != dm["inks"]:
+        if dm.get("inks") and {k: x for k, x in (m.get("inks") or {}).items() if k in DB_INKS} != dm["inks"]:
             fields.append("inks")
         for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
             if dm.get(f) is not None and m.get(f) != dm[f]:
@@ -691,36 +924,46 @@ class Handler(BaseHTTPRequestHandler):
         global _CFG_MTIME
         try:
             m = os.path.getmtime(CONFIG_PATH)
-            if m != _CFG_MTIME:
-                CFG.clear()
-                CFG.update(json.load(open(CONFIG_PATH, encoding="utf-8")))
-                SAFE_HOSTS.clear()
-                SAFE_HOSTS.update(BASE_HOSTS)
-                SAFE_HOSTS.update(LAN_HOSTS)
-                SAFE_HOSTS.update(str(h).lower() for h in (CFG.get("allowHosts") or []) if h)
-                _CFG_MTIME = m
-        except Exception:
-            pass
+        except OSError:
+            return  # 파일이 잠깐 사라져도(동기화 중 등) 지금 설정을 유지
+        if m == _CFG_MTIME:
+            return
+        with _CFG_GUARD:
+            if m == _CFG_MTIME:
+                return
+            _CFG_MTIME = m
+            try:
+                fresh = read_config_file()
+            except Exception as e:
+                # 새로 읽기에 실패하면 이전 설정을 그대로 둔다 (CFG를 비우지 않는다)
+                print(f"[warn] config.json을 다시 읽지 못해 이전 설정을 유지합니다: {e}")
+                return
+            new = {"dataRoot": CFG.get("dataRoot"), "port": CFG.get("port", 8791)}
+            new.update(fresh)
+            # clear() 후 update()하면 다른 스레드가 잠깐 빈 CFG(=인증 꺼짐)를 볼 수 있다
+            CFG.update(new)
+            for k in [k for k in CFG if k not in new]:
+                CFG.pop(k, None)
+            SAFE_HOSTS.clear()
+            SAFE_HOSTS.update(BASE_HOSTS)
+            SAFE_HOSTS.update(LAN_HOSTS)
+            SAFE_HOSTS.update(str(h).lower() for h in (CFG.get("allowHosts") or []) if h)
 
     def _access_ok(self) -> bool:
         """Cloudflare Access 뒤에 있을 때, 인증된 요청만 통과시킨다.
         (Access를 꺼먹거나 잘못 설정해도 앱이 인터넷에 그냥 열리지 않게 하는 안전장치)"""
         if not CFG.get("requireCfAccess"):
             return True
-        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
-        if host in ("localhost", "127.0.0.1", "[::1]", "::1"):
+        if self._is_local_direct():
             return True  # 이 맥에서 직접 접속
         jwt = (self.headers.get("Cf-Access-Jwt-Assertion") or "").strip()
         if not jwt:
             return False
-        try:
-            part = jwt.split(".")[1]
-            part += "=" * (-len(part) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(part.encode()))
-        except Exception:
-            return False
-        exp = payload.get("exp")
-        if exp and time.time() > float(exp):
+        team = cf_team_domain()
+        if not team:
+            return False  # 팀 도메인이 없으면 서명을 검증할 수 없으므로 거절 (setup_tunnel.py)
+        payload = verify_cf_jwt(jwt, team)
+        if payload is None:
             return False
         aud = CFG.get("cfAccessAud")
         if aud:
@@ -732,6 +975,18 @@ class Handler(BaseHTTPRequestHandler):
         want_mail = (CFG.get("cfAccessEmail") or "").strip().lower()
         if want_mail and (payload.get("email") or "").strip().lower() != want_mail:
             return False
+        return True
+
+    def _is_local_direct(self) -> bool:
+        """Host가 localhost이고, 실제로 루프백에서 왔고, Cloudflare를 거치지 않은 요청."""
+        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+        if host not in ("localhost", "127.0.0.1", "[::1]", "::1"):
+            return False
+        peer = (self.client_address or ("",))[0]
+        if not (peer.startswith("127.") or peer in ("::1", "::ffff:127.0.0.1")):
+            return False  # LAN 모드에서 Host: localhost 를 위조한 원격 요청
+        if self.headers.get("Cf-Ray") or self.headers.get("Cf-Connecting-Ip"):
+            return False  # 터널(cloudflared)을 거쳐 온 요청
         return True
 
     def _write_ok(self) -> bool:
@@ -793,7 +1048,8 @@ class Handler(BaseHTTPRequestHandler):
                     with open(path, encoding="utf-8") as f:
                         doc = json.load(f)
                     db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
-                    plan = plan_push(doc, db_mixes)
+                    old_rows, old_key = renamed_from_rows(doc)
+                    plan = plan_push(doc, db_mixes, old_rows, old_key)
                     return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
                 except Exception as e:
                     return self.error(400, str(e))
@@ -1003,40 +1259,61 @@ class Handler(BaseHTTPRequestHandler):
                         project = doc.get("project")
                         code = (doc.get("pattern") or {}).get("code")
                         db_mixes = read_rdp_mixes(project, code)
-                        plan = plan_push(doc, db_mixes)
+                        old_rows, old_key = renamed_from_rows(doc)
+                        plan = plan_push(doc, db_mixes, old_rows, old_key)
+                        if plan.get("blocked"):
+                            return self.json({"ok": False, "blocked": plan["blocked"],
+                                              "error": plan["blocked"]}, 409)
                         if not plan["updates"] and not plan["inserts"]:
                             return self.json({"ok": True, "updated": 0, "inserted": 0, "message": "반영할 변경이 없습니다"})
-                        res = apply_push(project, code, doc, db_mixes, plan)
+                        res = apply_push(project, code, doc, plan)
                         return self.json({"ok": True, **res, "skipped": len(plan["skipped"])})
                 except Exception as e:
                     return self.error(500, str(e))
             if p.startswith("/api/rdp/sync/"):
                 pid = p[len("/api/rdp/sync/"):].strip("/")
                 return self.sync_pattern(pid)
-            if p.startswith("/api/patterns/") and p.endswith("/rename"):
-                old_id = p[len("/api/patterns/"):-len("/rename")].strip("/")
-                safe_id(old_id)
-                body = json.loads(self.read_body() or b"{}")
-                new_id = safe_id(str(body.get("to") or "").strip())
-                if not new_id:
-                    return self.error(400, "새 ID가 없습니다")
-                old_path = safe_join(PATTERNS, old_id + ".json")
-                new_path = safe_join(PATTERNS, new_id + ".json")
-                if not os.path.isfile(old_path):
-                    return self.error(404, "원본 시편이 없습니다")
-                if os.path.exists(new_path):
-                    return self.error(409, "같은 ID의 시편이 이미 있습니다")
-                with open(old_path, encoding="utf-8") as f:
-                    doc = json.load(f)
-                doc["id"] = new_id
-                atomic_write(new_path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
-                for base in (IMAGES, ORIG):
-                    src = os.path.join(base, old_id)
-                    dst = os.path.join(base, new_id)
-                    if os.path.isdir(src):
-                        shutil.move(src, dst)
-                move_to_trash(old_path, f"renamed-{new_id}")
-                return self.json({"ok": True, "id": new_id, "savedAt": doc["updatedAt"]})
+            if p.startswith("/api/rdp/rename-db/"):
+                # 시편 코드를 바꾼 뒤: DB 행도 새 코드로 바꾸거나(rename), 옛 행은 두고 표시만 지운다(ignore)
+                if not self._db_write_allowed():
+                    return self.error(403, "LAN 모드에서는 DB 쓰기가 꺼져 있습니다 (config.allowLanWrite)")
+                pid = p[len("/api/rdp/rename-db/"):].strip("/")
+                try:
+                    safe_id(pid)
+                    body = json.loads(self.read_body() or b"{}")
+                except ValueError as e:
+                    return self.error(400, str(e))
+                mode = body.get("mode")
+                if mode not in ("rename", "ignore"):
+                    return self.error(400, "mode는 rename 또는 ignore")
+                try:
+                    with pid_lock(pid):
+                        path = safe_join(PATTERNS, pid + ".json")
+                        if not os.path.isfile(path):
+                            return self.error(404, "패턴이 없습니다")
+                        with open(path, encoding="utf-8") as f:
+                            doc = json.load(f)
+                        base_rev = (self.headers.get("X-Base-Rev") or "").strip()
+                        if base_rev and base_rev != (doc.get("updatedAt") or ""):
+                            return self.json({"ok": False, "conflict": True,
+                                              "message": "다른 곳에서 먼저 저장되었습니다", "current": doc}, 409)
+                        rf = doc.get("renamedFrom") or {}
+                        if not rf.get("code"):
+                            return self.error(400, "코드 변경 기록이 없습니다")
+                        res = {}
+                        if mode == "rename":
+                            old_key = (rf.get("project") or "", rf.get("code") or "")
+                            new_key = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")
+                            res = rename_db_rows(old_key, new_key)
+                        doc.pop("renamedFrom", None)
+                        doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                        with open(path, encoding="utf-8") as f:
+                            old = f.read()
+                        atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
+                        atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+                        return self.json({"ok": True, "savedAt": doc["updatedAt"], **res})
+                except ValueError as e:
+                    return self.error(400, str(e))
 
             if p == "/api/proposals":
                 doc = json.loads(self.read_body().decode("utf-8"))
@@ -1125,17 +1402,28 @@ class Handler(BaseHTTPRequestHandler):
     def save_pattern(self, pid):
         try:
             safe_id(pid)
+            rename_from = (self.headers.get("X-Rename-From") or "").strip()
+            if rename_from:
+                safe_id(rename_from)
         except ValueError:
             return self.error(400, "id 형식 오류")
-        with pid_lock(pid):
-            return self._save_pattern_locked(pid)
+        if rename_from == pid:
+            rename_from = ""
+        # 두 락은 항상 id 정렬 순서로 잡는다 (A→B / B→A 동시 rename 데드락 방지)
+        ids = sorted({pid, rename_from} - {""})
+        with contextlib.ExitStack() as st:
+            for x in ids:
+                st.enter_context(pid_lock(x))
+            return self._save_pattern_locked(pid, rename_from)
 
-    def _save_pattern_locked(self, pid):
+    def _save_pattern_locked(self, pid, rename_from=""):
         raw = self.read_body()
         try:
             doc = json.loads(raw.decode("utf-8"))
         except Exception as e:
             return self.error(400, f"JSON 파싱 실패: {e}")
+        if not isinstance(doc, dict):
+            return self.json({"ok": False, "errors": ["JSON 최상위가 객체가 아닙니다"]}, 400)
         doc = {k: v for k, v in doc.items() if not str(k).startswith("_")}
         doc["id"] = pid
         errs = validate_pattern(doc)
@@ -1143,31 +1431,61 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"ok": False, "errors": errs}, 400)
 
         path = safe_join(PATTERNS, pid + ".json")
-        if (self.headers.get("X-Create") or "").strip() == "1" and os.path.exists(path):
+        src_path = safe_join(PATTERNS, rename_from + ".json") if rename_from else path
+        if rename_from:
+            if not os.path.isfile(src_path):
+                return self.error(404, f"원본 시편({rename_from})이 없습니다")
+            taken = [x for x in (path, os.path.join(IMAGES, pid), os.path.join(ORIG, pid)) if os.path.exists(x)]
+            if taken:
+                return self.json({"ok": False, "exists": True,
+                                  "message": f"'{pid}' 이름이 이미 쓰이고 있습니다 ({', '.join(os.path.relpath(x, DATA) for x in taken)})"}, 409)
+        elif (self.headers.get("X-Create") or "").strip() == "1" and os.path.exists(path):
             return self.json({"ok": False, "exists": True,
                               "message": f"'{pid}' 시편이 이미 있습니다"}, 409)
-        base_rev = (self.headers.get("X-Base-Rev") or "").strip()
-        if os.path.exists(path) and base_rev:
+
+        prev = None
+        if os.path.exists(src_path):
             try:
-                with open(path, encoding="utf-8") as f:
+                with open(src_path, encoding="utf-8") as f:
                     prev = json.load(f)
             except Exception as e:
-                print(f"[warn] 기존 파일을 읽지 못했습니다 {pid}: {e}")
-                prev = None
-            prev_rev = (prev or {}).get("updatedAt") or ""
+                print(f"[warn] 기존 파일을 읽지 못했습니다 {rename_from or pid}: {e}")
+        base_rev = (self.headers.get("X-Base-Rev") or "").strip()
+        if prev is not None and (base_rev or rename_from):
+            prev_rev = prev.get("updatedAt") or ""
             if prev_rev and base_rev != prev_rev:
                 return self.json({"ok": False, "conflict": True,
                                   "message": "다른 곳에서 먼저 저장되었습니다",
                                   "current": prev}, 409)
+
+        # DB(rdp_mixes)는 project+pattern_code로 행을 찾는다 → 키가 바뀌면 옛 키를 기록해 둔다
+        # (서버가 관리하는 값: 클라이언트가 보낸 renamedFrom은 무시)
+        doc.pop("renamedFrom", None)
+        if isinstance(prev, dict):
+            prev_key = (prev.get("project") or "", (prev.get("pattern") or {}).get("code") or "")
+            new_key = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")
+            rf = prev.get("renamedFrom") if isinstance(prev.get("renamedFrom"), dict) else None
+            if not rf and prev_key != new_key and prev_key[1]:
+                rf = {"project": prev_key[0], "code": prev_key[1]}
+            if rf and (rf.get("project") or "", rf.get("code") or "") != new_key:
+                doc["renamedFrom"] = rf
+
         doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-        if os.path.exists(path):
+        if prev is not None or os.path.exists(src_path):
             try:
-                with open(path, encoding="utf-8") as f:
+                with open(src_path, encoding="utf-8") as f:
                     old = f.read()
-                atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
+                atomic_write(os.path.join(BACKUP, f"{rename_from or pid}.{now_stamp()}.json"), old.encode("utf-8"))
             except Exception as e:
                 return self.error(500, f"백업 실패로 저장을 중단했습니다: {e}")
-        atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+        data = json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8")
+        if rename_from:
+            try:
+                rename_pattern(rename_from, pid, data)
+            except Exception as e:
+                return self.error(500, f"이름 변경 실패 — 원래 상태로 되돌렸습니다: {e}")
+        else:
+            atomic_write(path, data)
         warns = []
         for v in doc.get("variations", []):
             per = {}
@@ -1182,7 +1500,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             removed = []
             print(f"[warn] gc 실패 {pid}: {e}")
-        return self.json({"ok": True, "savedAt": doc["updatedAt"], "warnings": warns, "removedImages": removed})
+        return self.json({"ok": True, "id": pid, "savedAt": doc["updatedAt"], "warnings": warns,
+                          "removedImages": removed, "renamedFrom": doc.get("renamedFrom")})
 
     def serve_image(self, rel):
         try:

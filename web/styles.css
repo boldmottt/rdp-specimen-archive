@@ -144,6 +144,7 @@ body.prop-mode .topbar .ghost{display:none}
 .kv dt{color:var(--ink-3);font-size:12px}
 .kv dd{margin:0}
 .kv dd.mono{font-family:var(--mono);font-size:12px}
+.kv dt .lab-own{display:inline-block;margin-left:4px;padding:0 5px;border-radius:4px;background:#eef1f6;color:#4a5872;font-size:9.5px;line-height:15px;vertical-align:1px}
 .chipline{display:flex;gap:6px;flex-wrap:wrap}
 .sec-tight{margin-top:20px}
 
@@ -409,6 +410,8 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .pp-f b{font-family:inherit;color:#a72c23}
 .pp-more{color:#8d9198}
 .pp-empty{font-size:12px;color:#8d9198;padding:4px 0}
+.pp-blocked{font-size:12px;line-height:1.55;color:#8a3b12;background:#fff4ec;border:1px solid #f3d3bd;border-radius:8px;padding:8px 10px;margin-bottom:8px}
+.pp-skip{color:#8d9198}
 .pp-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
 
 /* 제안서 스펙 표 (5항목) */

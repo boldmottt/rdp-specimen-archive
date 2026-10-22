@@ -62,10 +62,11 @@
     return j;
   }
 
-  async function apiPut(path, body, rev, create) {
+  async function apiPut(path, body, rev, create, renameFrom) {
     const headers = { "Content-Type": "application/json" };
     if (rev) headers["X-Base-Rev"] = rev;
     if (create) headers["X-Create"] = "1";
+    if (renameFrom) headers["X-Rename-From"] = renameFrom;
     const r = await fetch(path, { method: "PUT", headers, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (r.status === 409) {
@@ -181,6 +182,12 @@
   function startInline(el, pid, vid) {
     if (el.dataset.editing) return;
     const path = el.dataset.f;
+    if ((path === "project" || path === "pattern.code") && pid !== "__new__") {
+      // 인라인으로 바꾸면 파일 ID·DB 키와 어긋난다 → ID 변경 흐름이 있는 편집기로 보낸다
+      toast("프로젝트/패턴 코드는 편집기에서 바꿉니다 (파일 ID도 함께 변경)");
+      openEditor(pid, vid);
+      return;
+    }
     const isVar = path.startsWith("v.");
     const rel = isVar ? path.slice(2) : path;
     const isNewMode = !!App.newDraft && pid === "__new__";
@@ -233,6 +240,12 @@
           o = o[keys[i]];
         }
         let out = val;
+        if (isVar && keys[0] === "label" && val === "") {
+          delete o[keys[keys.length - 1]];
+          if (tgt.label && !Object.keys(tgt.label).length) delete tgt.label;
+          return true;
+        }
+        if (/label\.type$/.test(rel) && /^Padprint Layer$/i.test(val)) toast("구분에 도수 숫자가 없습니다 (Padprint Layer)");
         if (/date$/i.test(rel) && val) {
           const m2 = /^(\d{4})[.\-/]?(\d{2})[.\-/]?(\d{2})$/.exec(val.replace(/\s/g, ""));
           if (!m2) { toast("날짜는 2026-10-22 형식으로 입력하세요"); return false; }
@@ -723,13 +736,14 @@
           <section class="sec"><h3>라벨 정보</h3>
             <dl class="kv">
               <dt>Company</dt><dd data-f="client">${esc(dash(p.client))}</dd>
-              <dt>Project</dt><dd class="mono" data-f="project" title="프로젝트 코드 — 파일 ID는 그대로입니다">${esc(p.project || "—")}</dd>
-              <dt>Pattern Code</dt><dd class="mono" data-f="pattern.code" title="바꾸면 파일 ID도 함께 바뀝니다">${esc(p.pattern.code)}</dd>
+              <dt>Project</dt><dd class="mono" data-f="project" data-tip="프로젝트 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${esc(p.project || "—")}</dd>
+              <dt>Pattern Code</dt><dd class="mono" data-f="pattern.code" data-tip="패턴 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${esc(p.pattern.code)}</dd>
               <dt>Pattern Name</dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
-              <dt>Item</dt><dd data-f="label.item">${esc(dash(labOf(p, v).item))}</dd>
-              <dt>Type</dt><dd data-f="label.type">${esc(dash(labOf(p, v).type))}</dd>
-              <dt>Supplier</dt><dd data-f="label.supplier">${esc(dash(p.label.supplier))}</dd>
-              <dt>Remark</dt><dd data-f="label.remark">${esc(p.label.remark || "—")}</dd>
+              ${[["Item", "item"], ["Type", "type"], ["Supplier", "supplier"], ["Remark", "remark"]].map(([t, k]) => {
+                // 화면에 보이는 값(labOf: 컬러 라벨 우선)과 같은 곳을 고치도록 data-f를 고른다
+                const own = v && v.label && v.label[k] != null && String(v.label[k]).trim() !== "";
+                return `<dt>${t}${own ? ' <span class="lab-own" title="이 컬러 전용 라벨">컬러</span>' : ""}</dt><dd data-f="${own ? "v.label." + k : "label." + k}"${own ? ' data-tip="이 컬러 전용 라벨 — 비우면 공통 라벨을 씁니다"' : ""}>${esc(dash(labOf(p, v)[k]))}</dd>`;
+              }).join("")}
             </dl>
           </section>
           <section class="sec"><h3>작업 정보</h3>
@@ -801,7 +815,7 @@
     }));
     $$("[data-plate]").forEach((el) => (el.onclick = (e) => { e.stopPropagation(); showPlate(el.dataset.plate, el); }));
     $$("[data-f]").forEach((el) => {
-      el.title = "클릭해서 수정";
+      el.title = el.dataset.tip || "클릭해서 수정";
       el.onclick = (e) => { e.stopPropagation(); startInline(el, pid, v.id); };
     });
     $$("[data-vsel]").forEach((el) => (el.onclick = () => { location.hash = `#/p/${encodeURIComponent(pid)}/${encodeURIComponent(el.dataset.vsel)}`; }));
@@ -959,9 +973,14 @@
         <div class="lg-head"><b></b><span>COLOR</span><span>REMARK</span></div>
         ${legend}
       </div>
-      <div class="p-strip">
-        ${p.label.item ? `<div><span>ITEM</span>${esc(p.label.item)}</div>` : ""}
-        ${p.label.type ? `<div><span>TYPE</span>${esc(p.label.type)}</div>` : ""}
+      <div class="p-strip">${["item", "type"].map((k) => {
+        // 단일 페이지와 같은 값(labOf)을 쓴다. 컬러마다 다르면 A/B로 나눠 표기
+        const vals = vars.map((v) => labOf(p, v)[k] || "");
+        const uniq = Array.from(new Set(vals));
+        if (!uniq.some(Boolean)) return "";
+        const txt = uniq.length === 1 ? uniq[0] : vals.map((x, i) => `${letters[i]} ${x || "—"}`).join(" · ");
+        return `<div><span>${k.toUpperCase()}</span>${esc(txt)}</div>`;
+      }).join("")}
       </div>
       ${App.prop.showComments ? `<div class="p-comment${((App.prop.comments || {})[p.id + "::all"] || "").trim() ? "" : " empty"}"><h4>제안 포인트</h4>
         <div class="c" contenteditable="true" data-comment="${esc(p.id)}::all">${esc((App.prop.comments || {})[p.id + "::all"] || "")}</div>
@@ -1151,6 +1170,26 @@
     };
   }
 
+  // 라벨 정리: 구분 끝 공백 제거, 컬러 라벨의 빈 값은 키째 지워서 공통 라벨을 쓰게 한다
+  // 다른 컬러로 복사하는 배합: 배치번호·결과·기준을 비워 DB에서 원본과 같은 행으로 잡히지 않게
+  function freshCopy(m) {
+    const c = clone(m);
+    c.batch = ""; c.isReference = false; c.result = ""; c.date = todayLocal();
+    delete c._id;
+    return c;
+  }
+
+  function tidyLabels(d) {
+    const trimType = (lb) => { if (lb && typeof lb.type === "string") lb.type = lb.type.trim(); };
+    trimType(d.label);
+    (d.variations || []).forEach((vv) => {
+      if (!vv.label || typeof vv.label !== "object") { delete vv.label; return; }
+      trimType(vv.label);
+      Object.keys(vv.label).forEach((k) => { if (vv.label[k] == null || String(vv.label[k]).trim() === "") delete vv.label[k]; });
+      if (!Object.keys(vv.label).length) delete vv.label;
+    });
+  }
+
   function fieldRow(label, key, opts) {
     const o = opts || {};
     const val = key.split(".").reduce((a, k) => (a == null ? "" : a[k]), E.draft) ?? "";
@@ -1161,18 +1200,34 @@
   }
 
   function pushPanel(pv) {
+    if (pv.blocked) {
+      const rf = pv.renamedFrom || {};
+      return `<div class="push-panel">
+        <div class="pp-blocked">${esc(pv.blocked)}</div>
+        <div class="pp-actions">
+          <button class="mini-btn" id="pp-cancel">취소</button>
+          <button class="mini-btn" id="pp-ignore" title="DB의 옛 행은 그대로 두고, 이 시편은 새 코드로 따로 보냅니다">옛 행은 두고 새 코드로</button>
+          <button class="mini-btn danger" id="pp-renamedb" title="DB 백업 후 옛 코드 행을 새 코드로 바꿉니다">DB 코드도 변경 (${esc(rf.code || "")} 행 ${rf.rows || 0}개)</button>
+          <button class="mini-btn danger" id="pp-ok" disabled>DB에 반영</button>
+        </div>
+      </div>`;
+    }
     const upd = pv.updates || [], ins = pv.inserts || [], sk = pv.skipped || [];
+    const multi = new Set([...upd, ...ins].map((x) => x.vid)).size > 1;
+    const tag = (x) => (multi && x.vid ? `<span class="pp-skip">${esc(x.vid)}</span> ` : "");
     const rows = [];
-    upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> <span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
-    ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> <span class="pp-f">신규 배합 (${esc(i.plate)})</span></li>`));
-    const shown = rows.slice(0, 12).join("");
-    const more = rows.length > 12 ? `<li class="pp-more">외 ${rows.length - 12}건</li>` : "";
+    upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
+    ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> ${tag(i)}<span class="pp-f">신규 배합 (${esc(i.plate)})</span></li>`));
+    const n = rows.length;
+    sk.forEach((x) => rows.push(`<li class="pp-skip"><b>${esc(x.batch || "-")}</b> ${esc(x.vid || "")} 건너뜀 — ${esc(x.reason || "")}</li>`));
+    const shown = rows.slice(0, 14).join("");
+    const more = rows.length > 14 ? `<li class="pp-more">외 ${rows.length - 14}건</li>` : "";
     return `<div class="push-panel">
       <div class="pp-head">DB에 반영할 변경 — 수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
-      ${rows.length ? `<ul>${shown}${more}</ul>` : `<div class="pp-empty">반영할 변경이 없습니다</div>`}
+      ${rows.length ? `<ul>${shown}${more}</ul>` : ""}${n ? "" : `<div class="pp-empty">반영할 변경이 없습니다</div>`}
       <div class="pp-actions">
         <button class="mini-btn" id="pp-cancel">취소</button>
-        <button class="mini-btn danger" id="pp-ok" ${rows.length ? "" : "disabled"}>DB에 반영</button>
+        <button class="mini-btn danger" id="pp-ok" ${n ? "" : "disabled"}>DB에 반영</button>
       </div>
     </div>`;
   }
@@ -1243,14 +1298,16 @@
     if (E.tab === "mixes") {
       const v = d.variations[E.vIdx];
       const layerNum = (l) => { const m = /(\d+)/.exec(String(l || "")); return m ? Number(m[1]) : 0; };
-      (v.mixes || []).sort((a, b) => layerNum(a.layer) - layerNum(b.layer));
+      // 화면용 순서만 따로 만든다 (데이터를 정렬하면 열기만 해도 '변경 있음'이 된다). data-mi는 원래 인덱스
+      const order = (v.mixes || []).map((_, i) => i)
+        .sort((a, b) => layerNum(v.mixes[a].layer) - layerNum(v.mixes[b].layer) || a - b);
       const usedInk = Array.from(new Set((v.mixes || []).flatMap((m) => Object.keys(m.inks || {}))));
       const inkCols = inkOrder(Array.from(new Set([...usedInk, ...(v._inkCols || [])])));
       const pool = inkPool();
       const showMatting = v._showMatting != null ? v._showMatting
         : (v.mixes || []).some((m) => m.mattingPct != null || m.mattingG != null);
       const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
-      const rows = (v.mixes || []).map((m, mi) => `<tr data-mi="${mi}">
+      const rows = order.map((mi) => [v.mixes[mi], mi]).map(([m, mi]) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
@@ -1362,10 +1419,22 @@
     $$("[data-k]").forEach((el) => (el.oninput = () => {
       const path = el.dataset.k.split(".");
       let obj = E.draft;
-      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+      // 중간 객체가 없으면 만든다 (예: label이 없는 베리에이션의 variations.N.label.item)
+      for (let i = 0; i < path.length - 1; i++) {
+        if (obj[path[i]] == null || typeof obj[path[i]] !== "object") obj[path[i]] = {};
+        obj = obj[path[i]];
+      }
+      const last = path[path.length - 1];
       let val = el.value;
-      if (path[path.length - 1] === "tags" || path[path.length - 1] === "plate") val = val.split(",").map((s) => s.trim()).filter(Boolean);
-      obj[path[path.length - 1]] = val;
+      if (last === "tags" || last === "plate") val = val.split(",").map((s) => s.trim()).filter(Boolean);
+      // 컬러 라벨은 비우면 키를 지워서 공통 라벨을 쓰게 한다
+      if (path[0] === "variations" && path[2] === "label" && val.trim() === "") {
+        delete obj[last];
+        const vv = E.draft.variations[Number(path[1])];
+        if (vv && vv.label && !Object.keys(vv.label).length) delete vv.label;
+        return;
+      }
+      obj[last] = val;
     }));
 
     if (E.tab === "var") {
@@ -1375,20 +1444,21 @@
         const nv = {
           id: nextVarId(d), colorName: "", colorCode: "", coating: [], status: "",
           date: todayLocal(), images: [], note: "",
-          mixes: clone(src.mixes || []),
+          mixes: (src.mixes || []).map(freshCopy),
           layerPlates: clone(src.layerPlates || {}),
           layerPatterns: clone(src.layerPatterns || {}),
         };
         if (src.label) nv.label = clone(src.label);
         d.variations.push(nv);
         E.vIdx = d.variations.length - 1; renderDrawer();
-        toast("앞 컬러의 라벨·배합을 복사했습니다 — 값만 고치세요");
+        toast("앞 컬러의 라벨·배합을 복사했습니다 — 값과 배치번호를 입력하세요");
       };
       $("#dup-var").onclick = () => {
         const src = clone(d.variations[E.vIdx]);
         src.id = nextVarId(d);
         src.images = [];
         src.colorName = (src.colorName || "기본") + " 복사";
+        src.mixes = (src.mixes || []).map(freshCopy);
         d.variations.push(src); E.vIdx = d.variations.length - 1; renderDrawer();
       };
       $("#del-var").onclick = () => {
@@ -1533,6 +1603,28 @@
       $$("[data-delmix]").forEach((el) => (el.onclick = () => { v.mixes.splice(Number(el.dataset.delmix), 1); renderDrawer(); }));
       const pp = $("#pp-cancel");
       if (pp) pp.onclick = () => { E.push = null; renderDrawer(); };
+      const renameDb = async (mode) => {
+        if (isDirty()) { toast("먼저 저장한 뒤 진행하세요"); return; }
+        const rf = (E.push && E.push.renamedFrom) || {};
+        const q = mode === "rename"
+          ? `회사 DB(rdp.db)의 ${rf.project}-${rf.code} 행 ${rf.rows}개를 ${d.project}-${d.pattern.code}로 바꿉니다.\n(실행 전에 DB를 백업합니다) 진행할까요?`
+          : `DB의 ${rf.project}-${rf.code} 행은 그대로 두고, 이 시편은 ${d.project}-${d.pattern.code}로 따로 보냅니다.\n(다음 보내기부터 같은 배합이 새 코드로 추가됩니다) 진행할까요?`;
+        if (!confirm(q)) return;
+        try {
+          const r = await apiPost(`/api/rdp/rename-db/${encodeURIComponent(d.id)}`, { mode });
+          const p0 = byId(d.id);
+          if (p0) { delete p0.renamedFrom; p0.updatedAt = r.savedAt; }
+          delete d.renamedFrom; d.updatedAt = r.savedAt;
+          E.baseRev = r.savedAt; E.origJson = JSON.stringify(d);
+          E.push = await apiGet(`/api/rdp/push-preview/${encodeURIComponent(d.id)}`);
+          renderDrawer();
+          toast(mode === "rename" ? `DB 코드 변경 ${r.renamed || 0}행` + (r.backup ? ` (백업 ${r.backup})` : "") : "옛 코드 표시를 지웠습니다");
+        } catch (e) { toast("실패: " + e.message); }
+      };
+      const prn = $("#pp-renamedb");
+      if (prn) prn.onclick = () => renameDb("rename");
+      const pig = $("#pp-ignore");
+      if (pig) pig.onclick = () => renameDb("ignore");
       const pok = $("#pp-ok");
       if (pok) pok.onclick = async () => {
         if (isDirty()) { toast("먼저 저장한 뒤 보내세요"); return; }
@@ -1628,8 +1720,8 @@
         const picks = $$("[data-pick]").filter((el) => el.checked).map((el) => Number(el.dataset.pick));
         if (!picks.length) { toast("복제할 배합을 체크하세요"); return; }
         tv.mixes = tv.mixes || [];
-        picks.slice().sort((a, b) => a - b).forEach((mi) => tv.mixes.push(clone(v.mixes[mi])));
-        toast(picks.length + "건 복제 → " + vName(tv));
+        picks.slice().sort((a, b) => a - b).forEach((mi) => tv.mixes.push(freshCopy(v.mixes[mi])));
+        toast(picks.length + "건 복제 → " + vName(tv) + " · 배치번호를 새로 입력하세요");
         renderDrawer();
       };
     }
@@ -1703,15 +1795,29 @@
         if (!confirm(`시편 ID를 바꿀까요?\n\n${d.id}  →  ${derived}\n(이미지·원본 폴더도 함께 옮겨집니다)`)) {
           E.msg = "저장 취소 — 프로젝트/패턴 코드를 되돌리세요"; renderDrawer(); return;
         }
-        const rr = await apiPost(`/api/patterns/${encodeURIComponent(d.id)}/rename`, { to: derived });
-        targetId = rr.id || derived;
-        E.baseRev = rr.savedAt || "";
-        d.id = targetId;
+        targetId = derived;
       }
+      // 실제로 인쇄되는 값(labOf: 컬러 라벨 우선) 기준으로 도수 숫자가 빠졌는지 본다
+      const warnType = (d.variations || []).some((vv) => /^Padprint Layer$/i.test(String(labOf(d, vv).type || "").trim()));
+      if (warnType && !confirm("구분이 'Padprint Layer'로 끝나 있습니다 (도수 숫자 없음).\n그대로 저장할까요?")) {
+        E.msg = "저장 취소 — 구분에 도수 숫자를 넣으세요"; renderDrawer(); return;
+      }
+      tidyLabels(d);
+      const layerNo = (l) => { const m = /(\d+)/.exec(String(l || "")); return m ? Number(m[1]) : 0; };
+      (d.variations || []).forEach((vv) => {   // 저장할 때만 1도→2도 순으로 (원래 순서는 유지하는 안정 정렬)
+        if (Array.isArray(vv.mixes)) vv.mixes = vv.mixes.map((m, i) => [m, i]).sort((a, b) => layerNo(a[0].layer) - layerNo(b[0].layer) || a[1] - b[1]).map((x) => x[0]);
+      });
+      E.labOpen = null;
       E.msg = "저장 중…"; renderDrawer();
       const payload = {};
       Object.keys(d).forEach((k) => { if (!k.startsWith("_")) payload[k] = d[k]; });
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(targetId)}`, payload, E.baseRev, E.isNew);
+      payload.id = targetId;
+      // 이름 변경은 저장과 한 요청으로 보낸다 (서버가 락 안에서 rev 확인 → 이동 → 저장, 실패 시 되돌림)
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(targetId)}`, payload, E.baseRev, E.isNew,
+        targetId !== prevId ? prevId : "");
+      d.id = targetId;
+      if (prevId && prevId !== d.id) App.patterns = App.patterns.filter((x) => x.id !== prevId);
+      if (r.renamedFrom) d.renamedFrom = r.renamedFrom; else delete d.renamedFrom;
       const idx = App.patterns.findIndex((x) => x.id === d.id);
       const saved = clone(d); saved._mtime = Date.now();
       if (r.savedAt) { saved.updatedAt = r.savedAt; E.baseRev = r.savedAt; }

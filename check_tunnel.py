@@ -37,6 +37,19 @@ def main():
     else:
         line(WARN, "Cloudflare Access 강제", "꺼져 있음 · 터널을 열면 누구나 접속")
 
+    team = (CFG.get("cfAccessTeamDomain") or "").strip()
+    if not team:
+        line(NG, "토큰 서명 검증", "cfAccessTeamDomain 없음 → 외부 접속 전부 403 · setup_tunnel.py 세 번째 값")
+    else:
+        if "." not in team:
+            team += ".cloudflareaccess.com"
+        try:
+            with urllib.request.urlopen(f"https://{team}/cdn-cgi/access/certs", timeout=5) as r:
+                n = len(json.loads(r.read().decode()).get("keys") or [])
+            line(OK if n else NG, "토큰 서명 검증", f"{team} · 공개키 {n}개")
+        except Exception as e:
+            line(NG, "토큰 서명 검증", f"{team} 공개키를 받지 못함 ({e})")
+
     email = CFG.get("cfAccessEmail")
     line(OK if email else WARN, "이메일 고정", email or "비어 있음")
 
