@@ -1268,7 +1268,9 @@
         <div class="sec-label">배합 — ${esc(d.pattern.code || "")} / ${esc(vName(v))}</div>
         <div class="layer-plates">
           <span class="lp-head">패턴 <b>${esc(d.pattern.code)}</b> · 도수별 동판</span>
-          ${Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean))).map((l) => {
+          ${Array.from(new Set((v.mixes || []).map((m) => m.layer).filter(Boolean)))
+            .sort((a, b) => (parseInt(String(a), 10) || 0) - (parseInt(String(b), 10) || 0))
+            .map((l) => {
             const plate = layerPlate(v, l);
             const list = plate ? platePatterns(plate) : [];
             const pats = list.length
