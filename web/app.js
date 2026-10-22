@@ -616,7 +616,7 @@
     const used = inkOrder(Array.from(new Set(mixes.flatMap((m) => Object.keys(m.inks || {})))));
     const hasMatting = mixes.some((m) => m.mattingPct != null || m.mattingG != null);
     const hasLab = mixes.some((m) => m.labSce || m.labSci);
-    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}${hasMatting ? "<th>소광 g</th>" : ""}<th>신나 g</th><th>경화 g</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>결과</th><th>비고</th></tr>`;
+    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}${hasMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
@@ -1236,7 +1236,7 @@
       const pool = inkPool();
       const showMatting = v._showMatting != null ? v._showMatting
         : (v.mixes || []).some((m) => m.mattingPct != null || m.mattingG != null);
-      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광 g</th>" : ""}<th>신나 g</th><th>경화 g</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
+      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = (v.mixes || []).map((m, mi) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
