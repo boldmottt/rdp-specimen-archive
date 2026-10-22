@@ -574,6 +574,7 @@ def plan_push(doc, assigned, old_rows=0, old_key=None):
     main = doc_code(doc)
     updates, inserts, moves, skipped = [], [], [], []
     seen_codes = set()
+    seen_keys = {}      # (패턴코드, 도수, 배치, 동판) -> 이미 계획한 컬러 (DB UNIQUE 키와 같음)
     for vi, (v, rows) in enumerate(assigned):
         vid = v.get("id")
         coat = (v.get("colorCode") or "").strip()
@@ -589,7 +590,7 @@ def plan_push(doc, assigned, old_rows=0, old_key=None):
         dbmap = {}
         for d in rows:
             dbmap.setdefault((d.get("_code") or main, d["layer"], d["batch"], d["plate"]), d)
-        seen, moved_ids = set(), set()
+        seen, moved_ids = seen_keys, set()
         for m in v.get("mixes", []):
             plate = (m.get("plate") or "").strip()
             batch = (m.get("batch") or "").strip()
@@ -609,9 +610,12 @@ def plan_push(doc, assigned, old_rows=0, old_key=None):
                 continue
             key = (code, m.get("layer"), m.get("batch"), plate)
             if key in seen:
-                skipped.append(dict(base, reason="같은 패턴·도수·배치·동판 중복"))
+                other = seen[key]
+                reason = ("같은 패턴·도수·배치·동판 중복" if other == coat
+                          else f"다른 컬러({other or '코드없음'})와 배치·도수·동판이 같음 — 배치 이름을 다르게")
+                skipped.append(dict(base, reason=reason))
                 continue
-            seen.add(key)
+            seen[key] = coat
             cur = dbmap.get(key)
             if cur is None:
                 # 예전 코드로 들어간 같은 배합(도수 패턴을 정하기 전의 시편 코드, 또는 바꾸기 전 도수 패턴) → 코드만 옮긴다
@@ -679,6 +683,7 @@ def apply_push(project, code, doc, plan):
         cur = con.cursor()
         cur.execute("BEGIN IMMEDIATE")
         n_upd = n_ins = n_mov = 0
+        failed = []
         for mv in plan.get("moves") or []:
             if mv.get("id") is None:
                 continue
@@ -707,7 +712,9 @@ def apply_push(project, code, doc, plan):
             if not m:
                 continue
             inks = {k: float((m.get("inks") or {}).get(k) or 0) for k, _ in INK_COLS}
-            cur.execute("""INSERT INTO rdp_mixes
+            cur.execute("SAVEPOINT ins_row")
+            try:
+                cur.execute("""INSERT INTO rdp_mixes
                 (date, project, pattern_code, plate, layer, batch_no, is_base,
                  mt, bk, wh, ye, rd, cl, ye_d,
                  matting_agent_pct, matting_agent_g, thinner_pct, thinner_g, hardener_pct, hardener_g,
@@ -720,14 +727,21 @@ def apply_push(project, code, doc, plan):
                  m.get("hardenerPct"), m.get("hardenerG"),
                  RESULT_TO_DB.get(m.get("result") or "", ""), m.get("change") or "", m.get("note") or "",
                  ins.get("coating") or ""))
-            n_ins += 1
+                cur.execute("RELEASE ins_row")
+                n_ins += 1
+            except sqlite3.IntegrityError as e:
+                cur.execute("ROLLBACK TO ins_row")
+                cur.execute("RELEASE ins_row")
+                failed.append({"layer": ins["layer"], "batch": ins["batch"], "plate": ins["plate"],
+                               "code": ins.get("code") or code, "coating": ins.get("coating") or "",
+                               "reason": "이미 같은 키가 DB에 있음" if "UNIQUE" in str(e) else str(e)})
         con.commit()
     except Exception:
         con.rollback()
         raise
     finally:
         con.close()
-    return {"updated": n_upd, "inserted": n_ins, "moved": n_mov, "backup": os.path.basename(bpath)}
+    return {"updated": n_upd, "inserted": n_ins, "moved": n_mov, "failed": failed, "backup": os.path.basename(bpath)}
 
 
 def rename_db_rows(old_key, new_key):
