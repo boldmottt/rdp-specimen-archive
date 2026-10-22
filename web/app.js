@@ -88,7 +88,8 @@
   const vName = (v) => (v && (v.colorName || v.colorCode)) || "기본";
   const vImg = (pid, v) => (v && v.images && v.images.length ? imgUrl(pid, v.images[0]) : "");
   const mixCount = (p, v) => (v && v.mixes ? v.mixes.length : 0);
-  const layers = (v) => Array.from(new Set((v && v.mixes ? v.mixes : []).map((m) => m.layer).filter(Boolean)));
+  const layers = (v) => Array.from(new Set((v && v.mixes ? v.mixes : []).map((m) => m.layer).filter(Boolean)))
+    .sort((a, b) => { const na = parseInt(String(a), 10) || 0, nb = parseInt(String(b), 10) || 0; return na - nb; });
   const inCart = (pid, vid) => App.cart.some((c) => c.pid === pid && c.vid === vid);
   function toggleCart(pid, vid) {
     const i = App.cart.findIndex((c) => c.pid === pid && c.vid === vid);
@@ -510,6 +511,8 @@
   });
 
   /* ---------------- detail ---------------- */
+  const labOf = (p, v) => Object.assign({}, (p && p.label) || {}, (v && v.label) || {});
+
   function platePatterns(plate) {
     const out = new Map();
     App.patterns.forEach((pp) => (pp.variations || []).forEach((vv) => {
@@ -618,8 +621,8 @@
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
       ${hasMatting ? `<td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>` : ""}
-      <td>${m.thinnerG != null ? m.thinnerG + "g" : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
-      <td>${m.hardenerG != null ? m.hardenerG + "g" : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
+      <td>${m.thinnerPct != null ? m.thinnerPct + "%" : m.thinnerG != null ? m.thinnerG + "g" : "—"}</td>
+      <td>${m.hardenerPct != null ? m.hardenerPct + "%" : m.hardenerG != null ? m.hardenerG + "g" : "—"}</td>
       ${hasLab ? `<td>${m.labSce || m.labSci ? `<span class="lab-line"><i class="labsw" style="background:${labToCss(m.labSce || m.labSci)}"></i>${esc(labText(m.labSce || m.labSci))}</span>` : "—"}</td>` : ""}
       <td>${pigmentTotal(m)}</td>
       <td class="res res-${esc(m.result || "")}">${esc(RESULT_LABEL[m.result] || "—")}</td>
@@ -707,11 +710,11 @@
           <section class="sec"><h3>라벨 정보</h3>
             <dl class="kv">
               <dt>Company</dt><dd data-f="client">${esc(dash(p.client))}</dd>
-              <dt>Project</dt><dd class="mono"${isNew ? ' data-f="project"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.project || "—")}</dd>
+              <dt>Project</dt><dd class="mono" data-f="project" title="프로젝트 코드 — 파일 ID는 그대로입니다">${esc(p.project || "—")}</dd>
               <dt>Pattern Code</dt><dd class="mono"${isNew ? ' data-f="pattern.code"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.pattern.code)}</dd>
               <dt>Pattern Name</dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
-              <dt>Item</dt><dd data-f="label.item">${esc(dash(p.label.item))}</dd>
-              <dt>Type</dt><dd data-f="label.type">${esc(dash(p.label.type))}</dd>
+              <dt>Item</dt><dd data-f="label.item">${esc(dash(labOf(p, v).item))}</dd>
+              <dt>Type</dt><dd data-f="label.type">${esc(dash(labOf(p, v).type))}</dd>
               <dt>Supplier</dt><dd data-f="label.supplier">${esc(dash(p.label.supplier))}</dd>
               <dt>Remark</dt><dd data-f="label.remark">${esc(p.label.remark || "—")}</dd>
             </dl>
@@ -873,8 +876,8 @@
       ${v.images && v.images.length ? `<img class="p-img" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="p-img"></div>'}
       <div class="p-spec">
         <div><span>COLOR</span>${esc(vName(v))}</div>
-        <div><span>ITEM</span>${esc(dash(p.label.item))}</div>
-        <div><span>TYPE</span>${esc(dash(p.label.type))}</div>
+        <div><span>ITEM</span>${esc(dash(labOf(p, v).item))}</div>
+        <div><span>TYPE</span>${esc(dash(labOf(p, v).type))}</div>
         <div><span>REMARK</span>${esc(remarkLine(p, v))}</div>
       </div>
       ${App.prop.showComments ? `<div class="p-comment${((App.prop.comments || {})[p.id + "::" + v.id] || "").trim() ? "" : " empty"}"><h4>제안 포인트</h4>
@@ -1183,7 +1186,7 @@
         ${fieldRow("작업자", "work.worker")}
         ${fieldRow("설비", "work.machine")}
         ${fieldRow("동판", "work.plate", { ph: "26_027, 26_045" })}
-        ${fieldRow("엠보", "work.emboss")}
+        <div class="field-row"><label>엠보</label><input data-k="work.emboss" list="emboss-list" value="${esc((E.draft.work && E.draft.work.emboss) || "")}" placeholder="평엠보 · 사용한 값은 다시 고를 수 있습니다"><datalist id="emboss-list">${Array.from(new Set(App.patterns.flatMap((pp) => [(pp.work || {}).emboss]).filter(Boolean))).map((x) => `<option value="${esc(x)}">`).join("")}</datalist></div>
         ${fieldRow("패드", "work.pad")}
         ${fieldRow("양산 일정", "work.sop", { ph: "2027-01" })}
         ${fieldRow("생산 수량", "work.volume")}
@@ -1209,6 +1212,11 @@
         ${fieldRow("상태", "variations." + E.vIdx + ".status", { ph: "가승인" })}
         ${fieldRow("작업일", "variations." + E.vIdx + ".date", { ph: "2026-10-22" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
+        <div class="sec-label">이 컬러의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 위 공통 라벨을 씁니다</span></div>
+        ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "도어 격자" })}
+        ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "2도 인쇄" })}
+        ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}
+        ${fieldRow("비고", "variations." + E.vIdx + ".label.remark", { ph: d.label.remark || "" })}
         <div class="sec-label">도장</div>
         ${(v.coating || []).map((c, ci) => `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
           <div class="field-row"><label>제조사</label><input data-c="${ci}" data-cf="maker" value="${esc(c.maker || "")}"></div>
@@ -1221,6 +1229,8 @@
 
     if (E.tab === "mixes") {
       const v = d.variations[E.vIdx];
+      const layerNum = (l) => { const m = /(\d+)/.exec(String(l || "")); return m ? Number(m[1]) : 0; };
+      (v.mixes || []).sort((a, b) => layerNum(a.layer) - layerNum(b.layer));
       const usedInk = Array.from(new Set((v.mixes || []).flatMap((m) => Object.keys(m.inks || {}))));
       const inkCols = inkOrder(Array.from(new Set([...usedInk, ...(v._inkCols || [])])));
       const pool = inkPool();
@@ -1304,6 +1314,7 @@
           </select>
           <span style="font-size:11px;color:#8d9198">로</span>
           <button class="mini-btn" id="move-mix">이동</button>
+          <button class="mini-btn" id="copy-mix">복제</button>
         </div>` : ""}
         <p style="font-size:11px;color:#8d9198;margin-top:14px">잉크 값은 g 단위. 소광·신나·경화는 %로 입력하면 제안서에 그대로 표기됩니다. 결과는 합격/조정/NG/예정 중 선택.</p>`;
     }
@@ -1347,8 +1358,18 @@
     if (E.tab === "var") {
       $$("[data-vidx]").forEach((el) => (el.onclick = () => { E.vIdx = Number(el.dataset.vidx); renderDrawer(); }));
       $("#add-var").onclick = () => {
-        d.variations.push({ id: nextVarId(d), colorName: "", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" });
+        const src = d.variations[E.vIdx] || {};
+        const nv = {
+          id: nextVarId(d), colorName: "", colorCode: "", coating: [], status: "",
+          date: todayLocal(), images: [], note: "",
+          mixes: clone(src.mixes || []),
+          layerPlates: clone(src.layerPlates || {}),
+          layerPatterns: clone(src.layerPatterns || {}),
+        };
+        if (src.label) nv.label = clone(src.label);
+        d.variations.push(nv);
         E.vIdx = d.variations.length - 1; renderDrawer();
+        toast("앞 컬러의 라벨·배합을 복사했습니다 — 값만 고치세요");
       };
       $("#dup-var").onclick = () => {
         const src = clone(d.variations[E.vIdx]);
@@ -1406,6 +1427,8 @@
           }
           else if (["mattingPct", "thinnerPct", "hardenerPct"].includes(f)) {
             const num = parseFloat(el.value); m[f] = isNaN(num) ? null : num;
+            const gKey = { mattingPct: "mattingG", thinnerPct: "thinnerG", hardenerPct: "hardenerG" }[f];
+            if (gKey) delete m[gKey];
           } else m[f] = el.value;
         };
         el.oninput = handler;
@@ -1583,6 +1606,18 @@
         toast(picks.length + "건 이동");
         renderDrawer();
       };
+      const cp = $("#copy-mix");
+      if (cp) cp.onclick = () => {
+        const targetId = $("#move-to").value;
+        const tv = d.variations.find((x) => x.id === targetId);
+        if (!tv) return;
+        const picks = $$("[data-pick]").filter((el) => el.checked).map((el) => Number(el.dataset.pick));
+        if (!picks.length) { toast("복제할 배합을 체크하세요"); return; }
+        tv.mixes = tv.mixes || [];
+        picks.slice().sort((a, b) => a - b).forEach((mi) => tv.mixes.push(clone(v.mixes[mi])));
+        toast(picks.length + "건 복제 → " + vName(tv));
+        renderDrawer();
+      };
     }
 
     if (E.tab === "images") {
@@ -1668,8 +1703,10 @@
       E.isNew = false;
       E.origJson = JSON.stringify(saved);
       toast("저장됨");
+      E.draft = clone(saved);
+      E.origJson = JSON.stringify(saved);
       rerender();
-      closeEditor();
+      renderDrawer();
     } catch (e) {
       if (e.status === 409 && e.payload && e.payload.current) {
         const ok = confirm("다른 곳에서 먼저 저장되었습니다.\n최신 내용을 불러올까요? 지금 편집 중인 내용은 사라집니다.");
