@@ -52,6 +52,16 @@
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
+  async function apiPost(path, body) {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) {
+      const err = new Error(j.error || "요청 실패");
+      err.status = r.status; err.payload = j; throw err;
+    }
+    return j;
+  }
+
   async function apiPut(path, body, rev, create) {
     const headers = { "Content-Type": "application/json" };
     if (rev) headers["X-Base-Rev"] = rev;
@@ -711,7 +721,7 @@
             <dl class="kv">
               <dt>Company</dt><dd data-f="client">${esc(dash(p.client))}</dd>
               <dt>Project</dt><dd class="mono" data-f="project" title="프로젝트 코드 — 파일 ID는 그대로입니다">${esc(p.project || "—")}</dd>
-              <dt>Pattern Code</dt><dd class="mono"${isNew ? ' data-f="pattern.code"' : ' title="ID가 바뀌므로 생성 후에는 수정할 수 없습니다"'}>${esc(p.pattern.code)}</dd>
+              <dt>Pattern Code</dt><dd class="mono" data-f="pattern.code" title="바꾸면 파일 ID도 함께 바뀝니다">${esc(p.pattern.code)}</dd>
               <dt>Pattern Name</dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
               <dt>Item</dt><dd data-f="label.item">${esc(dash(labOf(p, v).item))}</dd>
               <dt>Type</dt><dd data-f="label.type">${esc(dash(labOf(p, v).type))}</dd>
@@ -1683,10 +1693,22 @@
         }
       }
       (d.variations || []).forEach((vv) => syncLayerPlates(vv));
+      const prevId = d.id;
+      let targetId = d.id;
+      const derived = ((d.project || "") + "-" + (d.pattern.code || "")).replace(/[^\w.-]/g, "-");
+      if (!E.isNew && d.id && derived && derived !== d.id) {
+        if (!confirm(`시편 ID를 바꿀까요?\n\n${d.id}  →  ${derived}\n(이미지·원본 폴더도 함께 옮겨집니다)`)) {
+          E.msg = "저장 취소 — 프로젝트/패턴 코드를 되돌리세요"; renderDrawer(); return;
+        }
+        const rr = await apiPost(`/api/patterns/${encodeURIComponent(d.id)}/rename`, { to: derived });
+        targetId = rr.id || derived;
+        E.baseRev = rr.savedAt || "";
+        d.id = targetId;
+      }
       E.msg = "저장 중…"; renderDrawer();
       const payload = {};
       Object.keys(d).forEach((k) => { if (!k.startsWith("_")) payload[k] = d[k]; });
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(d.id)}`, payload, E.baseRev, E.isNew);
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(targetId)}`, payload, E.baseRev, E.isNew);
       const idx = App.patterns.findIndex((x) => x.id === d.id);
       const saved = clone(d); saved._mtime = Date.now();
       if (r.savedAt) { saved.updatedAt = r.savedAt; E.baseRev = r.savedAt; }
@@ -1706,6 +1728,19 @@
       toast("저장됨");
       E.draft = clone(saved);
       E.origJson = JSON.stringify(saved);
+      if (prevId && prevId !== d.id) {
+        App.cart.forEach((c) => { if (c.pid === prevId) c.pid = d.id; });
+        if (App.prop.comments) {
+          Object.keys(App.prop.comments).forEach((k) => {
+            const [pid, vid] = k.split("::");
+            if (pid === prevId) { App.prop.comments[d.id + "::" + vid] = App.prop.comments[k]; delete App.prop.comments[k]; }
+          });
+        }
+        saveLS();
+        if (String(location.hash).includes("/p/")) {
+          location.hash = `#/p/${encodeURIComponent(d.id)}/${encodeURIComponent((d.variations[0] || {}).id || "v01")}`;
+        }
+      }
       rerender();
       renderDrawer();
     } catch (e) {

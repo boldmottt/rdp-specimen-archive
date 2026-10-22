@@ -1013,6 +1013,31 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/api/rdp/sync/"):
                 pid = p[len("/api/rdp/sync/"):].strip("/")
                 return self.sync_pattern(pid)
+            if p.startswith("/api/patterns/") and p.endswith("/rename"):
+                old_id = p[len("/api/patterns/"):-len("/rename")].strip("/")
+                safe_id(old_id)
+                body = json.loads(self.read_body() or b"{}")
+                new_id = safe_id(str(body.get("to") or "").strip())
+                if not new_id:
+                    return self.error(400, "새 ID가 없습니다")
+                old_path = safe_join(PATTERNS, old_id + ".json")
+                new_path = safe_join(PATTERNS, new_id + ".json")
+                if not os.path.isfile(old_path):
+                    return self.error(404, "원본 시편이 없습니다")
+                if os.path.exists(new_path):
+                    return self.error(409, "같은 ID의 시편이 이미 있습니다")
+                with open(old_path, encoding="utf-8") as f:
+                    doc = json.load(f)
+                doc["id"] = new_id
+                atomic_write(new_path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+                for base in (IMAGES, ORIG):
+                    src = os.path.join(base, old_id)
+                    dst = os.path.join(base, new_id)
+                    if os.path.isdir(src):
+                        shutil.move(src, dst)
+                move_to_trash(old_path, f"renamed-{new_id}")
+                return self.json({"ok": True, "id": new_id, "savedAt": doc["updatedAt"]})
+
             if p == "/api/proposals":
                 doc = json.loads(self.read_body().decode("utf-8"))
                 slug = doc.get("slug") or ("proposal-" + now_stamp())
