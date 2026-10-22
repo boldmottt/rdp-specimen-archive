@@ -1256,8 +1256,26 @@
     </div>`;
   }
 
+  function renderVars() {
+    const el = $("#drawer-vars");
+    if (!el) return;
+    const d = E.draft;
+    const vars = (d && d.variations) || [];
+    if (vars.length < 2) { el.innerHTML = ""; return; }
+    el.innerHTML = `<span class="dv-label">샘플</span>` + vars.map((x, i) =>
+      `<button class="dv${i === E.vIdx ? " on" : ""}" data-vsw="${i}" title="${esc(vName(x))}">${esc(vName(x) || "샘플 " + (i + 1))}${x.colorCode && vName(x) !== x.colorCode ? `<i>${esc(x.colorCode)}</i>` : ""}</button>`).join("");
+    $$("[data-vsw]").forEach((b) => (b.onclick = () => {
+      const i = Number(b.dataset.vsw);
+      if (i === E.vIdx) return;
+      E.vIdx = i;
+      renderVars();
+      renderDrawer();
+    }));
+  }
+
   function renderDrawer() {
     const d = E.draft;
+    renderVars();
     let body = "";
     if (E.tab === "base") {
       body = `<div class="sec-label">패턴</div>

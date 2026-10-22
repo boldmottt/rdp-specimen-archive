@@ -520,3 +520,11 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .lp-db i{font-style:normal;font-size:9px;color:var(--ink-3);margin-right:3px}
 .lp-db.empty{color:#b0aca2}
 .layer-plates .lp-k{font-size:9px;letter-spacing:.1em;color:var(--ink-3);text-transform:uppercase}
+/* 편집기 상단 샘플 전환 */
+.drawer-vars{display:flex;align-items:center;gap:6px;padding:0 12px 8px;border-bottom:1px solid var(--line);overflow-x:auto;flex:none;background:#fff}
+.drawer-vars:empty{display:none}
+.drawer-vars .dv-label{font-size:9px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;flex:none;margin-right:2px}
+.drawer-vars .dv{flex:none;border:1px solid var(--line-2);background:#fff;border-radius:999px;padding:4px 11px;font-size:11.5px;color:var(--ink-2);cursor:pointer;transition:.12s;white-space:nowrap}
+.drawer-vars .dv:hover{border-color:var(--ink);color:var(--ink)}
+.drawer-vars .dv.on{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+.drawer-vars .dv i{font-style:normal;font-family:var(--mono);font-size:10px;opacity:.65;margin-left:5px}
