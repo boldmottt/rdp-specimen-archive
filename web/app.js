@@ -1353,12 +1353,9 @@
             .map((l) => {
             const plate = layerPlate(v, l);
             const list = plate ? platePatterns(plate) : [];
-            const pats = list.length
-              ? list.map((x) => `<b class="${x.id === d.id ? "cur" : ""}" title="${esc([...x.layers].join(", "))} — ${esc(x.project || "")}">${esc(x.label)}</b>${x.name ? `<i>${esc(x.name)}</i>` : ""}`).join(" · ")
-              : `<b class="cur">${esc(d.pattern.code)}</b>`;
             return `<div class="lp-row"><span class="lp-l">${esc(l)}</span>
               <span class="lp-k">동판</span><input data-lp="${esc(l)}" value="${esc(plate)}" placeholder="동판 번호">
-              <span class="lp-k">패턴</span><input class="lp-pat" data-lpat="${esc(l)}" value="${esc(((v.layerPatterns || {})[l]) || "")}" placeholder="${esc(pats.replace(/<[^>]+>/g, ""))}" title="이 도수의 패턴명 — 직접 수정할 수 있습니다">
+              <span class="lp-k">패턴</span><input class="lp-pat" data-lpat="${esc(l)}" value="${esc(((v.layerPatterns || {})[l]) || "")}" placeholder="${esc(list.length ? list.map((x) => x.label).join(" · ") : (d.pattern.code || ""))}" title="이 도수의 패턴명 — 직접 수정할 수 있습니다">
               <span class="lp-db" data-dbplate="${esc(plate)}" data-lplayer="${esc(l)}"></span></div>`;
           }).join("")}
         </div>
@@ -1484,14 +1481,29 @@
         const h = () => {
           v.layerPatterns = v.layerPatterns || {};
           const val = el.value.trim();
-          if (val) v.layerPatterns[el.dataset.lpat] = val;
+          // 자동으로 잡힌 이름(placeholder)과 같으면 따로 저장하지 않는다 → 동판이 바뀌면 계속 따라감
+          if (val && val !== el.placeholder) v.layerPatterns[el.dataset.lpat] = val;
           else delete v.layerPatterns[el.dataset.lpat];
         };
         el.oninput = h; el.onchange = h;
+        // 비어 있으면 회색 안내 문구(자동 패턴명)를 실제 값으로 채워서 바로 고칠 수 있게
+        el.onfocus = () => { if (!el.value.trim() && el.placeholder) { el.value = el.placeholder; el.select(); } };
+        el.onblur = () => { if (el.value.trim() === el.placeholder) el.value = ""; h(); };
       });
+      // 동판을 바꿔도 드로어 전체를 다시 그리지 않는다
+      // (다시 그리면 바로 옆 패턴 칸을 클릭한 것이 사라져 입력이 막힌 것처럼 보였다) → 그 도수 줄만 갱신
       $$("[data-lp]").forEach((el) => (el.onchange = () => {
-        setLayerPlate(v, el.dataset.lp, el.value.trim());
-        renderDrawer();
+        const plate = el.value.trim();
+        setLayerPlate(v, el.dataset.lp, plate);
+        const row = el.closest(".lp-row");
+        const pat = row && row.querySelector("[data-lpat]");
+        if (pat) {
+          const auto = (plate ? platePatterns(plate).map((x) => x.label) : []).join(" · ") || d.pattern.code || "";
+          if (document.activeElement === pat && pat.value === pat.placeholder) pat.value = auto;
+          pat.placeholder = auto;
+        }
+        const db = row && row.querySelector("[data-dbplate]");
+        if (db) { db.dataset.dbplate = plate; loadDbPlate(db); }
       }));
       $$("[data-mi] input[data-mf], [data-mi] select[data-mf]").forEach((el) => {
         const h = el.oninput || el.onchange;
@@ -1518,11 +1530,13 @@
         el.oninput = handler;
         el.onchange = () => { handler(); if (el.dataset.mf === "layer") renderDrawer(); };
       });
-      $$("[data-dbplate]").forEach(async (el) => {
+      async function loadDbPlate(el) {
         const plate = el.dataset.dbplate;
+        el.textContent = ""; el.className = "lp-db";
         if (!plate) return;
         try {
           const info = await apiGet(`/api/plate/${encodeURIComponent(plate)}`);
+          if (el.dataset.dbplate !== plate) return;   // 기다리는 사이 동판이 또 바뀜
           const map = new Map();
           (info.usedBy || []).forEach((u) => {
             if (!map.has(u.code)) map.set(u.code, new Set());
@@ -1532,11 +1546,12 @@
           el.innerHTML = "DB " + Array.from(map.entries()).map(([code, layers]) =>
             `<b class="${code === d.pattern.code ? "cur" : ""}">${esc(code)}</b><i>${esc([...layers].join("·"))}</i>`).join(" · ");
           const patInput = el.closest(".lp-row")?.querySelector("[data-lpat]");
-          if (patInput && !patInput.value.trim()) patInput.placeholder = Array.from(map.keys()).join(" · ");
+          if (patInput && !patInput.value.trim() && document.activeElement !== patInput) patInput.placeholder = Array.from(map.keys()).join(" · ");
         } catch (e) {
           el.textContent = "";
         }
-      });
+      }
+      $$("[data-dbplate]").forEach((el) => loadDbPlate(el));
       const mattBtn = document.querySelector("[data-matttog]");
       if (mattBtn) mattBtn.onclick = () => {
         const cur = v._showMatting != null ? v._showMatting
