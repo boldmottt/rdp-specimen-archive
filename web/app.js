@@ -199,7 +199,10 @@
     if (path === "v.colorName") inp.placeholder = "컬러명 (비우면 컬러코드로 표시)";
     if (path === "v.colorCode") inp.placeholder = "컬러코드";
     inp.focus();
-    if (inp.select) inp.select();
+    if (/label\.type$/.test(path) && inp.setSelectionRange) {
+      const n = inp.value.length;
+      inp.setSelectionRange(n, n);   // 접두어 뒤에 바로 숫자만 치도록 커서를 끝에
+    } else if (inp.select) inp.select();
 
     const restore = () => { delete el.dataset.editing; el.innerHTML = prev; };
     const commit = async () => {
@@ -1141,7 +1144,7 @@
       schemaVersion: 2, id: "", project: "", projectName: "", client: "",
       nextVarSeq: 2,
       pattern: { code: "", name: "", nameKo: "", tags: [] },
-      label: { item: "", type: "", supplier: "NIFCO KOREA", remark: "" },
+      label: { item: "", type: "Padprint Layer ", supplier: "NIFCO KOREA", remark: "" },
       work: { place: "", worker: "", machine: "", plate: [], emboss: "", pad: "", sop: "", volume: "" },
       variations: [{ id: "v01", colorName: "", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" }],
       history: [],
@@ -1188,7 +1191,7 @@
         ${fieldRow("태그", "pattern.tags", { ph: "우드, 엠보, 도어" })}
         <div class="sec-label">라벨</div>
         ${fieldRow("품목", "label.item", { ph: "도어 격자" })}
-        ${fieldRow("구분", "label.type", { ph: "2도 인쇄" })}
+        ${fieldRow("구분", "label.type", { ph: "Padprint Layer 1" })}
         ${fieldRow("공급사", "label.supplier", { ph: "NIFCO KOREA" })}
         ${fieldRow("비고", "label.remark")}
         <div class="sec-label">작업</div>
@@ -1224,7 +1227,7 @@
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 컬러의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 위 공통 라벨을 씁니다</span></div>
         ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "도어 격자" })}
-        ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "2도 인쇄" })}
+        ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "Padprint Layer 1" })}
         ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}
         ${fieldRow("비고", "variations." + E.vIdx + ".label.remark", { ph: d.label.remark || "" })}
         <div class="sec-label">도장</div>
