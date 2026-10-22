@@ -370,20 +370,10 @@ def read_rdp_mixes(project: str, code: str):
             "_notes": (r["notes"] or "").strip(),
             "_coating": (r["coating_code"] or "").strip(),
             "_id": r["id"],
+            "_code": code,
             "plate": (r["plate"] or "").strip(),
         })
     return out
-
-
-def pick_variation(doc, db_mixes):
-    vars_ = doc.get("variations") or []
-    if len(vars_) <= 1:
-        return vars_[0] if vars_ else None
-    codes = {b["_coating"] for b in db_mixes if b.get("_coating")}
-    for v in vars_:
-        if v.get("colorCode") and v["colorCode"] in codes:
-            return v
-    return vars_[0]
 
 
 def apply_db_mix(m, dm):
@@ -430,6 +420,7 @@ def merge_mixes(v, db_mixes):
             dm.pop("_notes", None)
             dm.pop("_coating", None)
             dm.pop("_id", None)
+            dm.pop("_code", None)
             cands = [i for i in idx.get(key, []) if i not in used]
             pick = next((i for i in cands if cur[i].get("plate") == dm.get("plate")), None)
             if pick is None and len(cands) == 1:
@@ -459,13 +450,99 @@ PCT_COLS = (("mattingPct", "matting_agent_pct"), ("mattingG", "matting_agent_g")
 DB_INKS = {k for k, _ in INK_COLS}
 
 
-def split_by_variation(vs, db_mixes):
-    """sync_one과 같은 규칙: 도장코드 == 컬러코드인 첫 베리에이션, 없으면 첫 베리에이션."""
+def doc_code(doc) -> str:
+    return ((doc.get("pattern") or {}).get("code") or "").strip()
+
+
+def layer_code(doc, v, layer) -> str:
+    """배합이 속하는 패턴 코드: 그 컬러의 도수별 패턴(layerPatterns)이 있으면 그것, 없으면 시편 코드."""
+    lp = str(((v or {}).get("layerPatterns") or {}).get(layer) or "").strip()
+    return lp or doc_code(doc)
+
+
+def bad_code(code: str) -> bool:
+    return not code or any(ch in code for ch in "·,/")
+
+
+def layer_codes_from(v, layer) -> list:
+    """그 도수에서 예전에 쓰던 패턴 코드들 (서버가 저장할 때 기록, layerPatternsFrom)."""
+    return [str(c) for c in (((v or {}).get("layerPatternsFrom") or {}).get(layer) or []) if str(c).strip()]
+
+
+def track_layer_code_changes(prev, doc):
+    """도수 패턴 코드가 바뀌면 옛 코드를 layerPatternsFrom에 남긴다 (DB 행을 옮기기 위해).
+    클라이언트가 보낸 값은 쓰지 않고, 이전 파일 값을 이어받는다."""
+    prev_vs = {pv.get("id"): pv for pv in (prev or {}).get("variations") or [] if isinstance(pv, dict)}
+    for v in doc.get("variations") or []:
+        if not isinstance(v, dict):
+            continue
+        v.pop("layerPatternsFrom", None)
+        pv = prev_vs.get(v.get("id"))
+        if not pv:
+            continue
+        hist = {k: list(x) for k, x in ((pv.get("layerPatternsFrom") or {}).items()) if isinstance(x, list)}
+        layers = set((pv.get("layerPatterns") or {})) | set((v.get("layerPatterns") or {}))
+        for layer in layers:
+            old, new = layer_code(prev, pv, layer), layer_code(doc, v, layer)
+            if old != new and old != doc_code(doc) and not bad_code(old):
+                hist.setdefault(layer, [])
+                if old not in hist[layer]:
+                    hist[layer].append(old)
+        for layer in list(hist):
+            hist[layer] = [c for c in hist[layer] if c != layer_code(doc, v, layer)]
+            if not hist[layer]:
+                del hist[layer]
+        if hist:
+            v["layerPatternsFrom"] = hist
+
+
+def foreign_claims(doc, others):
+    """다른 시편이 '도수별 패턴'으로 이 시편 코드를 쓰는 (도수, 도장코드) 조합.
+    그 시편이 이 코드로 보낸 행은 이 시편 것이 아니다."""
+    me, proj = doc_code(doc), doc.get("project") or ""
+    claims = set()
+    for o in others or []:
+        if o.get("id") == doc.get("id") or (o.get("project") or "") != proj:
+            continue
+        for v in o.get("variations") or []:
+            coat = (v.get("colorCode") or "").strip()
+            for layer in set(v.get("layerPatterns") or {}) | set(v.get("layerPatternsFrom") or {}):
+                if coat and (layer_code(o, v, layer) == me or me in layer_codes_from(v, layer)):
+                    claims.add((layer, coat))
+    return claims
+
+
+def load_doc_rows(doc, others=None):
+    """이 시편에 속하는 DB 행을 베리에이션별로 나눈다 → [(v, rows)].
+    - 시편 코드 행: 도장코드 == 컬러코드인 첫 베리에이션, 없으면 첫 베리에이션 (기존 규칙)
+      단, 다른 시편이 도수별 패턴으로 이 코드를 쓰며 보낸 행은 뺀다
+    - 도수별 패턴 코드(다른 코드) 행: 그 도수 + 도장코드 == 컬러코드가 정확히 맞을 때만"""
+    vs = doc.get("variations") or []
     out = [(v, []) for v in vs]
-    for dm in db_mixes:
+    if not vs:
+        return out
+    project, main = doc.get("project"), doc_code(doc)
+    own = {(v.get("colorCode") or "").strip() for v in vs} - {""}
+    claims = foreign_claims(doc, load_all()[0] if others is None else others)
+    for dm in read_rdp_mixes(project, main):
         c = (dm.get("_coating") or "").strip()
+        if (dm["layer"], c) in claims and c not in own:
+            continue
         i = next((j for j, v in enumerate(vs) if c and (v.get("colorCode") or "").strip() == c), 0)
         out[i][1].append(dm)
+    uses = {}
+    for j, v in enumerate(vs):
+        for layer in set(v.get("layerPatterns") or {}) | set(v.get("layerPatternsFrom") or {}):
+            for code in [layer_code(doc, v, layer)] + layer_codes_from(v, layer):
+                if code != main and not bad_code(code):
+                    uses.setdefault(code, set()).add((j, layer))
+    for code, pairs in uses.items():
+        for dm in read_rdp_mixes(project, code):
+            c = (dm.get("_coating") or "").strip()
+            j = next((j for j, layer in sorted(pairs)
+                      if layer == dm["layer"] and c and (vs[j].get("colorCode") or "").strip() == c), None)
+            if j is not None:
+                out[j][1].append(dm)
     return out
 
 
@@ -479,24 +556,25 @@ def renamed_from_rows(doc):
     return len(read_rdp_mixes(*old)), old
 
 
-def plan_push(doc, db_mixes, old_rows=0, old_key=None):
+def plan_push(doc, assigned, old_rows=0, old_key=None):
     """아카이브 -> DB 반영 계획. 실제 쓰기는 하지 않는다.
-    모든 베리에이션을 본다 (DB 행은 도장코드=컬러코드로 베리에이션에 나눔)."""
+    assigned: load_doc_rows() 결과. 배합 키 = (도수 패턴 코드, 도수, 배치, 동판)."""
     if old_rows:
         op, oc = old_key or ("", "")
         cp = doc.get("project") or ""
-        cc = (doc.get("pattern") or {}).get("code") or ""
-        return {"updates": [], "inserts": [], "skipped": [],
+        cc = doc_code(doc)
+        return {"updates": [], "inserts": [], "moves": [], "skipped": [],
                 "blocked": (f"DB에 옛 코드({op}-{oc}) 행 {old_rows}개가 있습니다. "
                             f"지금 보내면 {cp}-{cc}로 같은 배합이 새로 생깁니다. "
                             "DB 쪽 코드도 바꿀지 먼저 결정하세요."),
                 "renamedFrom": {"project": op, "code": oc, "rows": old_rows}}
     vs = doc.get("variations") or []
     if not vs:
-        return {"updates": [], "inserts": [], "skipped": [{"batch": "-", "reason": "베리에이션 없음"}]}
-    updates, inserts, skipped = [], [], []
+        return {"updates": [], "inserts": [], "moves": [], "skipped": [{"batch": "-", "reason": "베리에이션 없음"}]}
+    main = doc_code(doc)
+    updates, inserts, moves, skipped = [], [], [], []
     seen_codes = set()
-    for vi, (v, rows) in enumerate(split_by_variation(vs, db_mixes)):
+    for vi, (v, rows) in enumerate(assigned):
         vid = v.get("id")
         coat = (v.get("colorCode") or "").strip()
         if vi > 0 and not coat:
@@ -508,26 +586,46 @@ def plan_push(doc, db_mixes, old_rows=0, old_key=None):
                 skipped.append({"vid": vid, "batch": "-", "reason": f"컬러코드 {coat}가 다른 컬러와 같음"})
             continue
         seen_codes.add(coat)
-        dbmap = {(d["layer"], d["batch"], d["plate"]): d for d in rows}
-        seen = set()
+        dbmap = {}
+        for d in rows:
+            dbmap.setdefault((d.get("_code") or main, d["layer"], d["batch"], d["plate"]), d)
+        seen, moved_ids = set(), set()
         for m in v.get("mixes", []):
             plate = (m.get("plate") or "").strip()
             batch = (m.get("batch") or "").strip()
+            code = layer_code(doc, v, m.get("layer"))
+            base = {"vid": vid, "batch": m.get("batch"), "layer": m.get("layer"), "plate": plate, "code": code}
             if not plate:
-                skipped.append({"vid": vid, "batch": m.get("batch"), "reason": "동판 없음"})
+                skipped.append(dict(base, reason="동판 없음"))
                 continue
             if not batch:
-                skipped.append({"vid": vid, "batch": "-", "layer": m.get("layer"), "reason": "배치번호 필요"})
+                skipped.append(dict(base, batch="-", reason="배치번호 필요"))
                 continue
-            key = (m.get("layer"), m.get("batch"), plate)
+            if bad_code(code):
+                skipped.append(dict(base, reason=f"도수 패턴 '{code}'이 코드 하나가 아님"))
+                continue
+            if code != main and not coat:
+                skipped.append(dict(base, reason="다른 패턴 코드로 보내려면 컬러코드가 필요"))
+                continue
+            key = (code, m.get("layer"), m.get("batch"), plate)
             if key in seen:
-                skipped.append({"vid": vid, "batch": batch, "reason": "같은 도수·배치·동판 중복"})
+                skipped.append(dict(base, reason="같은 패턴·도수·배치·동판 중복"))
                 continue
             seen.add(key)
             cur = dbmap.get(key)
             if cur is None:
-                inserts.append({"vid": vid, "coating": coat, "batch": m.get("batch"),
-                                "layer": m.get("layer"), "plate": plate})
+                # 예전 코드로 들어간 같은 배합(도수 패턴을 정하기 전의 시편 코드, 또는 바꾸기 전 도수 패턴) → 코드만 옮긴다
+                for src in [main] + layer_codes_from(v, m.get("layer")):
+                    if src == code:
+                        continue
+                    old = dbmap.get((src, m.get("layer"), m.get("batch"), plate))
+                    if old is not None and old.get("_id") not in moved_ids:
+                        moved_ids.add(old.get("_id"))
+                        moves.append(dict(base, id=old.get("_id"), **{"from": src, "to": code}))
+                        cur = old
+                        break
+            if cur is None:
+                inserts.append(dict(base, coating=coat))
                 continue
             fields = []
             cur_inks = cur.get("inks") or {}
@@ -549,9 +647,8 @@ def plan_push(doc, db_mixes, old_rows=0, old_key=None):
             if m.get("date") and m["date"] != (cur.get("date") or ""):
                 fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
             if fields:
-                updates.append({"vid": vid, "id": cur.get("_id"), "batch": m.get("batch"),
-                                "layer": m.get("layer"), "plate": plate, "fields": fields})
-    return {"updates": updates, "inserts": inserts, "skipped": skipped}
+                updates.append(dict(base, id=cur.get("_id"), fields=fields))
+    return {"updates": updates, "inserts": inserts, "moves": moves, "skipped": skipped}
 
 
 def backup_rdp_db(path: str) -> str:
@@ -581,7 +678,13 @@ def apply_push(project, code, doc, plan):
     try:
         cur = con.cursor()
         cur.execute("BEGIN IMMEDIATE")
-        n_upd = n_ins = 0
+        n_upd = n_ins = n_mov = 0
+        for mv in plan.get("moves") or []:
+            if mv.get("id") is None:
+                continue
+            cur.execute("UPDATE rdp_mixes SET pattern_code=? WHERE id=? AND project=? AND pattern_code=?",
+                        (mv["to"], mv["id"], project, mv["from"]))
+            n_mov += cur.rowcount
         for u in plan["updates"]:
             m = by_key.get((u["vid"], u["layer"], u["batch"], u["plate"]))
             if not m or u.get("id") is None:
@@ -610,7 +713,7 @@ def apply_push(project, code, doc, plan):
                  matting_agent_pct, matting_agent_g, thinner_pct, thinner_g, hardener_pct, hardener_g,
                  result, change_summary, notes, coating_code)
                 VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)""",
-                (m.get("date") or datetime.now().strftime("%Y-%m-%d"), project, code, ins["plate"], ins["layer"], ins["batch"],
+                (m.get("date") or datetime.now().strftime("%Y-%m-%d"), project, ins.get("code") or code, ins["plate"], ins["layer"], ins["batch"],
                  1 if m.get("isReference") else 0,
                  inks["MT"], inks["BK"], inks["WH"], inks["YE"], inks["RD"], inks["CL"], inks["YE-D"],
                  m.get("mattingPct"), m.get("mattingG"), m.get("thinnerPct"), m.get("thinnerG"),
@@ -624,7 +727,7 @@ def apply_push(project, code, doc, plan):
         raise
     finally:
         con.close()
-    return {"updated": n_upd, "inserted": n_ins, "backup": os.path.basename(bpath)}
+    return {"updated": n_upd, "inserted": n_ins, "moved": n_mov, "backup": os.path.basename(bpath)}
 
 
 def rename_db_rows(old_key, new_key):
@@ -651,54 +754,48 @@ def rename_db_rows(old_key, new_key):
     return {"renamed": n, "backup": os.path.basename(bpath)}
 
 
-def diff_db(doc, db_mixes):
-    """아카이브 JSON과 DB를 비교해 차이만 뽑는다 (쓰기 없음)."""
-    v = pick_variation(doc, db_mixes) if db_mixes else ((doc.get("variations") or [None])[0])
-    if not v:
-        return {"error": "no variation"}
-    dbk = {}
-    for dm in db_mixes:
-        dbk[(dm["layer"], dm["batch"], dm.get("plate") or "")] = dm
-    bkey = {}
-    for dm in db_mixes:
-        bkey.setdefault((dm["layer"], dm["batch"]), []).append(dm)
-
+def diff_db(doc, assigned):
+    """아카이브 JSON과 DB를 비교해 차이만 뽑는다 (쓰기 없음). 키 = (도수 패턴 코드, 도수, 배치, 동판)."""
+    main = doc_code(doc)
     new, changed, same, unmatched = [], [], 0, []
-    for m in v.get("mixes", []):
-        key3 = (m.get("layer"), m.get("batch"), m.get("plate") or "")
-        dm = dbk.get(key3)
-        if dm is None:
-            cands = bkey.get((m.get("layer"), m.get("batch"))) or []
-            if len(cands) == 1 and not m.get("plate"):
-                dm = cands[0]
-        if dm is None:
-            unmatched.append(m.get("batch"))
-            continue
-        fields = []
-        if dm.get("inks") and {k: x for k, x in (m.get("inks") or {}).items() if k in DB_INKS} != dm["inks"]:
-            fields.append("inks")
-        for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
-            if dm.get(f) is not None and m.get(f) != dm[f]:
-                fields.append(f)
-        if dm.get("result") and m.get("result") != dm["result"]:
-            fields.append("result")
-        if dm.get("date") and m.get("date") != dm["date"]:
-            fields.append("date")
-        if fields:
-            changed.append({"batch": m.get("batch"), "plate": m.get("plate"), "fields": fields})
-        else:
-            same += 1
-
-    db_keys = set(dbk.keys())
-    arc_keys = {(m.get("layer"), m.get("batch"), m.get("plate") or "") for m in v.get("mixes", [])}
-    for k in db_keys - arc_keys:
-        cands = bkey.get((k[0], k[1])) or []
-        if len(cands) == 1:
-            continue
-        new.append({"batch": k[1], "plate": k[2]})
-
-    return {"variation": v.get("id"), "same": same, "changed": changed,
-            "archiveOnly": unmatched, "dbOnly": new}
+    for v, rows in assigned:
+        dbk, bkey = {}, {}
+        for dm in rows:
+            code = dm.get("_code") or main
+            dbk[(code, dm["layer"], dm["batch"], dm.get("plate") or "")] = dm
+            bkey.setdefault((code, dm["layer"], dm["batch"]), []).append(dm)
+        arc_keys = set()
+        for m in v.get("mixes", []):
+            code = layer_code(doc, v, m.get("layer"))
+            key = (code, m.get("layer"), m.get("batch"), m.get("plate") or "")
+            arc_keys.add(key)
+            dm = dbk.get(key)
+            if dm is None:
+                cands = bkey.get(key[:3]) or []
+                if len(cands) == 1 and not m.get("plate"):
+                    dm = cands[0]
+            if dm is None:
+                unmatched.append(m.get("batch"))
+                continue
+            fields = []
+            if dm.get("inks") and {k: x for k, x in (m.get("inks") or {}).items() if k in DB_INKS} != dm["inks"]:
+                fields.append("inks")
+            for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
+                if dm.get(f) is not None and m.get(f) != dm[f]:
+                    fields.append(f)
+            if dm.get("result") and m.get("result") != dm["result"]:
+                fields.append("result")
+            if dm.get("date") and m.get("date") != dm["date"]:
+                fields.append("date")
+            if fields:
+                changed.append({"vid": v.get("id"), "batch": m.get("batch"), "plate": m.get("plate"), "fields": fields})
+            else:
+                same += 1
+        for k in set(dbk) - arc_keys:
+            if len(bkey.get(k[:3]) or []) == 1 and (k[0], k[1], k[2], "") in arc_keys:
+                continue
+            new.append({"vid": v.get("id"), "code": k[0], "batch": k[2], "plate": k[3]})
+    return {"same": same, "changed": changed, "archiveOnly": unmatched, "dbOnly": new}
 
 
 def read_plate_info(lot: str):
@@ -1047,9 +1144,8 @@ class Handler(BaseHTTPRequestHandler):
                     path = safe_join(PATTERNS, pid + ".json")
                     with open(path, encoding="utf-8") as f:
                         doc = json.load(f)
-                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
                     old_rows, old_key = renamed_from_rows(doc)
-                    plan = plan_push(doc, db_mixes, old_rows, old_key)
+                    plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key)
                     return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
                 except Exception as e:
                     return self.error(400, str(e))
@@ -1062,8 +1158,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.error(404, "패턴이 없습니다")
                     with open(path, encoding="utf-8") as f:
                         doc = json.load(f)
-                    db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
-                    return self.json({"ok": True, **diff_db(doc, db_mixes)})
+                    return self.json({"ok": True, **diff_db(doc, load_doc_rows(doc))})
                 except Exception as e:
                     return self.error(400, str(e))
             if p.startswith("/api/plate/"):
@@ -1149,34 +1244,20 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self.error(500, str(e))
 
-    def sync_one(self, pid):
+    def sync_one(self, pid, others=None):
         with pid_lock(pid):
             path = safe_join(PATTERNS, pid + ".json")
             if not os.path.isfile(path):
                 return {"ok": False, "error": "패턴 없음"}
             with open(path, encoding="utf-8") as f:
                 doc = json.load(f)
-            db_mixes = read_rdp_mixes(doc.get("project"), (doc.get("pattern") or {}).get("code"))
-            if not db_mixes:
-                return {"ok": True, "added": 0, "updated": 0, "variation": None}
             vs = doc.get("variations") or []
             if not vs:
                 return {"ok": False, "error": "베리에이션 없음"}
-
-            # 도장코드 == 컬러코드 기준으로 베리에이션별 분배, 매칭 안 되면 첫 베리에이션
-            groups = {}
-            for dm in db_mixes:
-                groups.setdefault((dm.get("_coating") or "").strip(), []).append(dm)
-            first = vs[0]
-            plans = []
-            for v in vs:
-                code = (v.get("colorCode") or "").strip()
-                rows = groups.pop(code, []) if code else []
-                if rows:
-                    plans.append((v, rows))
-            for _code, rows in list(groups.items()):
-                plans.append((first, rows))
-                groups.pop(_code, None)
+            # 시편 코드 + 도수별 패턴 코드 행을 베리에이션별로 (load_doc_rows 규칙)
+            plans = [(v, rows) for v, rows in load_doc_rows(doc, others) if rows]
+            if not plans:
+                return {"ok": True, "added": 0, "updated": 0, "variation": None}
 
             added = updated = 0
             touched = []
@@ -1229,10 +1310,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._db_write_allowed():
                     return self.error(403, "LAN 모드에서는 DB 동기화가 꺼져 있습니다 (config.allowLanWrite)")
                 total = {"added": 0, "updated": 0, "patterns": 0, "skipped": []}
-                for doc in load_all()[0]:
+                docs = load_all()[0]
+                for doc in docs:
                     pid = doc["id"]
                     try:
-                        r = self.sync_one(pid)
+                        r = self.sync_one(pid, docs)
                         if r.get("ok"):
                             total["added"] += r.get("added", 0)
                             total["updated"] += r.get("updated", 0)
@@ -1258,13 +1340,12 @@ class Handler(BaseHTTPRequestHandler):
                             doc = json.load(f)
                         project = doc.get("project")
                         code = (doc.get("pattern") or {}).get("code")
-                        db_mixes = read_rdp_mixes(project, code)
                         old_rows, old_key = renamed_from_rows(doc)
-                        plan = plan_push(doc, db_mixes, old_rows, old_key)
+                        plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key)
                         if plan.get("blocked"):
                             return self.json({"ok": False, "blocked": plan["blocked"],
                                               "error": plan["blocked"]}, 409)
-                        if not plan["updates"] and not plan["inserts"]:
+                        if not plan["updates"] and not plan["inserts"] and not plan.get("moves"):
                             return self.json({"ok": True, "updated": 0, "inserted": 0, "message": "반영할 변경이 없습니다"})
                         res = apply_push(project, code, doc, plan)
                         return self.json({"ok": True, **res, "skipped": len(plan["skipped"])})
@@ -1461,6 +1542,7 @@ class Handler(BaseHTTPRequestHandler):
         # DB(rdp_mixes)는 project+pattern_code로 행을 찾는다 → 키가 바뀌면 옛 키를 기록해 둔다
         # (서버가 관리하는 값: 클라이언트가 보낸 renamedFrom은 무시)
         doc.pop("renamedFrom", None)
+        track_layer_code_changes(prev if isinstance(prev, dict) else None, doc)
         if isinstance(prev, dict):
             prev_key = (prev.get("project") or "", (prev.get("pattern") or {}).get("code") or "")
             new_key = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")

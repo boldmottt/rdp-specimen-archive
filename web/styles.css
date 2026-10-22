@@ -412,6 +412,9 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .pp-empty{font-size:12px;color:#8d9198;padding:4px 0}
 .pp-blocked{font-size:12px;line-height:1.55;color:#8a3b12;background:#fff4ec;border:1px solid #f3d3bd;border-radius:8px;padding:8px 10px;margin-bottom:8px}
 .pp-skip{color:#8d9198}
+.mix-edit td.mix-set{font-family:var(--mono);font-size:10.5px;color:var(--ink-2);white-space:nowrap;line-height:1.25}
+.mix-edit td.mix-set i{display:block;font-style:normal;font-weight:600;color:#141517}
+.mix-edit td.mix-set.empty{color:#b4542c}
 .pp-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
 
 /* 제안서 스펙 표 (5항목) */

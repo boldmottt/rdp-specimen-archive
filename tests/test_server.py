@@ -344,6 +344,104 @@ class PushTests(Base):
         self.assertEqual(inks, {"BK": 2.0, "GOLD": 3.0})
 
 
+
+class LayerPatternTests(Base):
+    """배합은 (도수 패턴 코드, 도수, 동판, 배치)에 속한다. 도수 패턴이 없으면 시편 코드."""
+
+    def w01(self, mixes, layer_patterns=None, coat="K-1"):
+        v = {"id": "v01", "colorCode": coat, "mixes": mixes,
+             "layerPlates": {"1도": "26_001", "2도": "26_002"}}
+        if layer_patterns:
+            v["layerPatterns"] = layer_patterns
+        doc = pattern("P-W01", "P", "W01", [v])
+        self.write_pattern(doc)
+        return doc
+
+    def codes(self):
+        con = sqlite3.connect(self.db)
+        rows = sorted(con.execute("SELECT pattern_code, layer, batch_no FROM rdp_mixes").fetchall())
+        con.close()
+        return rows
+
+    def test_insert_uses_layer_pattern_code(self):
+        self.w01([mix("1도", "B1", "26_001"), mix("2도", "B2", "26_002")], {"2도": "M01"})
+        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        self.assertEqual(st, 200, r)
+        self.assertEqual(self.codes(), [("M01", "2도", "B2"), ("W01", "1도", "B1")])
+
+    def test_legacy_row_is_moved_not_duplicated(self):
+        """도수 패턴을 정하기 전에 시편 코드로 들어간 행은 새로 만들지 않고 코드만 옮긴다."""
+        self.db_insert("P", "W01", "1도", "B1", "26_001", coating="K-1")
+        self.db_insert("P", "W01", "2도", "B2", "26_002", coating="K-1")
+        self.w01([mix("1도", "B1", "26_001"), mix("2도", "B2", "26_002", bk=11.0)], {"2도": "M01"})
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual([(m["from"], m["to"], m["batch"]) for m in r["moves"]], [("W01", "M01", "B2")])
+        self.assertEqual(r["inserts"], [])
+        self.assertEqual([u["batch"] for u in r["updates"]], ["B2"])
+        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        self.assertEqual((r["moved"], r["updated"], r["inserted"]), (1, 1, 0))
+        self.assertEqual(self.codes(), [("M01", "2도", "B2"), ("W01", "1도", "B1")])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual((r["moves"], r["updates"], r["inserts"]), ([], [], []))
+
+    def test_sync_pulls_layer_code_rows_of_same_color_only(self):
+        self.w01([], {"2도": "M01"})
+        self.db_insert("P", "M01", "2도", "B2", "26_002", coating="K-1")   # 이 컬러
+        self.db_insert("P", "M01", "2도", "B9", "26_002", coating="K-9")   # M01 시편의 다른 컬러
+        self.db_insert("P", "M01", "1도", "B8", "26_001", coating="K-1")   # 다른 도수
+        st, r = self.req("POST", "/api/rdp/sync/P-W01")
+        self.assertEqual(st, 200, r)
+        got = [(m["layer"], m["batch"]) for m in self.read_pattern("P-W01")["variations"][0]["mixes"]]
+        self.assertEqual(got, [("2도", "B2")])
+
+    def test_owner_specimen_does_not_absorb_borrowed_rows(self):
+        """W01이 2도를 M01 코드로 보낸 행은 M01 시편으로 딸려 가지 않는다."""
+        self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
+        self.write_pattern(pattern("P-M01", "P", "M01", [{"id": "v01", "colorCode": "K-9", "mixes": []}]))
+        self.req("POST", "/api/rdp/push/P-W01")
+        self.db_insert("P", "M01", "2도", "B5", "26_002", coating="K-9")
+        st, r = self.req("POST", "/api/rdp/sync/P-M01")
+        self.assertEqual(st, 200, r)
+        got = [m["batch"] for m in self.read_pattern("P-M01")["variations"][0]["mixes"]]
+        self.assertEqual(got, ["B5"])
+
+    def test_ambiguous_or_colorless_layer_code_is_skipped(self):
+        self.w01([mix("2도", "B2", "26_002")], {"2도": "M01 · W03"})
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(r["inserts"], [])
+        self.assertIn("코드 하나가 아님", r["skipped"][0]["reason"])
+        self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"}, coat="")
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(r["inserts"], [])
+        self.assertIn("컬러코드가 필요", r["skipped"][0]["reason"])
+
+    def test_changed_layer_code_moves_rows(self):
+        """M01로 보낸 뒤 M02로 고치면 M01 행을 옮긴다 (중복 생성 X). 비우면 시편 코드로 되돌린다."""
+        doc = self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
+        self.req("POST", "/api/rdp/push/P-W01")
+        self.assertEqual(self.codes(), [("M01", "2도", "B2")])
+        rev = self.read_pattern("P-W01").get("updatedAt")
+        for want in ("M02", ""):
+            d = self.read_pattern("P-W01")
+            d["variations"][0]["layerPatterns"] = {"2도": want} if want else {}
+            d["variations"][0]["layerPatternsFrom"] = {"2도": ["HACK"]}   # 클라이언트 값은 무시
+            st, r = self.put("P-W01", d, rev=rev)
+            self.assertEqual(st, 200, r)
+            rev = r["savedAt"]
+            self.assertNotIn("HACK", json.dumps(self.read_pattern("P-W01")))
+            st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+            self.assertEqual(r["inserts"], [], r)
+            self.assertEqual([m["to"] for m in r["moves"]], [want or "W01"], r)
+            self.req("POST", "/api/rdp/push/P-W01")
+            self.assertEqual(self.codes(), [(want or "W01", "2도", "B2")])
+
+    def test_diff_uses_layer_code(self):
+        self.db_insert("P", "M01", "2도", "B2", "26_002", coating="K-1")
+        self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
+        st, r = self.req("GET", "/api/rdp/diff/P-W01")
+        # M01 코드 행과 같은 배합으로 매칭되어야 한다 (날짜만 달라서 changed로 잡힘)
+        self.assertEqual((r["same"] + len(r["changed"]), r["archiveOnly"], r["dbOnly"]), (1, [], []), r)
+
 # ---- Cloudflare Access JWT
 def _keypair():
     # 테스트용 1024bit RSA 키 (고정 시드에서 소수를 찾는다)

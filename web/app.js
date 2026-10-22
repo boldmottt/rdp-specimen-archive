@@ -570,6 +570,12 @@
     return hit ? hit.plate : "";
   }
 
+  // 배합이 DB에 들어가는 패턴 코드: 그 도수의 패턴(layerPatterns)이 있으면 그것, 없으면 시편 코드 (server.layer_code와 같음)
+  function layerCodeOf(p, v, layer) {
+    const lp = String(((v && v.layerPatterns) || {})[layer] || "").trim();
+    return lp || ((p && p.pattern && p.pattern.code) || "");
+  }
+
   function setLayerPlate(v, layer, plate) {
     v.layerPlates = v.layerPlates || {};
     v.layerPlates[layer] = plate;
@@ -1212,18 +1218,19 @@
         </div>
       </div>`;
     }
-    const upd = pv.updates || [], ins = pv.inserts || [], sk = pv.skipped || [];
+    const upd = pv.updates || [], ins = pv.inserts || [], sk = pv.skipped || [], mv = pv.moves || [];
     const multi = new Set([...upd, ...ins].map((x) => x.vid)).size > 1;
     const tag = (x) => (multi && x.vid ? `<span class="pp-skip">${esc(x.vid)}</span> ` : "");
     const rows = [];
+    mv.forEach((x) => rows.push(`<li><b>${esc(x.batch)}</b> ${tag(x)}<span class="pp-f">${esc(x.layer || "")} 패턴 코드 이동 ${esc(x.from)} → <b>${esc(x.to)}</b></span></li>`));
     upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
-    ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> ${tag(i)}<span class="pp-f">신규 배합 (${esc(i.plate)})</span></li>`));
+    ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> ${tag(i)}<span class="pp-f">신규 배합 (${esc(i.code || "")} · ${esc(i.layer || "")} · ${esc(i.plate)})</span></li>`));
     const n = rows.length;
     sk.forEach((x) => rows.push(`<li class="pp-skip"><b>${esc(x.batch || "-")}</b> ${esc(x.vid || "")} 건너뜀 — ${esc(x.reason || "")}</li>`));
     const shown = rows.slice(0, 14).join("");
     const more = rows.length > 14 ? `<li class="pp-more">외 ${rows.length - 14}건</li>` : "";
     return `<div class="push-panel">
-      <div class="pp-head">DB에 반영할 변경 — 수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
+      <div class="pp-head">DB에 반영할 변경 — ${mv.length ? `코드 이동 <b>${mv.length}</b> · ` : ""}수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
       ${rows.length ? `<ul>${shown}${more}</ul>` : ""}${n ? "" : `<div class="pp-empty">반영할 변경이 없습니다</div>`}
       <div class="pp-actions">
         <button class="mini-btn" id="pp-cancel">취소</button>
@@ -1306,10 +1313,11 @@
       const pool = inkPool();
       const showMatting = v._showMatting != null ? v._showMatting
         : (v.mixes || []).some((m) => m.mattingPct != null || m.mattingG != null);
-      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
+      const head = `<tr><th></th><th>도수</th><th title="이 배합이 DB에 들어가는 동판 · 패턴 코드 (위 도수별 칸에서 정함)">동판·패턴</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = order.map((mi) => [v.mixes[mi], mi]).map(([m, mi]) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
+        <td class="mix-set${m.plate ? "" : " empty"}" title="DB 키: ${esc(layerCodeOf(d, v, m.layer))} · ${esc(m.layer || "")} · ${esc(m.plate || "동판 없음")}">${m.plate ? esc(m.plate) : "동판 없음"}<i>${esc(layerCodeOf(d, v, m.layer))}</i></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
         ${inkCols.map((c) => `<td><input data-mf="ink:${c}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
         ${showMatting ? `<td><input data-mf="mattingG" value="${m.mattingG != null ? m.mattingG : ""}" placeholder="${m.mattingG == null && m.mattingPct != null ? m.mattingPct + "%" : ""}" style="width:36px"></td>` : ""}
@@ -1324,7 +1332,7 @@
         <td><select data-mf="result" style="width:74px">${Object.keys(RESULT_LABEL).map((k) => `<option value="${k}"${k === (m.result || "") ? " selected" : ""}>${RESULT_LABEL[k]}</option>`).join("")}</select></td>
         <td><input type="checkbox" data-mf="isReference" ${m.isReference ? "checked" : ""}></td>
         <td class="act"><button class="mini-btn danger" data-delmix="${mi}">✕</button></td></tr>` +
-        (E.labOpen === mi ? `<tr class="lab-edit"><td colspan="${6 + inkCols.length + (showMatting ? 1 : 0)}">
+        (E.labOpen === mi ? `<tr class="lab-edit"><td colspan="${7 + inkCols.length + (showMatting ? 1 : 0)}">
           <div class="lab-grid">
             ${["sce", "sci"].map((k) => {
               const lab = m["lab" + k[0].toUpperCase() + k.slice(1)] || {};
@@ -1355,7 +1363,7 @@
             const list = plate ? platePatterns(plate) : [];
             return `<div class="lp-row"><span class="lp-l">${esc(l)}</span>
               <span class="lp-k">동판</span><input data-lp="${esc(l)}" value="${esc(plate)}" placeholder="동판 번호">
-              <span class="lp-k">패턴</span><input class="lp-pat" data-lpat="${esc(l)}" value="${esc(((v.layerPatterns || {})[l]) || "")}" placeholder="${esc(list.length ? list.map((x) => x.label).join(" · ") : (d.pattern.code || ""))}" title="이 도수의 패턴명 — 직접 수정할 수 있습니다">
+              <span class="lp-k">패턴</span><input class="lp-pat" data-lpat="${esc(l)}" value="${esc(((v.layerPatterns || {})[l]) || "")}" placeholder="${esc(list.length ? list.map((x) => x.label).join(" · ") : (d.pattern.code || ""))}" title="이 도수의 패턴 코드 — 이 도수 배합은 DB에 이 코드로 들어갑니다 (비우면 시편 코드)">
               <span class="lp-db" data-dbplate="${esc(plate)}" data-lplayer="${esc(l)}"></span></div>`;
           }).join("")}
         </div>
@@ -1367,7 +1375,8 @@
           <input id="ink-new" placeholder="+ 새 잉크" maxlength="10" autocomplete="off">
         </div>
         <div class="ink-note">태그를 누르면 이 컬러의 배합 열이 생깁니다. 한 번 쓴 잉크는 다음 시편에서도 태그로 나옵니다.
-          <b>DB 반영은 MT·BK·WH·YE·RD·CL·YE-D 7종만</b> 되고, 그 외 태그는 아카이브에만 저장됩니다.</div>
+          <b>DB 반영은 MT·BK·WH·YE·RD·CL·YE-D 7종만</b> 되고, 그 외 태그는 아카이브에만 저장됩니다.
+          배합은 <b>도수별 동판 · 패턴 코드</b>에 속해서 DB에도 그 패턴 코드로 들어갑니다.</div>
         <div class="tbl-wrap" style="margin:0 -6px"><table class="mix-edit">${head}${rows}</table></div>
         <div style="display:flex;gap:6px;margin-top:12px">
           <button class="mini-btn" id="add-mix">+ 배합 추가</button>
@@ -1488,7 +1497,8 @@
         el.oninput = h; el.onchange = h;
         // 비어 있으면 회색 안내 문구(자동 패턴명)를 실제 값으로 채워서 바로 고칠 수 있게
         el.onfocus = () => { if (!el.value.trim() && el.placeholder) { el.value = el.placeholder; el.select(); } };
-        el.onblur = () => { if (el.value.trim() === el.placeholder) el.value = ""; h(); };
+        el.onblur = () => { if (el.value.trim() === el.placeholder) el.value = ""; h(); refreshMixSets(el.dataset.lpat); };
+        el.addEventListener("input", () => refreshMixSets(el.dataset.lpat));
       });
       // 동판을 바꿔도 드로어 전체를 다시 그리지 않는다
       // (다시 그리면 바로 옆 패턴 칸을 클릭한 것이 사라져 입력이 막힌 것처럼 보였다) → 그 도수 줄만 갱신
@@ -1504,7 +1514,21 @@
         }
         const db = row && row.querySelector("[data-dbplate]");
         if (db) { db.dataset.dbplate = plate; loadDbPlate(db); }
+        refreshMixSets(el.dataset.lp);
       }));
+      // 배합 행의 '동판·패턴' 칸만 갱신 (입력 중인 칸을 지우지 않게)
+      function refreshMixSets(layer) {
+        $$("table.mix-edit tr[data-mi]").forEach((tr) => {
+          const m = v.mixes[Number(tr.dataset.mi)];
+          if (!m || (layer && m.layer !== layer)) return;
+          const td = tr.querySelector(".mix-set");
+          if (!td) return;
+          const code = layerCodeOf(d, v, m.layer);
+          td.className = "mix-set" + (m.plate ? "" : " empty");
+          td.innerHTML = `${m.plate ? esc(m.plate) : "동판 없음"}<i>${esc(code)}</i>`;
+          td.title = `DB 키: ${code} · ${m.layer || ""} · ${m.plate || "동판 없음"}`;
+        });
+      }
       $$("[data-mi] input[data-mf], [data-mi] select[data-mf]").forEach((el) => {
         const h = el.oninput || el.onchange;
         const handler = () => {
@@ -1528,7 +1552,17 @@
           } else m[f] = el.value;
         };
         el.oninput = handler;
-        el.onchange = () => { handler(); if (el.dataset.mf === "layer") renderDrawer(); };
+        el.onchange = () => {
+          handler();
+          if (el.dataset.mf === "layer") {
+            // 도수를 옮기면 그 도수의 동판을 따라간다 (동판·패턴 세트)
+            const m = v.mixes[Number(el.closest("[data-mi]").dataset.mi)];
+            const lp = (v.layerPlates || {})[m.layer]
+              || ((v.mixes || []).find((x) => x !== m && x.layer === m.layer && x.plate) || {}).plate;
+            if (lp) m.plate = lp;
+            renderDrawer();
+          }
+        };
       });
       async function loadDbPlate(el) {
         const plate = el.dataset.dbplate;
@@ -1649,7 +1683,7 @@
           if (!r.ok) throw new Error(r.error || "반영 실패");
           E.push = null;
           renderDrawer();
-          toast(`DB 반영 완료 · 수정 ${r.updated || 0} · 신규 ${r.inserted || 0}` + (r.backup ? ` (백업 ${r.backup})` : ""));
+          toast(`DB 반영 완료 · ${r.moved ? `코드 이동 ${r.moved} · ` : ""}수정 ${r.updated || 0} · 신규 ${r.inserted || 0}` + (r.backup ? ` (백업 ${r.backup})` : ""));
         } catch (e) {
           toast("반영 실패: " + e.message);
           pok.disabled = false; pok.textContent = "DB에 반영";
@@ -1700,7 +1734,11 @@
           sy.disabled = false; sy.textContent = "RDP-DB에서 가져오기";
         }
       };
-      $("#add-mix").onclick = () => { v.mixes.push({ layer: "1도", batch: "", inks: {}, mattingG: null, thinnerG: null, hardenerG: null, result: "", isReference: false, note: "", change: "" }); renderDrawer(); };
+      $("#add-mix").onclick = () => {
+        const layer = "1도";
+        v.mixes.push({ layer, batch: "", plate: layerPlate(v, layer) || "", inks: {}, mattingG: null, thinnerG: null, hardenerG: null, result: "", isReference: false, note: "", change: "" });
+        renderDrawer();
+      };
       const al = $("#add-layer");
       if (al) al.onclick = () => {
         const nums = Array.from(new Set((v.mixes || []).map((m) => {
