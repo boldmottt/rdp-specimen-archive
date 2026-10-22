@@ -52,6 +52,13 @@
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
+  function deriveId(project, code) {
+    let x = `${project || ""}-${code || ""}`;
+    x = x.replace(/[^\w.-]+/g, "-").replace(/-{2,}/g, "-");
+    x = x.replace(/^[^A-Za-z0-9]+/, "").replace(/[^A-Za-z0-9]+$/, "");
+    return x.slice(0, 80);
+  }
+
   async function apiPost(path, body) {
     const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
     const j = await r.json().catch(() => ({}));
@@ -1873,7 +1880,8 @@
       if (!d.pattern.code) { E.msg = "패턴 코드를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
       if (!d.id) {
         if (!d.project) { E.msg = "프로젝트를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
-        d.id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
+        d.id = deriveId(d.project, d.pattern.code);
+        if (!d.id) { E.msg = "프로젝트·패턴 코드에 영문/숫자를 넣어주세요 (ID를 만들 수 없습니다)"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
         if (byId(d.id) && !confirm(`이미 '${d.id}' 시편이 있습니다. 덮어쓸까요?`)) {
           d.id = ""; E.msg = "저장 취소 — 패턴 코드를 바꾸세요"; renderDrawer(); return;
         }
@@ -1881,7 +1889,7 @@
       (d.variations || []).forEach((vv) => syncLayerPlates(vv));
       const prevId = d.id;
       let targetId = d.id;
-      const derived = ((d.project || "") + "-" + (d.pattern.code || "")).replace(/[^\w.-]/g, "-");
+      const derived = deriveId(d.project, d.pattern.code);
       if (!E.isNew && d.id && derived && derived !== d.id) {
         if (!confirm(`시편 ID를 바꿀까요?\n\n${d.id}  →  ${derived}\n(이미지·원본 폴더도 함께 옮겨집니다)`)) {
           E.msg = "저장 취소 — 프로젝트/패턴 코드를 되돌리세요"; renderDrawer(); return;
