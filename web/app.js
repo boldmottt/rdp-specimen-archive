@@ -1202,10 +1202,19 @@
 
   // 라벨 정리: 구분 끝 공백 제거, 컬러 라벨의 빈 값은 키째 지워서 공통 라벨을 쓰게 한다
   // 다른 컬러로 복사하는 배합: 배치번호·결과·기준을 비워 DB에서 원본과 같은 행으로 잡히지 않게
-  function freshCopy(m) {
+  function freshCopy(m, existing) {
     const c = clone(m);
-    c.batch = ""; c.isReference = false; c.result = ""; c.date = todayLocal();
+    c.isReference = false; c.result = ""; c.date = todayLocal();
     delete c._id;
+    // 배합 이름(batch)은 그대로 가져가되, 같은 컬러에 같은 도수·이름이 이미 있으면 -2, -3 …
+    const list = existing || [];
+    const same = (x, b) => (x.layer || "") === (c.layer || "") && (x.batch || "") === b;
+    if (c.batch && list.some((x) => same(x, c.batch))) {
+      const base = c.batch;
+      let n = 2;
+      while (list.some((x) => same(x, base + "-" + n))) n++;
+      c.batch = base + "-" + n;
+    }
     return c;
   }
 
@@ -1818,7 +1827,7 @@
         const picks = $$("[data-pick]").filter((el) => el.checked).map((el) => Number(el.dataset.pick));
         if (!picks.length) { toast("복제할 배합을 체크하세요"); return; }
         tv.mixes = tv.mixes || [];
-        picks.slice().sort((a, b) => a - b).forEach((mi) => tv.mixes.push(freshCopy(v.mixes[mi])));
+        picks.slice().sort((a, b) => a - b).forEach((mi) => tv.mixes.push(freshCopy(v.mixes[mi], tv.mixes)));
         toast(picks.length + "건 복제 → " + vName(tv) + " · 배치번호를 새로 입력하세요");
         renderDrawer();
       };
