@@ -616,13 +616,13 @@
     const used = inkOrder(Array.from(new Set(mixes.flatMap((m) => Object.keys(m.inks || {})))));
     const hasMatting = mixes.some((m) => m.mattingPct != null || m.mattingG != null);
     const hasLab = mixes.some((m) => m.labSce || m.labSci);
-    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}${hasMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>결과</th><th>비고</th></tr>`;
+    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}${hasMatting ? "<th>소광 g</th>" : ""}<th>신나 g</th><th>경화 g</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
       ${hasMatting ? `<td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>` : ""}
-      <td>${m.thinnerPct != null ? m.thinnerPct + "%" : m.thinnerG != null ? m.thinnerG + "g" : "—"}</td>
-      <td>${m.hardenerPct != null ? m.hardenerPct + "%" : m.hardenerG != null ? m.hardenerG + "g" : "—"}</td>
+      <td>${m.thinnerG != null ? m.thinnerG + "g" : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
+      <td>${m.hardenerG != null ? m.hardenerG + "g" : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
       ${hasLab ? `<td>${m.labSce || m.labSci ? `<span class="lab-line"><i class="labsw" style="background:${labToCss(m.labSce || m.labSci)}"></i>${esc(labText(m.labSce || m.labSci))}</span>` : "—"}</td>` : ""}
       <td>${pigmentTotal(m)}</td>
       <td class="res res-${esc(m.result || "")}">${esc(RESULT_LABEL[m.result] || "—")}</td>
@@ -1236,15 +1236,15 @@
       const pool = inkPool();
       const showMatting = v._showMatting != null ? v._showMatting
         : (v.mixes || []).some((m) => m.mattingPct != null || m.mattingG != null);
-      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
+      const head = `<tr><th></th><th>도수</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광 g</th>" : ""}<th>신나 g</th><th>경화 g</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = (v.mixes || []).map((m, mi) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
         ${inkCols.map((c) => `<td><input data-mf="ink:${c}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
-        ${showMatting ? `<td><input data-mf="mattingPct" value="${m.mattingPct != null ? m.mattingPct : ""}" style="width:36px"></td>` : ""}
-        <td><input data-mf="thinnerPct" value="${m.thinnerPct != null ? m.thinnerPct : ""}" style="width:36px"></td>
-        <td><input data-mf="hardenerPct" value="${m.hardenerPct != null ? m.hardenerPct : ""}" style="width:36px"></td>
+        ${showMatting ? `<td><input data-mf="mattingG" value="${m.mattingG != null ? m.mattingG : ""}" placeholder="${m.mattingG == null && m.mattingPct != null ? m.mattingPct + "%" : ""}" style="width:36px"></td>` : ""}
+        <td><input data-mf="thinnerG" value="${m.thinnerG != null ? m.thinnerG : ""}" placeholder="${m.thinnerG == null && m.thinnerPct != null ? m.thinnerPct + "%" : ""}" style="width:36px"></td>
+        <td><input data-mf="hardenerG" value="${m.hardenerG != null ? m.hardenerG : ""}" placeholder="${m.hardenerG == null && m.hardenerPct != null ? m.hardenerPct + "%" : ""}" style="width:36px"></td>
         <td class="lab-cell">${(() => {
           const sce = m.labSce, sci = m.labSci;
           if (!sce && !sci) return `<button class="lab-btn empty" data-lab="${mi}" title="LAB 값 입력">+ LAB</button>`;
@@ -1316,7 +1316,7 @@
           <button class="mini-btn" id="move-mix">이동</button>
           <button class="mini-btn" id="copy-mix">복제</button>
         </div>` : ""}
-        <p style="font-size:11px;color:#8d9198;margin-top:14px">잉크 값은 g 단위. 소광·신나·경화는 %로 입력하면 제안서에 그대로 표기됩니다. 결과는 합격/조정/NG/예정 중 선택.</p>`;
+        <p style="font-size:11px;color:#8d9198;margin-top:14px">모든 값은 <b>g 단위</b>로 입력합니다(잉크·소광·신나·경화). 결과는 합격/조정/NG/예정 중 선택.</p>`;
     }
 
     if (E.tab === "images") {
@@ -1425,10 +1425,11 @@
             m.isReference = el.checked;
             if (el.checked) v.mixes.forEach((x) => { if (x !== m && x.layer === m.layer) x.isReference = false; });
           }
-          else if (["mattingPct", "thinnerPct", "hardenerPct"].includes(f)) {
+          else if (["mattingPct", "thinnerPct", "hardenerPct", "mattingG", "thinnerG", "hardenerG"].includes(f)) {
             const num = parseFloat(el.value); m[f] = isNaN(num) ? null : num;
-            const gKey = { mattingPct: "mattingG", thinnerPct: "thinnerG", hardenerPct: "hardenerG" }[f];
-            if (gKey) delete m[gKey];
+            const pair = { mattingPct: "mattingG", thinnerPct: "thinnerG", hardenerPct: "hardenerG",
+                           mattingG: "mattingPct", thinnerG: "thinnerPct", hardenerG: "hardenerPct" }[f];
+            if (pair) delete m[pair];
           } else m[f] = el.value;
         };
         el.oninput = handler;
@@ -1579,7 +1580,7 @@
           sy.disabled = false; sy.textContent = "RDP-DB에서 가져오기";
         }
       };
-      $("#add-mix").onclick = () => { v.mixes.push({ layer: "1도", batch: "", inks: {}, mattingPct: null, thinnerPct: 30, hardenerPct: 20, result: "", isReference: false, note: "", change: "" }); renderDrawer(); };
+      $("#add-mix").onclick = () => { v.mixes.push({ layer: "1도", batch: "", inks: {}, mattingG: null, thinnerG: null, hardenerG: null, result: "", isReference: false, note: "", change: "" }); renderDrawer(); };
       const al = $("#add-layer");
       if (al) al.onclick = () => {
         const nums = Array.from(new Set((v.mixes || []).map((m) => {
