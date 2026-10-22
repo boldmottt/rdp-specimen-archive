@@ -1,5 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")"
+# 실행 직후 격리 표시를 스스로 지운다 (다음부터 경고 없음)
+xattr -d com.apple.quarantine "$0" 2>/dev/null || true
 PORT=$(/opt/homebrew/bin/python3 -c "import json;print(json.load(open('config.json')).get('port',8791))" 2>/dev/null || echo 8791)
 # 포트를 LISTEN 중인 프로세스 중 '이 앱의 server.py'만 끈다
 # (lsof -ti tcp:PORT 는 접속 중인 브라우저·cloudflared까지 잡아서 함께 죽인다)

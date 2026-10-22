@@ -1,5 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")"
+# 실행 직후 격리 표시를 스스로 지운다 (다음부터 경고 없음)
+xattr -d com.apple.quarantine "$0" 2>/dev/null || true
 # 이전에 켜둔 인스턴스가 있으면 정리 (포트가 밀리는 걸 막음)
 PORT=$(/opt/homebrew/bin/python3 -c "import json;print(json.load(open('config.json')).get('port',8791))" 2>/dev/null || echo 8791)
 # 포트를 LISTEN 중인 프로세스 중 '이 앱의 server.py'만 끈다
