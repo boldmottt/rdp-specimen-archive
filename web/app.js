@@ -1144,7 +1144,7 @@
       schemaVersion: 2, id: "", project: "", projectName: "", client: "",
       nextVarSeq: 2,
       pattern: { code: "", name: "", nameKo: "", tags: [] },
-      label: { item: "", type: "Padprint Layer ", supplier: "NIFCO KOREA", remark: "" },
+      label: { item: "Design Sample", type: "Padprint Layer ", supplier: "NIFCO KOREA", remark: "" },
       work: { place: "", worker: "", machine: "", plate: [], emboss: "", pad: "", sop: "", volume: "" },
       variations: [{ id: "v01", colorName: "", colorCode: "", coating: [], status: "", date: todayLocal(), images: [], mixes: [], note: "" }],
       history: [],
@@ -1190,7 +1190,7 @@
         ${fieldRow("한글명", "pattern.nameKo", { ph: "우드" })}
         ${fieldRow("태그", "pattern.tags", { ph: "우드, 엠보, 도어" })}
         <div class="sec-label">라벨</div>
-        ${fieldRow("품목", "label.item", { ph: "도어 격자" })}
+        ${fieldRow("품목", "label.item", { ph: "Design Sample" })}
         ${fieldRow("구분", "label.type", { ph: "Padprint Layer 1" })}
         ${fieldRow("공급사", "label.supplier", { ph: "NIFCO KOREA" })}
         ${fieldRow("비고", "label.remark")}
@@ -1226,7 +1226,7 @@
         ${fieldRow("작업일", "variations." + E.vIdx + ".date", { ph: "2026-10-22" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 컬러의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 위 공통 라벨을 씁니다</span></div>
-        ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "도어 격자" })}
+        ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "Design Sample" })}
         ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "Padprint Layer 1" })}
         ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}
         ${fieldRow("비고", "variations." + E.vIdx + ".label.remark", { ph: d.label.remark || "" })}
