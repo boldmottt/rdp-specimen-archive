@@ -554,6 +554,14 @@
     return Array.from(out.values());
   }
 
+  const sampleOwn = (v, key) => !!(v && v.label && v.label[key] != null && String(v.label[key]).trim() !== "");
+  function sampleVal(p, v, key) {
+    if (sampleOwn(v, key)) return v.label[key];
+    if (key === "company") return p.client || "";
+    if (key === "project") return p.project || "";
+    return ((p.label || {})[key]) || "";
+  }
+
   function layerPatLabel(v, layer, p) {
     const custom = ((v && v.layerPatterns) || {})[layer];
     if (custom && String(custom).trim()) return String(custom).trim();
@@ -739,16 +747,25 @@
         </div>
 
         <div class="span2 split2">
-          <section class="sec"><h3>라벨 정보</h3>
+          <section class="sec"><h3>라벨 정보 <span class="lab-hint">샘플(컬러) 기준 — 패턴 코드·이름만 공통</span></h3>
             <dl class="kv">
-              <dt>Company</dt><dd data-f="client">${esc(dash(p.client))}</dd>
-              <dt>Project</dt><dd class="mono" data-f="project" data-tip="프로젝트 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${esc(p.project || "—")}</dd>
+              ${[["Company", "company"], ["Project", "project"]].map(([t, k]) => {
+                const own = sampleOwn(v, k);
+                const f = own ? "v.label." + k : (k === "company" ? "client" : "project");
+                return `<dt>${t}${own ? ' <span class="lab-own" title="이 샘플 전용">샘플</span>' : ""}</dt><dd data-f="${f}"${own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : ""}>${esc(dash(sampleVal(p, v, k)))}</dd>`;
+              }).join("")}
               <dt>Pattern Code</dt><dd class="mono" data-f="pattern.code" data-tip="패턴 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${esc(p.pattern.code)}</dd>
               <dt>Pattern Name</dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
-              ${[["Item", "item"], ["Type", "type"], ["Supplier", "supplier"], ["Remark", "remark"]].map(([t, k]) => {
+              <dt>Color Code</dt><dd class="mono" data-f="v.colorCode">${esc(dash(v && v.colorCode))}</dd>
+              ${[["Item", "item"], ["Type", "type"]].map(([t, k]) => {
                 // 화면에 보이는 값(labOf: 컬러 라벨 우선)과 같은 곳을 고치도록 data-f를 고른다
                 const own = v && v.label && v.label[k] != null && String(v.label[k]).trim() !== "";
                 return `<dt>${t}${own ? ' <span class="lab-own" title="이 컬러 전용 라벨">컬러</span>' : ""}</dt><dd data-f="${own ? "v.label." + k : "label." + k}"${own ? ' data-tip="이 컬러 전용 라벨 — 비우면 공통 라벨을 씁니다"' : ""}>${esc(dash(labOf(p, v)[k]))}</dd>`;
+              }).join("")}
+              <dt>Date(Rev)</dt><dd><span data-f="v.date">${esc(v && v.date ? fmtDate(v.date) : "—")}</span> <span class="revtag" data-f="v.rev" title="Rev 번호 — 클릭해서 수정">Rev.${esc(String((v && v.rev) != null && v.rev !== "" ? v.rev : "0"))}</span></dd>
+              ${[["Supplier", "supplier"], ["Remark", "remark"]].map(([t, k]) => {
+                const own = sampleOwn(v, k);
+                return `<dt>${t}${own ? ' <span class="lab-own" title="이 샘플 전용">샘플</span>' : ""}</dt><dd data-f="${own ? "v.label." + k : "label." + k}"${own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : ""}>${esc(dash(sampleVal(p, v, k)))}</dd>`;
               }).join("")}
             </dl>
           </section>
@@ -1286,8 +1303,11 @@
         ${fieldRow("컬러코드", "variations." + E.vIdx + ".colorCode", { ph: "K-1116S", mono: true })}
         ${fieldRow("상태", "variations." + E.vIdx + ".status", { ph: "가승인" })}
         ${fieldRow("작업일", "variations." + E.vIdx + ".date", { ph: "2026-10-22" })}
+        ${fieldRow("Rev", "variations." + E.vIdx + ".rev", { ph: "0" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
-        <div class="sec-label">이 컬러의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 위 공통 라벨을 씁니다</span></div>
+        <div class="sec-label">이 샘플의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 공통값을 씁니다 (패턴 코드·이름은 공통)</span></div>
+        ${fieldRow("Company", "variations." + E.vIdx + ".label.company", { ph: d.client || "현대자동차" })}
+        ${fieldRow("Project", "variations." + E.vIdx + ".label.project", { ph: d.project || "NX5a", mono: true })}
         ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "Design Sample" })}
         ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "Padprint Layer 1" })}
         ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}
