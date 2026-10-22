@@ -697,6 +697,8 @@
       </button>`).join("") : "";
     const images = v.images || [];
     const mixes = v.mixes || [];
+    const sameAsVar = (v && v.sameAs) ? (p.variations || []).find((x) => x.id === v.sameAs) : null;
+    const sameAsMixCount = sameAsVar ? ((sameAsVar.mixes || []).length) : 0;
     const byLayer = layers(v).map((layer) => {
       const rows = mixes.filter((m) => m.layer === layer);
       const plate = layerPlate(v, layer);
@@ -789,7 +791,10 @@
         </div>
 
         <div class="span2">
-          <section class="sec sec-mix"><h3>배합 정보 <span class="cnt">${mixes.length} 배합</span></h3>${byLayer || '<p style="color:#8d9198;font-size:12.5px">등록된 배합이 없습니다.</p>'}</section>
+          <section class="sec sec-mix"><h3>배합 정보 <span class="cnt">${mixes.length} 배합${sameAsVar ? " · " + esc(vName(sameAsVar)) + "과 동일" : ""}</span></h3>${
+            sameAsVar
+              ? `<div class="sameas">${esc(vName(sameAsVar))} 컬러와 <b>같은 배합</b>입니다${sameAsMixCount ? ` (${sameAsMixCount}건)` : ""} — 별도 배합을 넣지 않습니다.</div>${sameAsMixCount ? mixTable(sameAsVar.mixes) : ""}`
+              : (byLayer || '<p style="color:#8d9198;font-size:12.5px">등록된 배합이 없습니다.</p>')}</section>
           ${(p.history || []).length ? `<section class="sec sec-hist"><h3>작업일지 <span class="cnt">${p.history.length}</span></h3><ul class="timeline">
             ${p.history.map((h) => `<li><span class="d">${esc(fmtDate(h.date))}</span><div><div>${esc(h.title)}</div>${h.summary ? `<div style="color:#8d9198;font-size:11.5px">${esc(h.summary)}</div>` : ""}</div></li>`).join("")}
           </ul></section>` : ""}
@@ -1358,6 +1363,7 @@
 
     if (E.tab === "mixes") {
       const v = d.variations[E.vIdx];
+      const linkedVar = v.sameAs ? (d.variations || []).find((x) => x.id === v.sameAs) : null;
       const layerNum = (l) => { const m = /(\d+)/.exec(String(l || "")); return m ? Number(m[1]) : 0; };
       // 화면용 순서만 따로 만든다 (데이터를 정렬하면 열기만 해도 '변경 있음'이 된다). data-mi는 원래 인덱스
       const order = (v.mixes || []).map((_, i) => i)
@@ -1447,6 +1453,16 @@
           <button class="mini-btn" id="copy-mix">복제</button>
         </div>` : ""}
         <p style="font-size:11px;color:#8d9198;margin-top:14px">모든 값은 <b>g 단위</b>로 입력합니다(잉크·소광·신나·경화). 결과는 합격/조정/NG/예정 중 선택.</p>`;
+      if (linkedVar) {
+        body = `<div class="sameas-bar"><b>${esc(vName(linkedVar))}</b> 컬러와 <b>같은 배합</b>으로 지정되어 있습니다.
+            <span class="muted">DB에는 ${esc(vName(linkedVar))} 한 벌만 들어갑니다.</span>
+            <button class="mini-btn" id="unlink-same">직접 입력하기</button></div>`
+          + ((linkedVar.mixes || []).length ? mixTable(linkedVar.mixes) : '<p style="color:#8d9198;font-size:12px">참조한 컬러에 배합이 없습니다.</p>');
+      } else if ((d.variations || []).length > 1) {
+        body = `<div class="sameas-bar muted">배합이 같고 도장 컬러만 다르면 복제하지 말고
+            <select id="same-target">${d.variations.filter((x) => x.id !== v.id).map((x) => `<option value="${esc(x.id)}">${esc(vName(x))}</option>`).join("")}</select>
+            <button class="mini-btn" id="link-same">동일 배합으로 지정</button></div>` + body;
+      }
     }
 
     if (E.tab === "images") {
@@ -1788,7 +1804,8 @@
           sy.disabled = false; sy.textContent = "RDP-DB에서 가져오기";
         }
       };
-      $("#add-mix").onclick = () => {
+      const addMixBtn = $("#add-mix");
+      if (addMixBtn) addMixBtn.onclick = () => {
         const layer = "1도";
         v.mixes.push({ layer, batch: "", plate: layerPlate(v, layer) || "", inks: {}, mattingG: null, thinnerG: null, hardenerG: null, result: "", isReference: false, note: "", change: "" });
         renderDrawer();
@@ -1807,7 +1824,19 @@
         renderDrawer();
         toast(layer + " 추가 — 배합번호와 값을 입력하세요");
       };
-      $("#dup-mix").onclick = () => { if (!v.mixes.length) return; const c = clone(v.mixes[v.mixes.length - 1]); c.batch = (c.batch || "") + "-C"; c.isReference = false; v.mixes.push(c); renderDrawer(); };
+      const dupMixBtn = $("#dup-mix");
+      if (dupMixBtn) dupMixBtn.onclick = () => { if (!v.mixes.length) return; const c = clone(v.mixes[v.mixes.length - 1]); c.batch = (c.batch || "") + "-C"; c.isReference = false; v.mixes.push(c); renderDrawer(); };
+      const linkBtn = $("#link-same");
+      if (linkBtn) linkBtn.onclick = () => {
+        const t = $("#same-target").value;
+        if (!t) return;
+        if ((v.mixes || []).length && !confirm("이 샘플에 입력된 배합 " + v.mixes.length + "건이 지워집니다(복구 불가). 동일 배합으로 바꿀까요?")) return;
+        v.mixes = [];
+        v.sameAs = t;
+        renderDrawer();
+      };
+      const unlinkBtn = $("#unlink-same");
+      if (unlinkBtn) unlinkBtn.onclick = () => { delete v.sameAs; renderDrawer(); };
       const mv = $("#move-mix");
       if (mv) mv.onclick = () => {
         const targetId = $("#move-to").value;
