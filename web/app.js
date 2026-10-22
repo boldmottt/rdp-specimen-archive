@@ -52,6 +52,19 @@
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
+  function colorNameFor(code) {
+    const key = String(code || "").trim().toUpperCase();
+    if (!key) return "";
+    for (const p of App.patterns) {
+      for (const v of (p.variations || [])) {
+        const cc = String(v.colorCode || "").trim().toUpperCase();
+        const nm = String(v.colorName || "").trim();
+        if (cc === key && nm) return nm;
+      }
+    }
+    return "";
+  }
+
   function deriveId(project, code) {
     let x = `${project || ""}-${code || ""}`;
     x = x.replace(/[^\w.-]+/g, "-").replace(/-{2,}/g, "-");
@@ -234,6 +247,10 @@
           o = o[keys[i]];
         }
         o[keys[keys.length - 1]] = /plate/i.test(rel) ? val.split(",").map((x) => x.trim()).filter(Boolean) : val;
+        if (isVar && rel === "colorCode" && val && !String(tgt.colorName || "").trim()) {
+          const nm = colorNameFor(val);
+          if (nm) tgt.colorName = nm;
+        }
         renderDetail("__new__", null, App.newDraft);
         return;
       }
@@ -253,6 +270,10 @@
           return true;
         }
         if (/label\.type$/.test(rel) && /^Padprint Layer$/i.test(val)) toast("구분에 도수 숫자가 없습니다 (Padprint Layer)");
+        if (isVar && rel === "colorCode" && val && !String(tgt.colorName || "").trim()) {
+          const nm = colorNameFor(val);
+          if (nm) { tgt.colorName = nm; toast(`컬러명 자동 입력: ${nm}`); }
+        }
         if (/date$/i.test(rel) && val) {
           const m2 = /^(\d{4})[.\-/]?(\d{2})[.\-/]?(\d{2})$/.exec(val.replace(/\s/g, ""));
           if (!m2) { toast("날짜는 2026-10-22 형식으로 입력하세요"); return false; }
@@ -1511,6 +1532,18 @@
         return;
       }
       obj[last] = val;
+      if (/^variations\.\d+\.colorCode$/.test(el.dataset.k) && String(val).trim()) {
+        const vi = Number(String(el.dataset.k).split(".")[1]);
+        const vv = (E.draft.variations || [])[vi];
+        if (vv && !String(vv.colorName || "").trim()) {
+          const nm = colorNameFor(val);
+          if (nm) {
+            vv.colorName = nm;
+            const ni = document.querySelector(`[data-k="variations.${vi}.colorName"]`);
+            if (ni) ni.value = nm;
+          }
+        }
+      }
     }));
 
     if (E.tab === "var") {
