@@ -77,6 +77,9 @@ class Base(unittest.TestCase):
         con.close()
         server.CFG["rdpDbPath"] = self.db
         server.CFG.pop("requireCfAccess", None)
+        # 이 맥의 실제 config.json 값이 테스트에 새지 않게 (import 시 로드됨)
+        for k in ("cfAccessEmail", "cfAccessAud", "cfAccessTeamDomain", "allowHosts", "requireCfAccess"):
+            server.CFG.pop(k, None)
 
     def tearDown(self):
         server.CFG.clear()
