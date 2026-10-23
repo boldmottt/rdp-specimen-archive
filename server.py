@@ -96,11 +96,12 @@ ORIG = os.path.join(DATA, "_orig")
 BACKUP = os.path.join(DATA, "_backup")
 TRASH = os.path.join(DATA, "_trash")
 PROPOSALS = os.path.join(DATA, "proposals")
+THUMBS = os.path.join(DATA, "_thumb")
 UI_STATE = os.path.join(DATA, "_ui", "state.json")
 
 
 def ensure_dirs():
-    for d in (PATTERNS, IMAGES, ORIG, BACKUP, TRASH, PROPOSALS, os.path.dirname(UI_STATE)):
+    for d in (PATTERNS, IMAGES, ORIG, BACKUP, TRASH, PROPOSALS, THUMBS, os.path.dirname(UI_STATE)):
         os.makedirs(d, exist_ok=True)
 
 
@@ -1210,6 +1211,12 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/patterns":
                 pats, errs = load_all()
                 return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
+            if p.startswith("/api/thumb/"):
+                tp = p[len("/api/thumb/"):].strip("/").split("/")
+                if len(tp) != 2:
+                    return self.error(400, "경로 형식 오류")
+                q = parse_qs(u.query)
+                return self.serve_thumb(tp[0], tp[1], q.get("w", ["480"])[0])
             if p.startswith("/img/"):
                 return self.serve_image(p[len("/img/"):])
             return self.serve_static(p)
@@ -1598,6 +1605,42 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[warn] gc 실패 {pid}: {e}")
         return self.json({"ok": True, "id": pid, "savedAt": doc["updatedAt"], "warnings": warns,
                           "removedImages": removed, "renamedFrom": doc.get("renamedFrom")})
+
+    def serve_thumb(self, pid, name, w):
+        """카드용 축소본. 큰 원본을 브라우저가 급하게 줄이면 무아레가 생겨서 미리 Lanczos로 줄여 캐시한다."""
+        try:
+            safe_id(pid)
+            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", name, re.I):
+                raise ValueError("bad image name")
+            w = max(120, min(2000, int(w)))
+            src = safe_join(IMAGES, pid, name)
+            dst_dir = safe_join(THUMBS, pid)
+            dst = os.path.join(dst_dir, f"{w}-{name}")
+        except ValueError as e:
+            return self.error(400, str(e))
+        if not os.path.isfile(src):
+            return self.error(404, "이미지 없음")
+        if not (os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src)):
+            try:
+                from PIL import Image
+                os.makedirs(dst_dir, exist_ok=True)
+                im = Image.open(src).convert("RGB")
+                h = max(1, round(w * im.height / im.width))
+                im = im.resize((w, h), Image.LANCZOS)
+                tmp = dst + ".tmp"
+                im.save(tmp, "JPEG", quality=82, optimize=True)
+                os.replace(tmp, dst)
+            except Exception:
+                return self.serve_image(f"{pid}/{name}")
+        with open(dst, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=604800")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def serve_image(self, rel):
         try:

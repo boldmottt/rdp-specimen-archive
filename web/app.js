@@ -116,6 +116,7 @@
   const byId = (pid) => App.patterns.find((p) => p.id === pid);
   const varOf = (p, vid) => (p ? (p.variations || []).find((v) => v.id === vid) || (p.variations || [])[0] : null);
   const imgUrl = (pid, name) => `/img/${encodeURIComponent(pid)}/${encodeURIComponent(name)}`;
+  const thumbUrl = (pid, name, w) => `/api/thumb/${encodeURIComponent(pid)}/${encodeURIComponent(name)}?w=${w}`;
   const vName = (v) => (v && (v.colorName || v.colorCode)) || "기본";
   const vImg = (pid, v) => (v && v.images && v.images.length ? imgUrl(pid, v.images[0]) : "");
   const mixCount = (p, v) => (v && v.mixes ? v.mixes.length : 0);
@@ -340,7 +341,11 @@
       </button>` : "");
     return `<article class="card${picked ? " picked" : ""}" data-pid="${esc(p.id)}">
       <div class="media">
-        ${v && v.images && v.images.length ? `<img loading="lazy" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="empty">IMAGE N/A</div>'}
+        ${v && v.images && v.images.length ? (() => {
+          const n = v.images[0];
+          const full = imgUrl(p.id, n);
+          return `<img loading="lazy" src="${thumbUrl(p.id, n, 480)}" srcset="${thumbUrl(p.id, n, 480)} 480w, ${thumbUrl(p.id, n, 960)} 960w, ${full} 2400w" sizes="(max-width:760px) 94vw, (max-width:1180px) 44vw, 340px" onerror="this.onerror=null;this.src='${full}'" alt="">`;
+        })() : '<div class="empty">IMAGE N/A</div>'}
         ${p.project ? `<div class="badge">${esc(p.project)}</div>` : ""}
         <div class="check${picked ? " on" : ""}" data-check="1" title="제안서에 담기">
           <svg viewBox="0 0 24 24"><path d="M4 12.5 9.5 18 20 6.5"/></svg>
