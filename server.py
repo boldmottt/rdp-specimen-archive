@@ -557,7 +557,30 @@ def renamed_from_rows(doc):
     return len(read_rdp_mixes(*old)), old
 
 
-def plan_push(doc, assigned, old_rows=0, old_key=None):
+def mix_values(m):
+    """DB로 가는 값만 비교용으로 (같은 배합인지 판단)."""
+    inks = tuple(round(float((m.get("inks") or {}).get(k) or 0), 6) for k, _ in INK_COLS)
+    pct = tuple(None if m.get(f) is None else round(float(m[f]), 6) for f, _ in PCT_COLS)
+    return inks + pct
+
+
+def db_taken_keys(doc):
+    """이 시편이 쓰는 코드(시편 코드 + 도수 패턴 + 예전 도수 패턴)로 DB에 이미 있는 키 → id.
+    컬러로 나누지 않은 전체 — rdp.db는 (프로젝트, 패턴 코드, 동판, 도수, 배치)가 UNIQUE."""
+    codes = {doc_code(doc)}
+    for v in doc.get("variations") or []:
+        for layer in set(v.get("layerPatterns") or {}) | set(v.get("layerPatternsFrom") or {}):
+            codes.add(layer_code(doc, v, layer))
+            codes.update(layer_codes_from(v, layer))
+    taken = {}
+    for c in codes:
+        if c and not bad_code(c):
+            for d in read_rdp_mixes(doc.get("project"), c):
+                taken[(c, d["layer"], d["batch"], d["plate"])] = d.get("_id")
+    return taken
+
+
+def plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
     """아카이브 -> DB 반영 계획. 실제 쓰기는 하지 않는다.
     assigned: load_doc_rows() 결과. 배합 키 = (도수 패턴 코드, 도수, 배치, 동판)."""
     if old_rows:
@@ -573,7 +596,8 @@ def plan_push(doc, assigned, old_rows=0, old_key=None):
     if not vs:
         return {"updates": [], "inserts": [], "moves": [], "skipped": [{"batch": "-", "reason": "베리에이션 없음"}]}
     main = doc_code(doc)
-    updates, inserts, moves, skipped = [], [], [], []
+    taken = taken or {}
+    updates, inserts, moves, skipped, shared = [], [], [], [], []
     seen_codes = set()
     seen_keys = {}      # (패턴코드, 도수, 배치, 동판) -> 이미 계획한 컬러 (DB UNIQUE 키와 같음)
     for vi, (v, rows) in enumerate(assigned):
@@ -611,12 +635,17 @@ def plan_push(doc, assigned, old_rows=0, old_key=None):
                 continue
             key = (code, m.get("layer"), m.get("batch"), plate)
             if key in seen:
-                other = seen[key]
-                reason = ("같은 패턴·도수·배치·동판 중복" if other == coat
-                          else f"다른 컬러({other or '코드없음'})와 배치·도수·동판이 같음 — 배치 이름을 다르게")
-                skipped.append(dict(base, reason=reason))
+                other, first = seen[key]
+                if other == coat:
+                    skipped.append(dict(base, reason="같은 패턴·도수·배치·동판 중복"))
+                elif mix_values(m) == mix_values(first):
+                    # 여러 컬러가 같은 배합을 같이 씀 (작업일지의 2도 C처럼) → DB에는 한 벌
+                    shared.append(dict(base, reason=f"{other or '첫 컬러'}와 같은 배합 — DB에는 한 벌만 보냄"))
+                else:
+                    skipped.append(dict(base, reason=(f"{other or '첫 컬러'}의 같은 배치와 값이 다름 — 같은 배합이면 값을 맞추고, "
+                                                      "다른 배합이면 배치 이름을 다르게")))
                 continue
-            seen[key] = coat
+            seen[key] = (coat, m)
             cur = dbmap.get(key)
             if cur is None:
                 # 예전 코드로 들어간 같은 배합(도수 패턴을 정하기 전의 시편 코드, 또는 바꾸기 전 도수 패턴) → 코드만 옮긴다
@@ -625,11 +654,21 @@ def plan_push(doc, assigned, old_rows=0, old_key=None):
                         continue
                     old = dbmap.get((src, m.get("layer"), m.get("batch"), plate))
                     if old is not None and old.get("_id") not in moved_ids:
+                        if key in taken:
+                            # 옮길 자리에 이미 같은 키 행이 있다 → 옮기면 UNIQUE 위반
+                            cur = False
+                            skipped.append(dict(base, reason=f"옮길 코드 {code}에 같은 키가 이미 있음 ({src} 행과 둘 중 하나 정리 필요)"))
+                            break
                         moved_ids.add(old.get("_id"))
                         moves.append(dict(base, id=old.get("_id"), **{"from": src, "to": code}))
                         cur = old
                         break
+            if cur is False:
+                continue
             if cur is None:
+                if key in taken:
+                    skipped.append(dict(base, reason="DB에 같은 키가 이미 있음 (다른 컬러·시편에서 보낸 행) — 확인 필요"))
+                    continue
                 inserts.append(dict(base, coating=coat))
                 continue
             fields = []
@@ -653,7 +692,7 @@ def plan_push(doc, assigned, old_rows=0, old_key=None):
                 fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
             if fields:
                 updates.append(dict(base, id=cur.get("_id"), fields=fields))
-    return {"updates": updates, "inserts": inserts, "moves": moves, "skipped": skipped}
+    return {"updates": updates, "inserts": inserts, "moves": moves, "skipped": skipped, "shared": shared}
 
 
 def backup_rdp_db(path: str) -> str:
@@ -685,15 +724,26 @@ def apply_push(project, code, doc, plan):
         cur.execute("BEGIN IMMEDIATE")
         n_upd = n_ins = n_mov = 0
         failed = []
+        bad_ids = set()
         for mv in plan.get("moves") or []:
             if mv.get("id") is None:
                 continue
-            cur.execute("UPDATE rdp_mixes SET pattern_code=? WHERE id=? AND project=? AND pattern_code=?",
-                        (mv["to"], mv["id"], project, mv["from"]))
-            n_mov += cur.rowcount
+            # 미리보기 뒤에 누가 같은 키를 넣었어도 전체가 실패하지 않게 행 단위로
+            cur.execute("SAVEPOINT mv_row")
+            try:
+                cur.execute("UPDATE rdp_mixes SET pattern_code=? WHERE id=? AND project=? AND pattern_code=?",
+                            (mv["to"], mv["id"], project, mv["from"]))
+                n_mov += cur.rowcount
+                cur.execute("RELEASE mv_row")
+            except sqlite3.IntegrityError as e:
+                cur.execute("ROLLBACK TO mv_row")
+                cur.execute("RELEASE mv_row")
+                bad_ids.add(mv["id"])
+                failed.append({"layer": mv["layer"], "batch": mv["batch"], "plate": mv["plate"], "code": mv["to"],
+                               "reason": "옮길 코드에 같은 키가 이미 있음" if "UNIQUE" in str(e) else str(e)})
         for u in plan["updates"]:
             m = by_key.get((u["vid"], u["layer"], u["batch"], u["plate"]))
-            if not m or u.get("id") is None:
+            if not m or u.get("id") is None or u["id"] in bad_ids:
                 continue
             sets, vals = [], []
             for f in u["fields"]:
@@ -1160,7 +1210,7 @@ class Handler(BaseHTTPRequestHandler):
                     with open(path, encoding="utf-8") as f:
                         doc = json.load(f)
                     old_rows, old_key = renamed_from_rows(doc)
-                    plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key)
+                    plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key, db_taken_keys(doc))
                     return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
                 except Exception as e:
                     return self.error(400, str(e))
@@ -1362,7 +1412,7 @@ class Handler(BaseHTTPRequestHandler):
                         project = doc.get("project")
                         code = (doc.get("pattern") or {}).get("code")
                         old_rows, old_key = renamed_from_rows(doc)
-                        plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key)
+                        plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key, db_taken_keys(doc))
                         if plan.get("blocked"):
                             return self.json({"ok": False, "blocked": plan["blocked"],
                                               "error": plan["blocked"]}, 409)

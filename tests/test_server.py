@@ -28,7 +28,8 @@ SCHEMA = """CREATE TABLE rdp_mixes (
   mt REAL, bk REAL, wh REAL, ye REAL, rd REAL, cl REAL, ye_d REAL,
   matting_agent_pct REAL, matting_agent_g REAL, thinner_pct REAL, thinner_g REAL,
   hardener_pct REAL, hardener_g REAL,
-  result TEXT, change_summary TEXT, notes TEXT, coating_code TEXT)"""
+  result TEXT, change_summary TEXT, notes TEXT, coating_code TEXT,
+  UNIQUE(project, pattern_code, plate, layer, batch_no))"""   # 실제 rdp.db와 같은 제약
 
 
 def mix(layer, batch, plate, bk=10.0, **kw):
@@ -444,6 +445,68 @@ class LayerPatternTests(Base):
         st, r = self.req("GET", "/api/rdp/diff/P-W01")
         # M01 코드 행과 같은 배합으로 매칭되어야 한다 (날짜만 달라서 changed로 잡힘)
         self.assertEqual((r["same"] + len(r["changed"]), r["archiveOnly"], r["dbOnly"]), (1, [], []), r)
+
+
+class SharedBatchTests(Base):
+    """rdp.db는 (프로젝트, 패턴 코드, 동판, 도수, 배치)가 UNIQUE — 여러 컬러가 한 배합을 같이 쓴다."""
+
+    def two_colors(self, m1, m2, **v1):
+        doc = pattern("P-L1", "P", "L1", [
+            dict({"id": "v01", "colorCode": "C 3928", "mixes": m1}, **v1),
+            {"id": "v02", "colorCode": "BHY", "mixes": m2}])
+        self.write_pattern(doc)
+
+    def test_shared_batch_same_values_goes_once(self):
+        self.two_colors([mix("1도", "나", "26_135"), mix("2도", "C", "26_135")],
+                        [mix("1도", "다", "26_135"), mix("2도", "C", "26_135")])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
+        self.assertEqual(sorted(i["batch"] for i in r["inserts"]), ["C", "나", "다"])
+        self.assertEqual([(x["vid"], x["batch"]) for x in r["shared"]], [("v02", "C")])
+        self.assertEqual(r["skipped"], [])
+        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        self.assertEqual((st, r["inserted"], r["failed"]), (200, 3, []))
+        st, r = self.req("GET", "/api/rdp/push-preview/P-L1")   # 두 번째 보내기도 실패하지 않는다
+        self.assertEqual((r["inserts"], r["updates"]), ([], []))
+        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        self.assertEqual(st, 200, r)
+
+    def test_shared_batch_different_values_is_flagged(self):
+        self.two_colors([mix("2도", "C", "26_135", bk=5)], [mix("2도", "C", "26_135", bk=9)])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
+        self.assertEqual(len(r["inserts"]), 1)
+        self.assertIn("값이 다름", r["skipped"][0]["reason"])
+
+    def test_preview_matches_push_when_key_already_in_db(self):
+        self.db_insert("P", "L1", "2도", "C", "26_135", coating="ZZZ")   # 다른 곳에서 보낸 행
+        self.two_colors([mix("2도", "D", "26_135")], [mix("2도", "C", "26_135", bk=7)])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
+        self.assertEqual([i["batch"] for i in r["inserts"]], ["D"])
+        self.assertIn("이미 있음", r["skipped"][0]["reason"])
+        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        self.assertEqual((st, r["inserted"], r["failed"]), (200, 1, []))
+
+    def test_code_move_onto_existing_key_does_not_fail_push(self):
+        self.db_insert("P", "L1", "2도", "C", "26_135", coating="C 3928")
+        self.db_insert("P", "M01", "2도", "C", "26_135", coating="ZZZ")
+        self.two_colors([mix("2도", "C", "26_135"), mix("1도", "A", "26_135")], [],
+                        layerPatterns={"2도": "M01"})
+        st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
+        self.assertEqual(r["moves"], [])
+        self.assertIn("옮길 코드 M01", r["skipped"][0]["reason"])
+        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        self.assertEqual((st, r["inserted"]), (200, 1), r)
+
+    def test_apply_push_survives_race_on_move(self):
+        """미리보기 뒤 누군가 같은 키를 넣어도 전체 실패 대신 그 행만 failed."""
+        self.db_insert("P", "L1", "2도", "C", "26_135", coating="C 3928")
+        self.two_colors([mix("2도", "C", "26_135")], [], layerPatterns={"2도": "M01"})
+        doc = self.read_pattern("P-L1")
+        plan = server.plan_push(doc, server.load_doc_rows(doc, []), taken=server.db_taken_keys(doc))
+        self.assertEqual(len(plan["moves"]), 1)
+        self.db_insert("P", "M01", "2도", "C", "26_135", coating="ZZZ")    # 그 사이에 생김
+        res = server.apply_push("P", "L1", doc, plan)
+        self.assertEqual((res["moved"], len(res["failed"])), (0, 1))
+        self.assertEqual(self.db_counts(), {("P", "L1"): 1, ("P", "M01"): 1})
 
 # ---- Cloudflare Access JWT
 def _keypair():

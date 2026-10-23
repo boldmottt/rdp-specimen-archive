@@ -1282,7 +1282,7 @@
         </div>
       </div>`;
     }
-    const upd = pv.updates || [], ins = pv.inserts || [], sk = pv.skipped || [], mv = pv.moves || [];
+    const upd = pv.updates || [], ins = pv.inserts || [], sk = pv.skipped || [], mv = pv.moves || [], sh = pv.shared || [];
     const multi = new Set([...upd, ...ins].map((x) => x.vid)).size > 1;
     const tag = (x) => (multi && x.vid ? `<span class="pp-skip">${esc(x.vid)}</span> ` : "");
     const rows = [];
@@ -1290,11 +1290,12 @@
     upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
     ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> ${tag(i)}<span class="pp-f">신규 배합 (${esc(i.code || "")} · ${esc(i.layer || "")} · ${esc(i.plate)})</span></li>`));
     const n = rows.length;
+    sh.forEach((x) => rows.push(`<li class="pp-skip"><b>${esc(x.batch || "-")}</b> ${esc(x.vid || "")} 공유 — ${esc(x.reason || "")}</li>`));
     sk.forEach((x) => rows.push(`<li class="pp-skip"><b>${esc(x.batch || "-")}</b> ${esc(x.vid || "")} 건너뜀 — ${esc(x.reason || "")}</li>`));
     const shown = rows.slice(0, 14).join("");
     const more = rows.length > 14 ? `<li class="pp-more">외 ${rows.length - 14}건</li>` : "";
     return `<div class="push-panel">
-      <div class="pp-head">DB에 반영할 변경 — ${mv.length ? `코드 이동 <b>${mv.length}</b> · ` : ""}수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
+      <div class="pp-head">DB에 반영할 변경 — ${mv.length ? `코드 이동 <b>${mv.length}</b> · ` : ""}수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sh.length ? ` · 공유 배합 ${sh.length}` : ""}${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
       ${rows.length ? `<ul>${shown}${more}</ul>` : ""}${n ? "" : `<div class="pp-empty">반영할 변경이 없습니다</div>`}
       <div class="pp-actions">
         <button class="mini-btn" id="pp-cancel">취소</button>
@@ -1791,7 +1792,10 @@
           if (!r.ok) throw new Error(r.error || "반영 실패");
           E.push = null;
           renderDrawer();
-          toast(`DB 반영 완료 · ${r.moved ? `코드 이동 ${r.moved} · ` : ""}수정 ${r.updated || 0} · 신규 ${r.inserted || 0}` + (r.backup ? ` (백업 ${r.backup})` : ""));
+          const nf = (r.failed || []).length;
+          toast(`DB 반영 완료 · ${r.moved ? `코드 이동 ${r.moved} · ` : ""}수정 ${r.updated || 0} · 신규 ${r.inserted || 0}`
+            + (nf ? ` · 실패 ${nf}건 (${(r.failed || []).map((f) => `${f.layer} ${f.batch}: ${f.reason}`).join(", ")})` : "")
+            + (r.backup ? ` (백업 ${r.backup})` : ""));
         } catch (e) {
           toast("반영 실패: " + e.message);
           pok.disabled = false; pok.textContent = "DB에 반영";
