@@ -1,0 +1,69 @@
+/* PCCS3 — 아카이브 styles.css 위에 얹는다 */
+.pc-tabs{display:flex;gap:4px;margin-left:18px}
+.pc-tabs a{padding:7px 12px;border-radius:8px;font-size:12.5px;color:var(--ink-2)}
+.pc-tabs a.on{background:#fff;border:1px solid var(--line);color:var(--ink)}
+.topbar a.ghost{border:1px solid var(--line-2);height:36px;padding:0 14px;border-radius:9px;font-size:12.5px;color:var(--ink-2);display:inline-flex;align-items:center}
+
+.pc-wrap{max-width:1440px;margin:0 auto;padding:18px 34px 60px}
+.pc-status{font-size:12px;color:var(--ink-3);margin-bottom:14px}
+.pc-status b{color:var(--ink-2);font-weight:600}
+.pc-status .bad{color:var(--ng)}
+.pc-cols{display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start}
+.pc-list{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;position:sticky;top:82px;max-height:calc(100vh - 110px);overflow-y:auto}
+.pc-list .pc-filter{display:flex;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--ink-3);align-items:center}
+.pc-list .pc-filter label{display:flex;gap:5px;align-items:center;cursor:pointer}
+.pc-item{display:block;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.pc-item:last-child{border-bottom:0}
+.pc-item:hover{background:#faf9f6}
+.pc-item.on{background:#f1efe9}
+.pc-item .d{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.pc-item .t{font-size:12.5px;margin:2px 0;line-height:1.4}
+.pc-item .m{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:10.5px;color:var(--ink-3)}
+
+.pc-badge{display:inline-block;padding:0 6px;border-radius:5px;font-size:10.5px;line-height:17px;font-weight:600;white-space:nowrap}
+.pc-badge.ok{background:#e7f3ec;color:var(--ok)}
+.pc-badge.ng{background:#fbe9e7;color:var(--ng)}
+.pc-badge.warn{background:#fbf1de;color:var(--warn)}
+.pc-badge.mute{background:#efede8;color:var(--ink-3)}
+.pc-badge.e-대기중{background:#efede8;color:var(--ink-2)}
+.pc-badge.e-진행{background:#e8eef9;color:#2f4f86}
+.pc-badge.e-채택{background:#e7f3ec;color:var(--ok)}
+.pc-badge.e-미채택{background:#fbe9e7;color:var(--ng)}
+.lot{font-family:var(--mono);font-size:11px;background:#f1efe9;border-radius:4px;padding:0 5px;color:var(--ink);cursor:pointer}
+.lot:hover{background:#e4e1da}
+
+.pc-main{min-width:0}
+.pc-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:14px}
+.pc-card h2{font-size:16px;margin:0 0 4px}
+.pc-card h3{font-size:13px;margin:0 0 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pc-card .sub{font-size:12px;color:var(--ink-3)}
+.pc-msgs{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px}
+.pc-msgs li{padding:5px 0;border-bottom:1px dashed var(--line);display:flex;gap:8px}
+.pc-msgs li:last-child{border-bottom:0}
+.pc-msgs .w{flex:none;min-width:110px;color:var(--ink-3);font-size:11.5px}
+.pc-msgs.err li{color:#7c2018}
+.pc-msgs.warn li{color:#6b4600}
+.pc-empty{color:var(--ink-3);font-size:12.5px;padding:30px 0;text-align:center}
+
+table.pc{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+table.pc th{text-align:left;font-weight:600;color:var(--ink-3);font-size:11px;padding:5px 6px;border-bottom:1px solid var(--line)}
+table.pc td{padding:6px;border-bottom:1px solid #f0eee9;vertical-align:top}
+table.pc td.mono,table.pc .mono{font-family:var(--mono);font-size:11.5px}
+table.pc tr.dim td{color:var(--ink-3)}
+.layers{display:flex;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-2);margin-bottom:6px}
+.layers span{background:#f6f5f2;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
+.layers b{font-family:var(--mono);font-weight:600}
+
+.tl{list-style:none;margin:0;padding:0}
+.tl > li{display:grid;grid-template-columns:92px 1fr;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.tl > li:last-child{border-bottom:0}
+.tl .dt{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.tl .dt a{display:block;font-family:inherit;font-size:10.5px;color:var(--ink-3);margin-top:3px;word-break:break-all}
+
+@media (max-width: 900px){
+  .pc-cols{grid-template-columns:1fr}
+  .pc-list{position:static;max-height:none}
+  .pc-wrap{padding:14px 16px 40px}
+  .topbar-in{padding:0 16px}
+  .pc-tabs{margin-left:6px}
+}

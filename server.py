@@ -30,6 +30,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
+from pccs import api as pccs_api   # 작업일지(PCCS3) — PyYAML이 없어도 import는 된다
+
 try:
     from PIL import Image, ImageOps
 except ImportError:
@@ -1195,6 +1197,21 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            # PCCS3 (작업일지) — 같은 인증·호스트 검사를 거친 뒤 읽기 전용으로 처리
+            if p == "/pccs":
+                self.send_response(301)
+                self.send_header("Location", "/pccs/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if p.startswith("/pccs/"):
+                hit = pccs_api.static_file(p[len("/pccs/"):])
+                if hit is None:
+                    return self.error(404, "not found")
+                return self._send(200, hit[0], hit[1])
+            if p.startswith("/api/pccs/"):
+                code, obj = pccs_api.handle(p, parse_qs(u.query), CFG)
+                return self.json(obj, code)
             if p == "/api/health":
                 return self.json({"ok": True, "dataRoot": DATA, "port": PORT,
                                   "brand": CFG.get("brand", "RDP"),
@@ -1796,6 +1813,7 @@ if __name__ == "__main__":
         TRASH = os.path.join(DATA, "_trash")
         PROPOSALS = os.path.join(DATA, "proposals")
         UI_STATE = os.path.join(DATA, "_ui", "state.json")
+        CFG["worklogDir"] = os.path.join(HERE, "pccs", "sample-worklogs")   # 익명 예시 일지
         print(f"[demo] {tmp}")
 
     ensure_dirs()

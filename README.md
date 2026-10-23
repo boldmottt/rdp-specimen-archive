@@ -55,6 +55,11 @@
 - **이미지가 안 보임** → 드라이브 동기화 상태 확인 (`_orig`는 있어도 `images`가 없으면 미동기화)
 - **저장 실패** → 드로어 하단 메시지 확인. JSON 탭에서 문법 오류가 있으면 저장이 막힙니다.
 
+## 작업일지 (PCCS3)
+
+위쪽 **작업일지** 버튼 → `/pccs/`. 작업일지 폴더의 v3 일지를 자동 검사하고, 동판별 타임라인을 보여 줍니다 (읽기 전용).
+설정(`worklogDir`)과 PyYAML 설치는 **[pccs/README.md](pccs/README.md)**.
+
 ## 외부 접속 (Cloudflare Tunnel + Access)
 
 회사 PC에서도 열려면 → **[SETUP-TUNNEL.md](SETUP-TUNNEL.md)**

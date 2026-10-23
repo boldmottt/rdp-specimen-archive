@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PCCS3 작업일지</title>
+<link rel="stylesheet" href="/styles.css?v=66">
+<link rel="stylesheet" href="/pccs/pccs.css?v=2">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="#/">
+      <div class="brand-mark"><svg viewBox="0 0 24 24"><path d="M4 18V6l16 12V6"/></svg></div>
+      <div class="brand-txt"><b>PCCS3</b><span>WORKLOG</span></div>
+    </a>
+    <nav class="pc-tabs">
+      <a href="#/" data-tab="files">일지 검사</a>
+      <a href="#/plates" data-tab="plates">동판 타임라인</a>
+    </nav>
+    <div class="grow"></div>
+    <a class="ghost" href="/">← 시편 아카이브</a>
+  </div>
+</header>
+
+<main class="pc-wrap">
+  <div class="pc-status" id="status">불러오는 중…</div>
+  <div class="pc-cols">
+    <aside class="pc-list" id="list"></aside>
+    <section class="pc-main" id="main"></section>
+  </div>
+</main>
+
+<script src="/pccs/app.js?v=2"></script>
+</body>
+</html>
