@@ -7,5 +7,6 @@
   "firstPageMax": 2,
   "pageMax": 2,
   "rdpDbPath": "~/path/to/rdp.db",
+  "worklogDir": "~/MySecondBrain/Areas/NIFCO/작업일지",
   "lan": false
 }
