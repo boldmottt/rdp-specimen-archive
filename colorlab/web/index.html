@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>컬러연구소</title>
+<link rel="stylesheet" href="/styles.css?v=67">
+<link rel="stylesheet" href="/lab/lab.css?v=3">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="#/predict">
+      <div class="brand-mark"><svg viewBox="0 0 24 24"><path d="M4 18V6l16 12V6"/></svg></div>
+      <div class="brand-txt"><b>COLOR LAB</b><span>컬러연구소</span></div>
+    </a>
+    <nav class="appnav"><a href="/">시편 아카이브</a><a href="/pccs/">작업일지</a><a class="on" href="/lab/">컬러연구소</a></nav>
+    <div class="grow"></div>
+    <div class="cl-mode" id="mode" title="SCI: 정반사 포함 (광택 무관, 색 자체) · SCE: 정반사 제외 (눈에 보이는 느낌)">
+      <button data-mode="sci">SCI</button><button data-mode="sce">SCE</button>
+    </div>
+  </div>
+</header>
+
+<nav class="cl-tabs" id="tabs">
+  <a href="#/predict" data-tab="predict">색 예측</a>
+  <a href="#/recommend" data-tab="recommend">배합 추천</a>
+  <a href="#/correct" data-tab="correct">보정 추천</a>
+  <a href="#/similar" data-tab="similar">과거 사례</a>
+  <a href="#/library" data-tab="library">측색 라이브러리</a>
+  <a href="#/de" data-tab="de">ΔE 계산기</a>
+</nav>
+
+<main class="cl-wrap">
+  <div class="cl-status" id="status">불러오는 중…</div>
+  <section id="main"></section>
+</main>
+<div class="cl-toast" id="toast"></div>
+
+<script src="/lab/app.js?v=3"></script>
+</body>
+</html>

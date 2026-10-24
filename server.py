@@ -31,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
 from pccs import api as pccs_api   # 작업일지(PCCS3) — PyYAML이 없어도 import는 된다
+from colorlab import api as lab_api   # 컬러연구소 — 측색 라이브러리 · 색 예측
 
 try:
     from PIL import Image, ImageOps
@@ -1212,6 +1213,20 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/api/pccs/"):
                 code, obj = pccs_api.handle(p, parse_qs(u.query), CFG)
                 return self.json(obj, code)
+            # 컬러연구소
+            if p == "/lab":
+                self.send_response(301)
+                self.send_header("Location", "/lab/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if p.startswith("/lab/"):
+                hit = lab_api.static_file(p[len("/lab/"):])
+                if hit is None:
+                    return self.error(404, "not found")
+                return self._send(200, hit[0], hit[1])
+            if p.startswith("/api/lab/"):
+                return self._lab("GET", p, parse_qs(u.query), None)
             if p == "/api/health":
                 return self.json({"ok": True, "dataRoot": DATA, "port": PORT,
                                   "brand": CFG.get("brand", "RDP"),
@@ -1303,6 +1318,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p.startswith("/api/lab/"):
+                return self._lab("PUT", p, {}, self._lab_body())
             if p == "/api/ui":
                 raw = self.read_body()
                 try:
@@ -1391,6 +1408,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
+            if p.startswith("/api/lab/"):
+                return self._lab("POST", p, {}, self._lab_body())
             if p == "/api/open-folder":
                 subprocess.Popen(["open", DATA])
                 return self.json({"ok": True})
@@ -1556,6 +1575,29 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(404, "not found")
         except Exception as e:
             self.error(500, str(e))
+
+    # ---------- 컬러연구소
+    def _lab_body(self):
+        raw = self.read_body()
+        try:
+            return json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            return None
+
+    def _lab(self, method, p, query, body):
+        if method != "GET" and not isinstance(body, dict):
+            return self.error(400, "JSON 형식 오류")
+
+        def worklog():
+            folder = pccs_api.worklog_dir(CFG)
+            if not os.path.isdir(folder) or not pccs_api.worklog.yaml_available():
+                return None
+            return pccs_api.get_index(folder)
+
+        ctx = {"data": DATA, "backup": BACKUP, "patterns": lambda: load_all()[0], "worklog": worklog,
+               "rev": (self.headers.get("X-Base-Rev") or "").strip()}
+        code, obj = lab_api.handle(method, p, query, body or {}, ctx)
+        return self.json(obj, code)
 
     # ---------- handlers
     MAX_BODY = 40 * 1024 * 1024  # 이미지 1장 상한
@@ -1814,6 +1856,8 @@ if __name__ == "__main__":
         PROPOSALS = os.path.join(DATA, "proposals")
         UI_STATE = os.path.join(DATA, "_ui", "state.json")
         CFG["worklogDir"] = os.path.join(HERE, "pccs", "sample-worklogs")   # 익명 예시 일지
+        from colorlab import synth   # 컬러연구소 합성 데모 라이브러리 (실측값 아님)
+        lab_api.save_library(DATA, BACKUP, synth.library(), "")
         print(f"[demo] {tmp}")
 
     ensure_dirs()
