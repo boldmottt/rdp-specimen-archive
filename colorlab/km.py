@@ -110,13 +110,18 @@ def golden(f, lo, hi, iters=60):
     return (a + b) / 2
 
 
-# ---------------------------------------------------------------- 잉크 막 역산 (흰·검정 바탕)
-def calibrate_channel(rg_w, rg_b, r_w, r_b):
-    """한 채널: 흰 바탕(rg_w)·검정 바탕(rg_b) 위에 같은 막을 찍어 잰 내부 반사율(r_w, r_b)로
-    막의 (kx, sx)를 역산한다. 반환: (kx, sx, 잔차)."""
+# ---------------------------------------------------------------- 잉크 막 역산
+def fit_channel(prints, rinf=None):
+    """한 채널: 바탕 위에 같은 막을 찍어 잰 값들 [(바탕 내부 반사율, 찍은 곳 내부 반사율), …]과
+    솔리드(은폐, 내부 반사율 R∞ — 흡수/산란 비율만 알려 줌)로 막의 (kx, sx)를 역산한다.
+    얇게 찍은 것 1개 + 솔리드, 또는 서로 다른 바탕 2개 이상이 있어야 둘 다 정해진다.
+    반환: (kx, sx, 잔차)."""
     def err(p):
         kx, sx = math.exp(p[0]), math.exp(p[1])
-        return (layer(rg_w, kx, sx) - r_w) ** 2 + (layer(rg_b, kx, sx) - r_b) ** 2
+        e = sum((layer(g, kx, sx) - r) ** 2 for g, r in prints)
+        if rinf is not None:
+            e += (r_inf(kx, sx) - rinf) ** 2
+        return e
 
     best = None
     for s0 in (0.02, 0.2, 1.0, 5.0):
@@ -125,4 +130,22 @@ def calibrate_channel(rg_w, rg_b, r_w, r_b):
             if best is None or v < best[1]:
                 best = (p, v)
     kx, sx = math.exp(best[0][0]), math.exp(best[0][1])
-    return kx, sx, math.sqrt(best[1] / 2)
+    m = len(prints) + (rinf is not None)
+    return kx, sx, math.sqrt(best[1] / m)
+
+
+def calibrate_channel(rg_w, rg_b, r_w, r_b):
+    """흰 바탕(rg_w)·검정 바탕(rg_b) 위에 같은 막을 찍어 잰 값(r_w, r_b) → (kx, sx, 잔차)."""
+    return fit_channel([(rg_w, r_w), (rg_b, r_b)])
+
+
+# ---------------------------------------------------------------- 망점
+def dot_gamma(dot50):
+    """'50% 망점이 실제로 덮는 비율' → 퍼짐 곡선 지수 (실효 = 1 − (1 − 설계)^γ)."""
+    return math.log(1.0 - dot50) / math.log(0.5)
+
+
+def effective_tone(c, gamma=1.0):
+    """설계 망점 비율 c(0~1) → 실제로 덮는 비율 (0%·100%는 그대로, 중간이 퍼진다)."""
+    c = min(1.0, max(0.0, float(c)))
+    return 1.0 - (1.0 - c) ** gamma

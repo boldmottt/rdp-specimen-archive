@@ -19,7 +19,7 @@ STATIC = {"index.html": "text/html; charset=utf-8",
           "app.js": "application/javascript; charset=utf-8",
           "lab.css": "text/css; charset=utf-8"}
 SURFACES = ("경면", "패브릭엠보", "엠보사출", "무도장", "기타")
-MEAS_KEYS = ("white_bg", "black_bg", "on_white", "on_black")
+MEAS_KEYS = ("solid", "white_bg", "black_bg", "on_white", "on_black")
 _guard = threading.Lock()
 _lib_cache = {"key": None, "lib": None}     # 잉크 역산 결과를 저장 시점(updatedAt)까지 재사용
 
@@ -102,7 +102,8 @@ def validate(doc):
         if not ink["clear"]:
             c = {"hardener_pct": _num(cal.get("hardener_pct", 20), f"{name} 경화제%"),
                  "thinner_pct": _num(cal.get("thinner_pct", 30), f"{name} 신나%"),
-                 "method": str(cal.get("method") or ""), "measured_on": str(cal.get("measured_on") or "")}
+                 "method": str(cal.get("method") or ""), "measured_on": str(cal.get("measured_on") or ""),
+                 "plate": str(cal.get("plate") or "")}
             for k in MEAS_KEYS:
                 c[k] = _check_meas(cal.get(k), f"{name} {k}")
             ink["cal"] = c
@@ -134,18 +135,26 @@ def validate(doc):
         if lot in lots:
             raise model.ModelError(f"동판 중복: {lot}")
         lots.add(lot)
-        t = _num(p.get("thickness", 1.0), f"{lot} 막두께 계수")
-        if not 0.05 <= t <= 20:
-            raise model.ModelError(f"{lot}: 막두께 계수는 0.05~20")
+        d = {"lot": lot}
+        for key, what, lo, hi in (("thickness", "막두께 계수", 0.05, 20), ("lpi", "LPI", 1, 2000),
+                                  ("depth_um", "부식 깊이(µm)", 0.1, 500), ("dot50", "50% 망점의 실제 비율", 0.05, 0.99)):
+            if p.get(key) in (None, ""):
+                continue                       # 비우면 다른 동판에서 추정
+            v = _num(p[key], f"{lot} {what}")
+            if not lo <= v <= hi:
+                raise model.ModelError(f"{lot}: {what}은(는) {lo:g}~{hi:g}")
+            d[key] = v
         cov = {}
         for k, v in (p.get("coverage") or {}).items():
             if v in (None, ""):
                 continue
-            c = _num(v, f"{lot} 면적률")
+            c = _num(v, f"{lot} 망점")
             if not 0 <= c <= 1:
-                raise model.ModelError(f"{lot} {k} 면적률은 0~1 (예: 35% → 0.35)")
+                raise model.ModelError(f"{lot} {k} 망점은 0~1 (예: 60% → 0.6)")
             cov[str(k)] = c
-        plates.append({"lot": lot, "thickness": t, "coverage": cov, "note": str(p.get("note") or "")})
+        d.update({"coverage": cov, "note": str(p.get("note") or "")})
+        plates.append(d)
+    transfers = [_check_transfer(t, i + 1) for i, t in enumerate(doc.get("transfers") or [])]
     st = doc.get("settings") or {}
     yn = _num(st.get("yn", 1.0), "Yule–Nielsen n")
     if not 1 <= yn <= 10:
@@ -154,7 +163,73 @@ def validate(doc):
     settings = {"yn": yn}
     if any(cards.values()):
         settings["cards"] = {k: v for k, v in cards.items() if v}
-    return {"schema": "colorlab/v1", "inks": inks, "substrates": subs, "plates": plates, "settings": settings}
+    return {"schema": "colorlab/v1", "inks": inks, "substrates": subs, "plates": plates, "transfers": transfers,
+            "settings": settings}
+
+
+def _check_layer(x, what):
+    if not isinstance(x, dict):
+        raise model.ModelError(f"{what}: 형식 오류")
+    inks = {}
+    for k, v in (x.get("inks") or {}).items():
+        g = _num(v, f"{what} {k}")
+        if g < 0:
+            raise model.ModelError(f"{what} {k}: g은 0 이상")
+        if g > 0:
+            inks[str(k).strip()] = g
+    if not inks:
+        raise model.ModelError(f"{what}: 잉크 g이 없습니다")
+    tone = _num(x.get("tone", 100), f"{what} 망점 %")
+    if not 0 < tone <= 100:
+        raise model.ModelError(f"{what}: 망점 %는 0 초과 100 이하")
+    return {"inks": inks, "tone": tone}
+
+
+def _check_transfer(t, no):
+    """전사 시료 한 줄: 동판으로 네모 패치를 찍어 잰 값."""
+    what = f"전사 시료 {no}번"
+    if not isinstance(t, dict):
+        raise model.ModelError(f"{what}: 형식 오류")
+    sub = t.get("substrate")
+    if isinstance(sub, dict):
+        sub = _check_meas(sub, f"{what} 바탕") or None
+    else:
+        sub = str(sub or "").strip() or None
+    if not sub:
+        raise model.ModelError(f"{what}: 바탕을 고르세요")
+    d = {"date": str(t.get("date") or ""), "plate": str(t.get("plate") or "").strip(), "substrate": sub,
+         "layer1": _check_layer(t.get("layer1"), f"{what} 1도")}
+    if t.get("layer2") and (t["layer2"].get("inks") or {}):
+        d["layer2"] = _check_layer(t["layer2"], f"{what} 2도")
+    for k, label in (("thinner_pct", "신나 %"), ("hardener_pct", "경화제 %"), ("matting_pct", "소광제 %")):
+        v = _num(t.get(k, {"thinner_pct": 30, "hardener_pct": 20}.get(k, 0)), f"{what} {label}")
+        if v < 0:
+            raise model.ModelError(f"{what}: {label}는 0 이상")
+        d[k] = v
+    d["measured"] = _check_meas(t.get("measured"), f"{what} 측정")
+    if not d["measured"]:
+        raise model.ModelError(f"{what}: 잰 값(SCI 또는 SCE)이 필요합니다")
+    d["note"] = str(t.get("note") or "")
+    return d
+
+
+def transfer_sample(t, mode):
+    """저장된 전사 시료 → 엔진 시료 형식 (이 mode의 잰 값이 없으면 None)."""
+    lab = model.meas_lab(t.get("measured"), mode)
+    if lab is None:
+        return None
+
+    def rec(layer):
+        tot = sum(layer["inks"].values())
+        return {"inks": layer["inks"], **{k: {"g": tot * float(t.get(f"{k}_pct") or 0) / 100}
+                                          for k in ("thinner", "hardener", "matting")}}
+
+    s = {"substrate": t["substrate"], "layer1": rec(t["layer1"]), "coverage": {"1도": float(t["layer1"].get("tone", 100)) / 100},
+         "measured": list(lab)}
+    if t.get("layer2"):
+        s["layer2"] = rec(t["layer2"])
+        s["coverage"]["2도"] = float(t["layer2"].get("tone", 100)) / 100
+    return s
 
 
 def save_library(data_root, backup_dir, doc, base_rev):
@@ -189,9 +264,9 @@ def _swatch(m, mode="sci"):
     return {"lab": [round(x, 2) for x in lab], "hex": cm.lab_to_hex(lab)} if lab else None
 
 
-def describe_library(doc):
-    """화면용 정보: 잉크별 보정 상태(SCI/SCE·분광) · 견본색."""
-    lib = model.Library(doc)
+def describe_library(doc, lib=None):
+    """화면용 정보: 잉크별 보정 상태(SCI/SCE·분광) · 견본색 · 동판 추정값 · 전사 시료 예측 오차."""
+    lib = lib or model.Library(doc)
     inks = []
     for ink in doc.get("inks") or []:
         info = {"name": ink["name"], "clear": bool(ink.get("clear")), "status": {}}
@@ -199,14 +274,43 @@ def describe_library(doc):
             for space in ("rgb", "spec"):
                 try:
                     p = lib.ink_params(ink["name"], mode, space)
-                    info["status"][f"{mode}_{space}"] = {"ok": True, "residual": round(p["residual"], 5)}
+                    info["status"][f"{mode}_{space}"] = {"ok": True, "residual": round(p["residual"], 5), "used": p.get("used", [])}
                 except model.ModelError as e:
                     info["status"][f"{mode}_{space}"] = {"ok": False, "msg": str(e)}
         cal = ink.get("cal") or {}
         info["swatch"] = {k: _swatch(cal.get(k)) for k in MEAS_KEYS}
         inks.append(info)
     subs = [{"ref": _sub_ref(doc, s), "swatch": _swatch(s) or _swatch(s, "sce")} for s in doc.get("substrates") or []]
-    return {"inks": inks, "substrates": subs}
+    cards = (doc.get("settings") or {}).get("cards") or {}
+    subs += [{"ref": name, "swatch": _swatch(cards[key]) or _swatch(cards[key], "sce"), "card": True}
+             for name, key in model.CARDS.items() if cards.get(key)]
+    # 전사 시료: 지금 라이브러리로 예측했을 때의 오차 → 동판별 신뢰도
+    trs, per_plate = [], {}
+    for t in doc.get("transfers") or []:
+        row = {}
+        for mode in model.MODES:
+            smp = transfer_sample(t, mode)
+            if smp is None:
+                continue
+            try:
+                t_, g_, _ = model._plate(lib, t.get("plate") or None)
+                lab = model.sample_color(lib, smp, mode, t_, g_)
+                de = cm.delta_e2000(lab, smp["measured"])
+                row[mode] = {"dE": round(de, 2), "hex": cm.lab_to_hex(lab), "lab": [round(x, 2) for x in lab],
+                             "diff": cm.describe(cm.lab_parts(smp["measured"], lab))}
+                per_plate.setdefault((t.get("plate") or "", mode), []).append(de)
+            except model.ModelError as e:
+                row[mode] = {"error": str(e)}
+        trs.append(row)
+    plates = {}
+    for p in doc.get("plates") or []:
+        info = lib.plate_info(p["lot"])
+        acc = {m: {"dE": round(sum(v) / len(v), 2), "n": len(v)}
+               for m in model.MODES for v in [per_plate.get((p["lot"], m))] if v}
+        plates[p["lot"]] = {"thickness": round(info["thickness"], 3), "thickness_src": info["thickness_src"],
+                            "dot50": round(info["dot50"], 4), "gain_src": info["gain_src"], "accuracy": acc,
+                            "samples": sum(1 for t in doc.get("transfers") or [] if t.get("plate") == p["lot"])}
+    return {"inks": inks, "substrates": subs, "plates": plates, "transfers": trs}
 
 
 def _sub_ref(doc, s):
@@ -232,10 +336,20 @@ def _full_lab(lab):
         return None
 
 
-def similar(target, mode, patterns, worklog_index=None, limit=12):
-    """목표 LAB에 가까운 과거 측정값: 아카이브 배합의 LAB + 작업일지 시료의 lab."""
+def similar(target, mode, patterns, worklog_index=None, limit=12, transfers=None):
+    """목표 LAB에 가까운 과거 측정값: 아카이브 배합의 LAB + 작업일지 시료의 lab + 컬러연구소 전사 시료."""
     key = "labSce" if mode == "sce" else "labSci"
     out = []
+    for i, t in enumerate(transfers or []):
+        lab = model.meas_lab(t.get("measured"), mode)
+        if lab is None:
+            continue
+        layers = [("1도", t.get("layer1"))] + ([("2도", t["layer2"])] if t.get("layer2") else [])
+        sub = t["substrate"] if isinstance(t.get("substrate"), str) else "직접 입력 바탕"
+        out.append({"source": "전사 시료", "id": i + 1, "title": f"{t.get('date') or ''} · 동판 {t.get('plate') or '-'}",
+                    "detail": f"{sub} · " + " / ".join(f"{n} 망점 {float(l.get('tone', 100)):g}%" for n, l in layers),
+                    "inks": (t.get("layer1") or {}).get("inks") or {}, "lab": [round(x, 2) for x in lab],
+                    "hex": cm.lab_to_hex(lab), "dE": round(cm.delta_e2000(lab, target), 2), "link": "/lab/#/library"})
     for p in patterns or []:
         for v in p.get("variations") or []:
             for m in v.get("mixes") or []:
@@ -280,20 +394,58 @@ def _substrate(body, key="substrate"):
     return s
 
 
+def _tone(body):
+    v = _num(body.get("tone", 100), "망점 %")
+    if not 0 < v <= 100:
+        raise model.ModelError("망점 %는 0 초과 100 이하")
+    return v / 100.0
+
+
+def fit_plate_from_library(lib, doc, lot, mode):
+    """저장된 전사 시료 중 이 동판 것으로 막두께 · 망점 퍼짐을 맞춘다."""
+    if not lot or str(lot) not in lib.plates:
+        raise model.ModelError("동판을 고르세요")
+    rows = [t for t in doc.get("transfers") or [] if t.get("plate") == lot]
+    samples, idx, skipped = [], [], []
+    for i, t in enumerate(doc.get("transfers") or []):
+        if t.get("plate") != lot:
+            continue
+        smp = transfer_sample(t, mode)
+        if smp is None:
+            skipped.append(f"{i + 1}번: {mode.upper()} 값 없음")
+            continue
+        try:                                    # 바탕·잉크가 라이브러리에 있는지 미리 확인
+            model.sample_color(lib, smp, mode, 1.0, 1.0)
+        except model.ModelError as e:
+            skipped.append(f"{i + 1}번: {e}")
+            continue
+        samples.append(smp)
+        idx.append(i + 1)
+    if not samples:
+        raise model.ModelError(f"동판 {lot}의 전사 시료 중 계산할 수 있는 것이 없습니다"
+                               + (f" ({' / '.join(skipped)})" if skipped else f" (저장된 시료 {len(rows)}개)"))
+    info = lib.plate_info(lot)
+    r = model.fit_plate(lib, samples, mode=mode, start=(info["thickness"], info["gamma"]))
+    r.update({"lot": lot, "rows": idx, "skipped": skipped,
+              "start": {"thickness": round(info["thickness"], 3), "dot50": round(info["dot50"], 4)}})
+    return r
+
+
 def handle(method, path, query, body, ctx):
     """ctx: {'data': dataRoot, 'backup': 백업 폴더, 'patterns': fn, 'worklog': fn|None, 'rev': X-Base-Rev}
     반환: (HTTP 상태, JSON)."""
     try:
         if method == "GET" and path == "/api/lab/library":
             doc = load_library(ctx["data"])
-            return 200, {"ok": True, "library": doc, "info": describe_library(doc)}
+            return 200, {"ok": True, "library": doc, "info": describe_library(doc, _cached_library(ctx["data"]))}
         if method == "PUT" and path == "/api/lab/library":
             return save_library(ctx["data"], ctx["backup"], body, ctx.get("rev"))
         if method == "GET" and path == "/api/lab/similar":
             mode = (query.get("mode") or ["sci"])[0]
             target = [_num((query.get(k) or [None])[0], f"목표 {k}") for k in ("L", "a", "b")]
             idx = ctx["worklog"]() if ctx.get("worklog") else None
-            return 200, {"ok": True, "items": similar(target, mode, ctx["patterns"](), idx)}
+            transfers = load_library(ctx["data"]).get("transfers") or []
+            return 200, {"ok": True, "items": similar(target, mode, ctx["patterns"](), idx, transfers=transfers)}
         if method != "POST":
             return 404, {"ok": False, "error": "not found"}
         lib = _cached_library(ctx["data"])
@@ -322,16 +474,16 @@ def handle(method, path, query, body, ctx):
                                 ink_total=_num(body.get("ink_total") or 60, "잉크 합계"), under=body.get("under") or None,
                                 plate=body.get("plate"), hardener_pct=_num(body.get("hardener_pct", 20), "경화제%"),
                                 thinner_pct=_num(body.get("thinner_pct", 30), "신나%"),
-                                matting_pct=_num(body.get("matting_pct", 0), "소광제%"))
+                                matting_pct=_num(body.get("matting_pct", 0), "소광제%"), tone=_tone(body))
             return 200, {"ok": True, **r}
         if path == "/api/lab/correct":
             r = model.correct(lib, body.get("current"), _lab3(body.get("measured"), "측정"), _lab3(body.get("target"), "목표"),
                               _substrate(body), mode=mode, adjustable=body.get("adjustable") or None,
                               under=body.get("under") or None, plate=body.get("plate"),
-                              change_weight=_num(body.get("change_weight", 0.5), "변경 벌점"))
+                              change_weight=_num(body.get("change_weight", 0.5), "변경 벌점"), tone=_tone(body))
             return 200, {"ok": True, **r}
         if path == "/api/lab/fit":
-            return 200, {"ok": True, **model.fit_plate(lib, body.get("samples") or [], mode=mode)}
+            return 200, {"ok": True, **fit_plate_from_library(lib, load_library(ctx["data"]), body.get("plate"), mode)}
         return 404, {"ok": False, "error": "not found"}
     except model.ModelError as e:
         return 400, {"ok": False, "error": str(e)}

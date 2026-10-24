@@ -143,7 +143,6 @@ input.bad{border-color:var(--ng)!important;background:#fff6f5}
 .cl-toast.bad{background:var(--ng)}
 code{font-family:var(--mono);font-size:12px;background:#f1efe9;padding:1px 5px;border-radius:5px}
 
-@media (max-width:1000px){.cl-measrow{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:760px){
   .cl-tabs{padding:10px 16px 0}
   .cl-wrap{padding:10px 16px 60px}
@@ -161,3 +160,20 @@ code{font-family:var(--mono);font-size:12px;background:#f1efe9;padding:1px 5px;b
   .cl-pcts .cl-f.sm{flex:1;min-width:0;width:auto}
   .cl-grid .cl-f.sm{flex:1;min-width:90px}
 }
+
+/* 잉크 측정 5칸 · 동판 숫자 칸 · 전사 시료 */
+.cl-measrow{grid-template-columns:repeat(5,minmax(0,1fr))}
+.cl-table.lib input.num{min-width:72px;width:84px}
+.cl-tr{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.cl-tr-row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+.cl-tr-row+.cl-tr-row{margin-top:10px;align-items:flex-start}
+.cl-tr-no{font-size:12px;color:var(--ink-3);align-self:center;min-width:18px}
+.cl-tr-layer{display:flex;gap:8px;align-items:flex-end}
+.cl-tr-layer .cl-f:not(.xs){min-width:170px;width:190px}
+.cl-tr-layer .cl-f.xs{width:70px;min-width:70px}
+.cl-tr-pred{display:flex;flex-direction:column;gap:5px;min-width:150px;font-size:11.5px}
+.cl-tr-pred small{color:var(--ink-3)}
+.cl-tr .cl-f select{min-width:0}
+.cl-fit-res{gap:18px}
+@media (max-width:1180px){.cl-measrow{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:760px){.cl-measrow{grid-template-columns:1fr}.cl-tr-layer{width:100%}.cl-tr-layer .cl-f{flex:1;min-width:0}}
