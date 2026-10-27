@@ -6,7 +6,7 @@
 from . import colormath as cm
 from . import km
 
-# 3채널(선형 RGB) 진짜값: 잉크 1 단위의 (k, s) — 순서 R, G, B
+# 3채널 진짜값: 잉크 1 단위의 (k, s) — 라이브러리 기본 기저(XYZ: X/Xn, Y/Yn, Z/Zn) 채널 순서
 TRUTH = {
     "WH": {"k": [0.02, 0.02, 0.03], "s": [2.2, 2.2, 2.1]},
     "BK": {"k": [3.2, 3.2, 3.0], "s": [0.25, 0.25, 0.25]},
@@ -16,6 +16,8 @@ TRUTH = {
     "MT": {"k": [0.01, 0.01, 0.012], "s": [0.08, 0.08, 0.08]},
 }
 CLEAR = ("CL",)
+# 은폐 도막만 잰 잉크 (100% 얇게 찍은 값이 없음 — 실제 현장처럼). 산란은 채널 간 같게 둔다.
+SOLID_ONLY = {"Y2": {"k": [0.04, 0.3, 4.0], "s": [0.5, 0.5, 0.5]}}
 WHITE_CARD = (94.0, -0.5, 2.0)
 BLACK_CARD = (27.0, 0.0, -0.5)
 SUBSTRATES = [
@@ -26,12 +28,16 @@ SUBSTRATES = [
 ]
 
 
+BASIS = "xyz"
+
+
 def _rgb(lab):
-    return [km.clamp(x) for x in cm.lab_to_rgb_lin(lab)]
+    """LAB → 3채널 반사율 (라이브러리 기본 기저)."""
+    return [km.clamp(x) for x in cm.lab_to_tri(lab, BASIS)]
 
 
-def _lab(rgb):
-    return [round(x, 3) for x in cm.rgb_lin_to_lab(rgb)]
+def _lab(t):
+    return [round(x, 3) for x in cm.tri_to_lab(t, BASIS)]
 
 
 def print_on(bg_lab, k, s, mode="sci", thick=1.0):
@@ -64,7 +70,7 @@ def true_color(substrate_lab, recipe, mode="sci", thick=1.0, under=None):
         k, s = true_film(under, thick)
         bg = [km.layer(bg[i], k[i], s[i]) for i in range(3)]
     k, s = true_film(recipe, thick)
-    return cm.rgb_lin_to_lab([km.to_measured(km.layer(bg[i], k[i], s[i]), mode) for i in range(3)])
+    return cm.tri_to_lab([km.to_measured(km.layer(bg[i], k[i], s[i]), mode) for i in range(3)], BASIS)
 
 
 def true_tone(substrate_lab, recipe, tone, mode="sci", thick=1.0, gamma=1.0, under=None):
@@ -77,17 +83,58 @@ def true_tone(substrate_lab, recipe, tone, mode="sci", thick=1.0, gamma=1.0, und
     solid = [km.to_measured(km.layer(bg[i], k[i], s[i]), mode) for i in range(3)]
     c = km.effective_tone(tone, gamma)
     mix = [(1 - c) * km.to_measured(bg[i], mode) + c * solid[i] for i in range(3)]
-    return cm.rgb_lin_to_lab(mix)
+    return cm.tri_to_lab(mix, BASIS)
 
 
 def solid_lab(name, mode="sci"):
     """잉크를 꾸덕하게 발라 바탕이 안 비칠 때 (R∞)."""
-    v = TRUTH[name]
+    v = TRUTH.get(name) or SOLID_ONLY[name]
     return _lab([km.to_measured(km.r_inf(v["k"][i], v["s"][i]), mode) for i in range(3)])
 
 
 # 데모 동판의 '진짜' 값 (데모 화면에서 막두께 맞추기로 되찾아 보는 용도)
 DEMO_PLATE = {"lot": "DEMO_001", "thick": 1.15, "gamma": 1.6}
+
+
+# 은폐 도막만 있는 Y2를 DEMO_002 동판으로 찍은 망점 패치 — 80% 근처에서 급하게 메워지는 망점 곡선
+DEMO_PROFILE = {"lot": "DEMO_002", "ink": "Y2", "thick": 1.0,
+                "curve": [[0.2, 0.25], [0.4, 0.48], [0.6, 0.70], [0.7, 0.84], [0.8, 0.98], [0.95, 0.997]]}
+
+
+def curve_at(curve, c):
+    pts = [(0.0, 0.0)] + [tuple(x) for x in curve] + [(1.0, 1.0)]
+    for (d0, e0), (d1, e1) in zip(pts, pts[1:]):
+        if d0 <= c <= d1:
+            return e0 + (e1 - e0) * (c - d0) / (d1 - d0)
+    return c
+
+
+def patch_lab(substrate_lab, k1, s1, recipe, cov, mode="sci", thick=1.0):
+    """잉크 1단위 (k1, s1)로 만든 막을 실효 덮임 cov로 찍은 패치 (Yule–Nielsen n=1)."""
+    from .model import normalize_recipe, film_thickness
+    r = normalize_recipe(recipe)
+    ink = sum(r["inks"].values())
+    solids = ink + r["hardener"] + r["matting"]
+    rel = film_thickness(solids / ink, r["thinner"] / ink) * thick
+    w = ink / solids
+    bg = [km.to_internal(x, mode) for x in _rgb(substrate_lab)]
+    f = [km.to_measured(km.layer(bg[i], k1[i] * w * rel, s1[i] * w * rel), mode) for i in range(3)]
+    return cm.tri_to_lab([(1 - cov) * km.to_measured(bg[i], mode) + cov * f[i] for i in range(3)], BASIS)
+
+
+def profile_transfers(tones=(95, 80, 60, 40)):
+    """DEMO_002: Y2 단독, 흰 카드, 신나 30 · 경화제 20."""
+    v = SOLID_ONLY[DEMO_PROFILE["ink"]]
+    out = []
+    for tone in tones:
+        rec = {"inks": {"Y2": 60}, "hardener": {"g": 12}, "thinner": {"g": 18}}
+        cov = curve_at(DEMO_PROFILE["curve"], tone / 100)
+        meas = {m: [round(x, 2) for x in patch_lab(_lab_mode(WHITE_CARD, m), v["k"], v["s"], rec, cov, m,
+                                                   DEMO_PROFILE["thick"])] for m in ("sci", "sce")}
+        out.append({"date": "2026-01-14", "plate": DEMO_PROFILE["lot"], "substrate": "흰 카드",
+                    "layer1": {"inks": {"Y2": 60}, "tone": tone}, "thinner_pct": 30, "hardener_pct": 20, "matting_pct": 0,
+                    "measured": meas, "note": "합성 — 은폐 도막만 있는 잉크"})
+    return out
 
 
 def transfers():
@@ -126,6 +173,10 @@ def library(cal_thick=1.0):
             cal.setdefault("on_black", {})[mode] = print_on(_lab_mode(BLACK_CARD, mode), k, s, mode)
         cal["solid"] = {m: solid_lab(name, m) for m in ("sci", "sce")}
         inks.append({"name": name, "note": "합성 데모 잉크", "cal": cal})
+    for name in SOLID_ONLY:
+        inks.append({"name": name, "note": "합성 — 은폐 도막만 있음 (보정 프로필로 계산)",
+                     "cal": {"hardener_pct": 20, "thinner_pct": 30, "method": "합성", "measured_on": "2026-01-01",
+                             "solid": {m: solid_lab(name, m) for m in ("sci", "sce")}}})
     inks += [{"name": n, "clear": True, "note": "투명 (색 없음)"} for n in CLEAR]
     subs = []
     for sb in SUBSTRATES:
@@ -137,8 +188,8 @@ def library(cal_thick=1.0):
             "plates": [{"lot": "DEMO_001", "lpi": 150, "depth_um": 20, "coverage": {"1도": 1.0, "2도": 0.6},
                         "note": "합성 — 전사 시료로 막두께 맞추기를 해 보세요"},
                        {"lot": "DEMO_002", "lpi": 150, "depth_um": 25, "coverage": {"1도": 0.8},
-                        "note": "합성 — DEMO_001을 맞추면 깊이·LPI로 추정됨"}],
-            "transfers": transfers(),
+                        "note": "합성 — Y2(은폐 도막만) 망점 패치로 보정 프로필을 계산해 보세요"}],
+            "transfers": transfers() + profile_transfers(),
             "settings": {"yn": 1.0, "cards": {"white": {m: _lab_mode(WHITE_CARD, m) for m in ("sci", "sce")},
                                               "black": {m: _lab_mode(BLACK_CARD, m) for m in ("sci", "sce")}}}}
 

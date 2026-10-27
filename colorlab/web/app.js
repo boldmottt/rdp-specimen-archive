@@ -6,11 +6,11 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const MATTING = "소광제";
   const SURFACES = ["경면", "패브릭엠보", "엠보사출", "무도장", "기타"];
-  const MEAS = [["solid", "솔리드 (은폐)"], ["white_bg", "바탕 A (흰 카드 등)"], ["on_white", "바탕 A + 잉크"], ["black_bg", "바탕 B (검정 카드 등)"], ["on_black", "바탕 B + 잉크"]];
+  const MEAS = [["solid", "은폐 도막 (꾸덕하게 바른 것)"], ["white_bg", "바탕 A (흰 카드 등)"], ["on_white", "바탕 A + 잉크"], ["black_bg", "바탕 B (검정 카드 등)"], ["on_black", "바탕 B + 잉크"]];
   const REGION = { substrate: "바탕", layer1: "1도", layer2: "2도 단독", overlap: "1도 + 2도 겹침", average: "면적 평균 (측색기 시야)" };
 
   const S = {
-    lib: null, info: null, rev: "", edit: null, dirty: false, fitLot: null,
+    lib: null, info: null, rev: "", edit: null, dirty: false, prof: {},
     mode: load("cl.mode") === "sce" ? "sce" : "sci",
     f: {}, res: {},
   };
@@ -247,14 +247,16 @@
   }
 
   function noteBox(r) {
-    const space = r.space === "spec" ? "분광 31채널" : "LAB 3채널 근사";
+    const space = SPACE_LABEL[r.space] || r.space;
     const pi = r.plate_info;
     const bits = [r.mode.toUpperCase(), space];
     if (r.plate) bits.push(`막두께 ×${(+r.plate).toFixed(2)}${pi ? ` (${pi.thickness_src})` : ""}`);
     if (pi && pi.gain_src !== "퍼짐 없음") bits.push(`50% 망점 → ${r1(pi.dot50 * 100)}% (${pi.gain_src})`);
+    const prof = Object.entries(r.sources || {}).filter(([, v]) => v === "profile").map(([k]) => k);
+    if (prof.length) bits.push(`보정 프로필: ${prof.join(", ")}`);
     const tone = r.average && r.average.tone;
     if (tone) bits.push(Object.entries(tone).map(([k, [d, e]]) => `${k} 망점 ${r1(d * 100)}% → 실효 ${r1(e * 100)}%`).join(" · "));
-    const extra = r.note && !/^LAB 3채널 근사$/.test(r.note) ? r.note.replace(/^LAB 3채널 근사 — 분광 데이터를 넣으면 더 정확해집니다/, "분광 데이터를 넣으면 더 정확해집니다") : "";
+    const extra = r.note ? r.note.replace(/^3채널 근사 \((XYZ|sRGB) 기저\) — /, "") : "";
     return `<p class="cl-note">계산: ${bits.map(esc).join(" · ")}${extra ? ` — ${esc(extra)}` : ""}</p>`;
   }
 
@@ -491,11 +493,12 @@
     if (!i) return `<span class="cl-tag">저장 후 확인</span>`;
     if (i.clear) return `<span class="cl-tag ok">투명</span>`;
     return ["sci", "sce"].map((md) => {
-      const r = i.status[`${md}_rgb`], s = i.status[`${md}_spec`];
+      const r = i.status[`${md}_tri`], s = i.status[`${md}_spec`];
       if (!r.ok) return `<span class="cl-tag ng" title="${esc(r.msg)}">${md.toUpperCase()} 부족</span>`;
+      if (r.source === "profile") return `<span class="cl-tag ok" title="적용한 보정 프로필의 값 (${esc((r.used || []).join(" · "))})">${md.toUpperCase()} ✓ 보정 프로필</span>${s.ok ? `<span class="cl-tag ok">${md.toUpperCase()} 분광</span>` : ""}`;
       const fit = r.residual < 0.002 ? "ok" : r.residual < 0.01 ? "mid" : "ng";
       const used = (r.used || []).length;
-      return `<span class="cl-tag ${fit}" title="측정 ${used}개를 한 막으로 설명한 오차 (반사율). 측정이 딱 2개면 늘 0에 가깝고, 3개 이상이면 측정끼리 맞는지 알려 줍니다.">${md.toUpperCase()} ✓ ${(r.used || []).includes("solid") ? "솔리드+" : ""}${used}칸 · 잔차 ${r.residual}</span>${s.ok ? `<span class="cl-tag ok">${md.toUpperCase()} 분광</span>` : ""}`;
+      return `<span class="cl-tag ${fit}" title="측정 ${used}개를 한 막으로 설명한 오차 (반사율). 측정이 딱 2개면 늘 0에 가깝고, 3개 이상이면 측정끼리 맞는지 알려 줍니다.">${md.toUpperCase()} ✓ ${(r.used || []).includes("solid") ? "은폐 도막+" : ""}${used}칸 · 잔차 ${r.residual}</span>${s.ok ? `<span class="cl-tag ok">${md.toUpperCase()} 분광</span>` : ""}`;
     }).join("");
   }
 
@@ -514,13 +517,13 @@
 
     <details class="cl-card cl-help"${(L.inks || []).length ? "" : " open"}><summary>측정 방법 (처음이면 읽어 주세요)</summary>
       <ol>
-        <li><b>잉크</b>: 아래 둘 중 하나면 됩니다 (다 있으면 더 정확).
-          <br>① <b>솔리드</b> — 잉크를 꾸덕하게 발라 바탕이 안 비치게 한 것 + <b>얇게 찍은 것 1개</b>(흰 카드 위 등, 그 바탕값도 같이)
-          <br>② 같은 잉크를 <b>흰 카드와 검정 카드</b> 위에 같은 동판으로 찍은 것 (바탕값 포함 4칸)
-          <br>얇게 찍을 때 경화제 · 신나 %를 적어 주세요. 이때 쓴 동판이 막두께의 기준(×1.00)이 됩니다.</li>
+        <li><b>잉크</b>: <b>은폐 도막</b>(꾸덕하게 발라 바탕이 안 비치게 한 것)을 잽니다. 그다음은 둘 중 하나:
+          <br>① 그 잉크로 찍은 <b>전사 시료(망점 패치)</b>를 아래에 쌓고 <b>보정 프로필</b>을 계산·적용 — 100% 동판이 없어도 됩니다
+          <br>② 얇게 찍은 값(바탕 + 그 위 잉크)을 잉크 칸에 직접 — 흰·검정 카드 둘이거나, 은폐 도막 + 하나
+          <br>얇게 찍을 때 경화제 · 신나 %를 적어 주세요. 기준이 되는 동판의 막두께가 ×1.00입니다.</li>
         <li><b>도장 시편</b>: 컬러코드 · 도장처 · 표면마다 한 줄. 같은 코드라도 경면/패브릭엠보는 따로. 흰·검정 카드는 "기본 카드값"에 넣으면 바탕으로 고를 수 있어요.</li>
-        <li><b>동판</b>: LPI · 부식 깊이 · 설계 망점 %를 적습니다. 막두께 계수와 망점 퍼짐은 <b>전사 시료로 맞추기</b>를 누르면 계산되고, 비워 두면 다른 동판에서 추정합니다 (막두께 ∝ 부식 깊이, 퍼짐 = 같은 LPI 평균).</li>
-        <li><b>전사 시료</b>: 동판으로 네모 패치를 찍어 잰 값을 쌓아 두세요 — 날짜 · 동판 · 바탕 · 배합 g · 망점 % · 잰 값. 같은 배합을 <b>망점 단계(100 · 70 · 40%…)</b>로 찍은 게 있으면 망점 퍼짐까지 맞춰지고, 동판마다 예측 오차(신뢰도)가 나옵니다.</li>
+        <li><b>동판</b>: LPI · 부식 깊이 · 설계 망점 %를 적습니다. 망점 곡선과 막두께는 <b>보정 프로필</b>이 정하고, 프로필이 없는 동판은 입력값이나 다른 동판에서 추정합니다.</li>
+        <li><b>전사 시료</b>: 동판으로 네모 패치를 찍어 잰 값을 쌓아 두세요 — 날짜 · 동판 · 바탕 · 배합 g · 망점 % · 잰 값. 잉크마다 <b>95 · 70 · 40 · 20%</b>처럼 망점을 넓게 찍을수록 프로필이 믿을 만해집니다. SCI로 재는 것을 권장합니다.</li>
         <li><b>분광</b>(선택): 측색기가 400~700 nm 반사율을 내보내면 각 칸의 "분광 붙여넣기"에. 31개(10 nm) · 파장+값 두 열 · 360~740 · 380~780 모두 받습니다.</li>
       </ol></details>
 
@@ -558,7 +561,7 @@
       <button class="cl-btn ghost" id="add-sub">+ 도장 시편</button></div>
 
     <div class="cl-card"><h3>동판 <small>${(L.plates || []).length}개</small></h3>
-      <div class="cl-scroll"><table class="cl-table lib"><thead><tr><th>동판 lot</th><th>LPI</th><th>부식 깊이 µm</th><th>막두께 계수</th><th>50% 망점 → 실제 %</th><th>1도 망점 %</th><th>2도 망점 %</th><th>예측 오차</th><th>메모</th><th></th><th></th></tr></thead><tbody>
+      <div class="cl-scroll"><table class="cl-table lib"><thead><tr><th>동판 lot</th><th>LPI</th><th>부식 깊이 µm</th><th>막두께 계수</th><th>50% 망점 → 실제 %</th><th>1도 망점 %</th><th>2도 망점 %</th><th>예측 오차</th><th>메모</th><th></th></tr></thead><tbody>
       ${(L.plates || []).map((p, i) => {
         const inf = !S.dirty && S.info && S.info.plates ? S.info.plates[p.lot] : null;
         const acc = inf && inf.accuracy[S.mode];
@@ -574,19 +577,22 @@
         <td><input class="num" type="number" step="1" min="0" max="100" data-p="plates.${i}.coverage.2도" data-type="pct" value="${p.coverage && p.coverage["2도"] != null ? r1(p.coverage["2도"] * 100) : ""}"></td>
         <td>${acc ? `<span class="cl-tag ${deClass(acc.dE)}" title="전사 시료 ${acc.n}개를 지금 값으로 예측했을 때의 평균 ΔE (${S.mode.toUpperCase()})">ΔE ${acc.dE.toFixed(2)} · ${acc.n}개</span>` : `<span class="cl-note">${inf && inf.samples ? "—" : "시료 없음"}</span>`}</td>
         <td><input data-p="plates.${i}.note" value="${esc(p.note || "")}"></td>
-        <td><button class="cl-btn ghost sm" data-fit="${esc(p.lot)}">전사 시료로 맞추기</button></td>
         <td><button class="cl-x" data-del="plates.${i}" title="삭제">×</button></td></tr>`;
       }).join("")}
       </tbody></table></div>
-      <p class="cl-note">막두께 계수 · 50% 망점 칸을 비우면 추정합니다 — 막두께는 부식 깊이에 비례(맞춘 동판 기준), 망점 퍼짐은 같은 LPI 동판의 평균. 칸에 마우스를 올리면 추정값과 근거가 보여요.</p>
-      <button class="cl-btn ghost" id="add-plate">+ 동판</button>
-      ${S.fitLot ? fitPanel() : ""}</div>
+      <p class="cl-note">보정 프로필을 적용한 동판은 프로필의 막두께·망점 곡선을 씁니다. 나머지는 입력값, 비우면 추정 — 막두께는 부식 깊이에 비례, 망점 퍼짐은 같은 LPI 동판의 평균. 칸에 마우스를 올리면 근거가 보여요.</p>
+      <button class="cl-btn ghost" id="add-plate">+ 동판</button></div>
+
+    ${viewProfile()}
 
     ${viewTransfers()}
 
     <div class="cl-card"><h3>계산 설정</h3>
       <label class="cl-f xs"><span>Yule–Nielsen n</span><input type="number" step="0.1" min="1" max="10" data-p="settings.yn" data-type="num" value="${esc((L.settings && L.settings.yn) ?? 1)}"></label>
-      <p class="cl-note">망점 패치의 평균색을 낼 때 빛이 잉크 가장자리에서 번지는 정도. 1이면 단순 면적 평균. 동판의 "망점 퍼짐"이 이 효과까지 함께 담으므로 보통 1로 두세요.</p></div>
+      <p class="cl-note">망점 패치의 평균색을 낼 때 빛이 잉크 가장자리에서 번지는 정도. 1이면 단순 면적 평균. 동판의 망점 곡선이 이 효과까지 함께 담으므로 보통 1로 두세요.</p>
+      <label class="cl-f sm"><span>3채널 기저 <em>분광이 없을 때</em></span><select data-p="settings.basis">
+        ${[["xyz", "XYZ (권장)"], ["srgb", "sRGB (예전 방식)"]].map(([v, t]) => `<option value="${v}"${((L.settings && L.settings.basis) || "xyz") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+      <p class="cl-note">XYZ는 진한 노랑·파랑도 잘리지 않습니다. sRGB는 화면 색역 밖 색이 잘려 오차가 커집니다. 바꾸면 보정 프로필을 다시 계산해야 해요.</p></div>
     <div id="spec-panel"></div>`;
   }
 
@@ -645,11 +651,117 @@
       <button class="cl-btn ghost" id="add-tr">+ 전사 시료</button> <span class="cl-note">마지막 줄의 날짜 · 동판 · 바탕 · 배합을 복사해서 새 줄을 만듭니다 (망점 단계 입력용)</span></div>`;
   }
 
-  function fitPanel() {
-    const ff = (S.f.fit = S.f.fit || {});
-    return `<div class="cl-fit"><h4>동판 ${esc(S.fitLot)} — 전사 시료로 맞추기 <small>${esc(S.mode.toUpperCase())} · 저장된 시료 기준</small></h4>
-      <div id="fit-out">${ff.lot === S.fitLot && ff.out ? ff.out : `<p class="cl-note">계산 중…</p>`}</div>
-      <div class="cl-actions"><button class="cl-btn ghost sm" id="fit-close">닫기</button></div></div>`;
+  // ------------------------------------------------------------------ 보정 프로필
+  const SPACE_LABEL = { spec: "분광 31채널", xyz: "3채널 (XYZ)", srgb: "3채널 (sRGB)" };
+  const confClass = (lv) => ({ 좋음: "ok", 보통: "mid", 낮음: "mid", 부족: "ng" }[lv] || "");
+  const pc = (x) => `${r1(x * 100)}%`;
+
+  function viewProfile() {
+    const info = (S.info && S.info.profile) || {};
+    const act = info.active, prev = info.previous;
+    const L = E();
+    const counts = {};
+    (L.transfers || []).forEach((t) => { if (t.plate) counts[t.plate] = (counts[t.plate] || 0) + 1; });
+    const lots = (L.plates || []).map((p) => p.lot).filter(Boolean);
+    const plate = S.prof.plate || (act && act.plate) || [...lots].sort((a, b) => (counts[b] || 0) - (counts[a] || 0))[0] || "";
+    const run = S.prof.run && S.prof.run.plate === plate && S.prof.run.mode === S.mode ? S.prof.run : null;
+    return `<div class="cl-card" id="profile"><h3>보정 프로필 <small>은폐 도막 + 전사 시료로 잉크·동판을 함께 맞추기</small></h3>
+      <div class="cl-prof-active">${act ? `<b>적용 중</b> 동판 ${esc(act.plate)} · ${esc(act.mode.toUpperCase())} · ${esc(SPACE_LABEL[act.space] || act.space)}
+          · 잉크 ${esc(act.inks.join(", ") || "(측정 보정 잉크만)")} · <span class="cl-tag ${confClass(act.confidence.level)}">신뢰도 ${esc(act.confidence.level)}</span>
+          <span class="cl-note">${esc((act.created || "").replace("T", " "))}</span>
+          ${act.stale && act.stale.length ? `<span class="cl-tag mid" title="계산 이후 바뀐 입력">재맞추기 필요 — ${esc(act.stale.join(" · "))}</span>` : ""}
+          <span class="grow"></span><button class="cl-btn ghost sm" id="prof-off">끄기</button>`
+        : `<span class="cl-note">적용한 프로필이 없습니다 — 은폐 도막만 있는 잉크는 프로필을 적용해야 계산됩니다.</span><span class="grow"></span>`}
+        ${prev ? `<button class="cl-btn ghost sm" id="prof-revert" title="${esc(`동판 ${prev.plate} · ${prev.mode.toUpperCase()} · ${(prev.created || "").replace("T", " ")}`)}">${act ? "바로 전 프로필로 되돌리기" : "바로 전 프로필 다시 켜기"}</button>` : ""}</div>
+      <div class="cl-actions">
+        <label class="cl-f sm"><span>동판</span><select id="prof-plate">${lots.map((l) => `<option value="${esc(l)}"${l === plate ? " selected" : ""}>${esc(l)} (시료 ${counts[l] || 0})</option>`).join("")}</select></label>
+        <span class="cl-note">모드: <b>${S.mode.toUpperCase()}</b> (오른쪽 위에서 바꿈)${S.mode === "sce" ? " — 은폐 도막(광택)과 종이 시료(무광)를 SCE로 비교하면 오차가 커요. SCI 권장" : ""}</span>
+        <button class="cl-btn" id="prof-run"${S.dirty || !plate || S.prof.busy ? " disabled" : ""}>${S.prof.busy ? "계산 중…" : "계산 (미리보기)"}</button>
+        ${S.dirty ? `<span class="cl-note bad">저장한 뒤 계산할 수 있어요</span>` : ""}</div>
+      ${S.prof.error ? `<div class="cl-err">${esc(S.prof.error)}</div>` : ""}
+      ${run ? viewRun(run) : `<p class="cl-note">미리보기는 라이브러리를 바꾸지 않습니다. 결과를 보고 [적용]을 눌렀을 때만 저장돼요.</p>`}</div>`;
+  }
+
+  function viewRun(r) {
+    const lv = r.confidence.level;
+    const issues = (r.issues || []).concat();
+    const curve = ((r.plates || {})[r.plate] || {}).tone_curve || [];
+    const valBy = Object.fromEntries((r.validation || []).map((v) => [v.no, v]));
+    const meas = r.measurement_issues || [];
+    const g0 = (r.groups || []).find((g) => g.c_top_range);
+    return `<div class="cl-prof">
+      <div class="cl-prof-head"><span class="cl-tag ${confClass(lv)} big">신뢰도 ${esc(lv)}</span>
+        <span>${esc(SPACE_LABEL[r.space] || r.space)} · 시료 ${r.samples.length}개${r.excluded.length ? ` · 제외 ${r.excluded.length}개` : ""}${r.ok ? ` · 맞춘 오차 평균 ΔE ${(+r.fit_dE_mean).toFixed(2)}` : ""}</span></div>
+      ${r.confidence.reasons.length ? `<ul class="cl-reasons">${r.confidence.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${issues.length ? `<ul class="cl-issues">${issues.map((i) => `<li class="${i.level === "error" ? "ng" : i.level === "warn" ? "mid" : ""}">${esc(i.msg)}</li>`).join("")}</ul>` : ""}
+      ${r.excluded.length ? `<details><summary>제외된 시료 ${r.excluded.length}개</summary><ul>${r.excluded.map((x) => `<li>${x.no}번 — ${esc(x.reason)}</li>`).join("")}</ul></details>` : ""}
+      ${meas.length ? `<details><summary>측정 진단 ${meas.length}건 <small>(${[...new Set(meas.map((m) => ({ display_gamut_outside: "화면 표시", channel_model_invalid: "채널 범위", surface_model_incompatible: "표면 보정" }[m.kind])))].join(" · ")})</small></summary>
+        <ul>${meas.map((m) => `<li class="${m.level === "error" ? "ng" : m.level === "warn" ? "mid" : ""}"><b>${esc(m.what)}</b> — ${esc(m.msg)}</li>`).join("")}</ul></details>` : ""}
+      ${r.ok ? `
+      <div class="cl-prof-grid">
+        <div><h4>망점 곡선 <small>동판 ${esc(r.plate)}</small></h4>
+          <table class="cl-table narrow"><tr><th>설계</th><th>실효 덮임</th></tr>
+          ${curve.map(([d, e]) => `<tr class="mono"><td>${pc(d)}</td><td><b>${pc(e)}</b></td></tr>`).join("")}</table>
+          <p class="cl-note">잰 망점 사이는 직선, ${pc(curve[0][0])} 아래·${pc(curve[curve.length - 1][0])} 위는 0%·100%까지 직선으로 <b>외삽(가정)</b>합니다.
+          ${g0 && g0.c_top_range ? `<br>가장 진한 패치의 실효 덮임은 데이터만으로는 ${pc(g0.c_top_range[0])}~100% 사이에서 정해지지 않습니다.` : ""}</p></div>
+        <div><h4>잉크 <small>잉크 1단위 산란 (채널별)</small></h4>
+          <table class="cl-table narrow"><tr><th>잉크</th><th>산란</th><th>시료</th></tr>
+          ${Object.entries(r.inks).map(([n, v]) => `<tr><td><b>${esc(n)}</b></td><td class="mono">${v.s.length > 3 ? `${v.s[0].toFixed(3)} … ${v.s[v.s.length - 1].toFixed(3)}` : v.s.map((x) => x.toFixed(3)).join(" / ")}</td><td>${v.samples}</td></tr>`).join("")}
+          ${(r.fixed_inks || []).map((n) => `<tr><td>${esc(n)}</td><td colspan="2" class="cl-note">측정 보정 값 그대로</td></tr>`).join("")}</table>
+          <p class="cl-note">막두께는 동판 ${esc(r.plate)} 기준 ×${(+r.plates[r.plate].thickness).toFixed(3)} (상대값, µm 아님)</p></div></div>
+      <h4>시료별 오차 <small>맞춘 오차 · 하나 빼고 예측(검증)</small></h4>
+      <div class="cl-scroll"><table class="cl-table"><thead><tr><th>번호</th><th>잉크</th><th>망점 → 실효</th><th>잰 · 예측</th><th>맞춘 ΔE</th><th>하나 빼고 ΔE</th></tr></thead><tbody>
+      ${r.samples.map((x) => { const v = valBy[x.no] || {}; return `<tr><td>${x.no}</td><td>${esc(x.ink)}</td><td class="mono">${pc(x.design)} → ${pc(x.coverage)}</td>
+        <td><span class="cl-pair">${sw(labToHex(x.measured_lab))}${sw(x.pred_hex)}</span></td>
+        <td class="${deClass(x.dE)}">${x.dE.toFixed(2)}</td>
+        <td>${v.status === "ok" ? `<span class="${deClass(v.dE)}">${v.dE.toFixed(2)}</span>${v.extrapolated ? ` <span class="cl-tag mid">외삽</span>` : ""}` : `<span class="cl-note">평가 불가 — ${esc(v.reason || "")}</span>`}</td></tr>`; }).join("")}
+      </tbody></table></div>
+      ${(r.sensitivity || []).map((x) => `<p class="cl-note">가정 민감도 — ${esc(x.ink)}: 가장 진한 패치의 실효 덮임을 ${pc(x.c_top_range[0])}~100% 중 어디로 보느냐에 따라 ${pc(x.target)} 패치 예측이 ΔE <b>${x.dE_range.toFixed(2)}</b>만큼 달라집니다 (통계적 신뢰구간이 아니라 가정에 따른 범위).</p>`).join("")}
+      <details><summary>가정 · 적용 범위</summary><ul>${r.assumptions.map((a) => `<li>${esc(a)}</li>`).join("")}
+        <li>검증된 바탕: ${esc(r.applicability.substrates.join(", "))} · 망점 ${pc(r.applicability.tones[0])}~${pc(r.applicability.tones[1])}
+          · 신나/경화제/소광제 % ${esc(r.applicability.conditions.map((c) => JSON.parse(c).join("/")).join(", "))}</li></ul></details>
+      <div class="cl-actions">
+        ${lv === "부족" ? `<button class="cl-btn" disabled>적용할 수 없음</button><span class="cl-note bad">위 문제를 먼저 해결해야 합니다</span>`
+          : `${lv === "낮음" ? `<label class="cl-check"><input type="checkbox" id="prof-ack"${S.prof.ack ? " checked" : ""}> 신뢰도가 낮은 것을 알고 적용합니다</label>` : ""}
+             <button class="cl-btn" id="prof-apply"${lv === "낮음" && !S.prof.ack ? " disabled" : ""}>이 프로필 적용</button>
+             <span class="cl-note">적용하면 이 동판의 망점 곡선·막두께와 위 잉크 값이 예측·추천·보정에 쓰입니다. 원본 측정은 바뀌지 않아요.</span>`}</div>` : ""}
+    </div>`;
+  }
+
+  async function runProfile() {
+    const plate = ($("#prof-plate") || {}).value || S.prof.plate;
+    S.prof = { plate, busy: true };
+    render();
+    try {
+      const j = await api("POST", "/api/lab/profile/preview", { mode: S.mode, plate });
+      S.prof = { plate, run: j.run, snapshot: j.snapshot };
+    } catch (e) { S.prof = { plate, error: e.message }; }
+    if (S.tab === "library") render();
+  }
+
+  async function applyProfile() {
+    const r = S.prof.run;
+    try {
+      await api("POST", "/api/lab/profile/apply", { mode: r.mode, plate: r.plate, space: r.space, snapshot: S.prof.snapshot, ack_low: !!S.prof.ack },
+        { "X-Base-Rev": S.rev });
+      await loadLibrary();
+      S.prof = { plate: r.plate };
+      toast("보정 프로필을 적용했습니다 (｡•̀ᴗ-)✧");
+    } catch (e) {
+      if (e.status === 409) { S.prof = { plate: r.plate }; toast(e.message, true); await loadLibrary(); }
+      else toast(e.message, true);
+    }
+    render();
+  }
+
+  async function switchProfile(action) {
+    if (!confirm(action === "off" ? "적용 중인 보정 프로필을 끌까요? (바로 전 프로필로 남아서 다시 켤 수 있어요)" : "바로 전 프로필로 바꿀까요?")) return;
+    try {
+      await api("POST", `/api/lab/profile/${action}`, {}, { "X-Base-Rev": S.rev });
+      await loadLibrary();
+      toast(action === "off" ? "프로필을 껐습니다" : "바로 전 프로필로 바꿨습니다");
+    } catch (e) { toast(e.message, true); if (e.status === 409) await loadLibrary(); }
+    render();
   }
 
   function bindLibrary(root) {
@@ -735,43 +847,13 @@
       const cards = $$(".cl-tr"); cards[cards.length - 1]?.scrollIntoView({ behavior: "smooth", block: "center" });
     };
     $("#tr-filter").onchange = (e) => { S.trFilter = e.target.value; render(); };
-    $$("[data-fit]", root).forEach((b) => (b.onclick = () => {
-      if (S.dirty) { toast("전사 시료로 맞추기는 저장된 라이브러리로 계산합니다 — 먼저 저장해 주세요", true); return; }
-      S.fitLot = b.dataset.fit; S.f.fit = {}; render(); runFit();
-      $(".cl-fit")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }));
-    if (S.fitLot) bindFit();
-  }
-
-  async function runFit() {
-    const ff = S.f.fit, lot = S.fitLot;
-    try {
-      const r = await api("POST", "/api/lab/fit", { mode: S.mode, plate: lot });
-      const pct = (x) => `${r1(x * 100)}%`;
-      ff.lot = lot;
-      ff.out = `<div class="cl-fit-res">
-          <span>막두께 ×${r.start.thickness.toFixed(3)} → <b>×${r.thickness.toFixed(3)}</b></span>
-          <span>50% 망점 ${pct(r.start.dot50)} → <b>${r.gain_fitted ? pct(r.dot50) : `${pct(r.start.dot50)} (망점 단계 시료가 없어 그대로)`}</b></span>
-          <span>평균 ΔE ${r.dE_before.toFixed(2)} → <b class="${deClass(r.dE_after)}">${r.dE_after.toFixed(2)}</b> (시료 ${r.n}개)</span>
-          <button class="cl-btn sm" id="fit-apply" data-t="${r.thickness}" data-d="${r.gain_fitted ? r.dot50 : ""}">이 동판에 적용</button></div>
-        <p class="cl-note">시료별 ΔE (맞추기 전 → 후): ${r.rows.map((no, k) => `${no}번 ${r.per_sample[k].before.toFixed(1)}→<b class="${deClass(r.per_sample[k].after)}">${r.per_sample[k].after.toFixed(1)}</b>`).join(" · ")}
-          ${r.per_sample.some((x) => x.after > 2) ? "<br>맞춘 뒤에도 ΔE가 큰 시료는 측정·입력 실수이거나 잉크 측정값을 다시 볼 필요가 있어요." : ""}</p>
-        ${r.skipped.length ? `<p class="cl-note bad">빠진 시료: ${esc(r.skipped.join(" / "))}</p>` : ""}`;
-    } catch (e) { ff.lot = lot; ff.out = `<div class="cl-err">${esc(e.message)}</div>`; }
-    if (S.tab === "library" && S.fitLot === lot) { const o = $("#fit-out"); if (o) { o.innerHTML = ff.out; bindFit(); } }
-  }
-
-  function bindFit() {
-    $("#fit-close").onclick = () => { S.fitLot = null; render(); };
-    const b = $("#fit-apply");
-    if (!b) return;
-    b.onclick = () => {
-      const p = (E().plates || []).find((x) => x.lot === S.fitLot);
-      if (!p) return;
-      p.thickness = +b.dataset.t;
-      if (b.dataset.d) p.dot50 = +b.dataset.d;
-      S.f.fit = {}; S.fitLot = null; markDirty(); render(); toast("적용했습니다 — 저장을 눌러야 반영돼요");
-    };
+    const pp = $("#prof-plate");
+    if (pp) pp.onchange = () => { S.prof = { plate: pp.value }; render(); };
+    if ($("#prof-run")) $("#prof-run").onclick = runProfile;
+    if ($("#prof-apply")) $("#prof-apply").onclick = applyProfile;
+    if ($("#prof-ack")) $("#prof-ack").onchange = (e) => { S.prof.ack = e.target.checked; render(); };
+    if ($("#prof-off")) $("#prof-off").onclick = () => switchProfile("off");
+    if ($("#prof-revert")) $("#prof-revert").onclick = () => switchProfile("revert");
   }
 
   function openSpec(path) {

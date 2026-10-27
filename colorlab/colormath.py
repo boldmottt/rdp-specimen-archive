@@ -93,6 +93,25 @@ def in_gamut(lab, tol=0.002):
     return all(-tol <= c <= 1 + tol for c in lab_to_rgb_lin(lab))
 
 
+# ---------------------------------------------------------------- 3채널 계산 기저
+# 분광이 없을 때 반사율을 채널 3개로 근사한다.
+#   xyz  — X/Xn, Y/Yn, Z/Zn. 실제 반사율이면 언제나 0 이상이라 진한 노랑·파랑도 잘리지 않는다 (기본).
+#   srgb — 선형 sRGB. 화면 색역 밖 색(진한 노랑 등)은 음수가 나와 계산에서 잘린다 (예전 방식).
+BASES = ("xyz", "srgb")
+
+
+def lab_to_tri(lab, basis="xyz"):
+    if basis == "srgb":
+        return lab_to_rgb_lin(lab)
+    return tuple(v / w for v, w in zip(lab_to_xyz(lab), WHITE))
+
+
+def tri_to_lab(t, basis="xyz"):
+    if basis == "srgb":
+        return rgb_lin_to_lab(t)
+    return xyz_to_lab(tuple(v * w for v, w in zip(t, WHITE)))
+
+
 # ---------------------------------------------------------------- 분광
 def spectrum_to_xyz(refl):
     """반사율 31개(400~700 nm) → XYZ (D65, 2°)."""

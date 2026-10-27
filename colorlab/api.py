@@ -11,6 +11,7 @@ import threading
 from datetime import datetime
 
 from . import colormath as cm
+from . import fit as fitmod
 from . import model
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -161,10 +162,39 @@ def validate(doc):
         raise model.ModelError("Yule–Nielsen n은 1~10")
     cards = {k: _check_meas((st.get("cards") or {}).get(k), f"기본 {t}") for k, t in (("white", "흰 카드"), ("black", "검정 카드"))}
     settings = {"yn": yn}
+    if st.get("basis") not in (None, ""):
+        if st["basis"] not in cm.BASES:
+            raise model.ModelError(f"3채널 기저는 {' / '.join(cm.BASES)} 중 하나")
+        settings["basis"] = st["basis"]
     if any(cards.values()):
         settings["cards"] = {k: v for k, v in cards.items() if v}
+    fits = doc.get("fits") or {}
     return {"schema": "colorlab/v1", "inks": inks, "substrates": subs, "plates": plates, "transfers": transfers,
-            "settings": settings}
+            "settings": settings, "fits": {"active": _check_run(fits.get("active")), "previous": _check_run(fits.get("previous"))}}
+
+
+def _check_run(run):
+    """저장된 보정 프로필의 계산에 쓰이는 부분만 형식 검사 (나머지 진단 기록은 그대로 둔다)."""
+    if not run:
+        return None
+    if not isinstance(run, dict) or run.get("mode") not in model.MODES or not isinstance(run.get("plates"), dict):
+        raise model.ModelError("보정 프로필 형식 오류")
+    n = model.n_channels(run.get("space"))
+    if run.get("space") not in ("spec",) + cm.BASES:
+        raise model.ModelError("보정 프로필 계산 공간 오류")
+    for name, v in (run.get("inks") or {}).items():
+        if not isinstance(v, dict) or len(v.get("k") or []) != n or len(v.get("s") or []) != n:
+            raise model.ModelError(f"보정 프로필 잉크 {name} 형식 오류")
+        for x in list(v["k"]) + list(v["s"]):
+            if _num(x, f"보정 프로필 {name}") < 0:
+                raise model.ModelError(f"보정 프로필 잉크 {name}: 음수")
+    for lot, v in run["plates"].items():
+        if _num(v.get("thickness"), f"보정 프로필 {lot} 막두께") <= 0:
+            raise model.ModelError(f"보정 프로필 {lot} 막두께 오류")
+        for d, e in v.get("tone_curve") or []:
+            if not (0 <= _num(d, "망점") <= 1 and 0 <= _num(e, "망점") <= 1):
+                raise model.ModelError(f"보정 프로필 {lot} 망점 곡선 오류")
+    return run
 
 
 def _check_layer(x, what):
@@ -225,7 +255,7 @@ def transfer_sample(t, mode):
                                           for k in ("thinner", "hardener", "matting")}}
 
     s = {"substrate": t["substrate"], "layer1": rec(t["layer1"]), "coverage": {"1도": float(t["layer1"].get("tone", 100)) / 100},
-         "measured": list(lab)}
+         "measured": t.get("measured"), "measured_lab": list(lab)}      # 원본 측정(분광 포함)도 그대로
     if t.get("layer2"):
         s["layer2"] = rec(t["layer2"])
         s["coverage"]["2도"] = float(t["layer2"].get("tone", 100)) / 100
@@ -271,12 +301,13 @@ def describe_library(doc, lib=None):
     for ink in doc.get("inks") or []:
         info = {"name": ink["name"], "clear": bool(ink.get("clear")), "status": {}}
         for mode in model.MODES:
-            for space in ("rgb", "spec"):
+            for key, space in (("tri", lib.basis), ("spec", "spec")):
                 try:
                     p = lib.ink_params(ink["name"], mode, space)
-                    info["status"][f"{mode}_{space}"] = {"ok": True, "residual": round(p["residual"], 5), "used": p.get("used", [])}
+                    info["status"][f"{mode}_{key}"] = {"ok": True, "residual": round(p["residual"], 5),
+                                                       "used": p.get("used", []), "source": p.get("source")}
                 except model.ModelError as e:
-                    info["status"][f"{mode}_{space}"] = {"ok": False, "msg": str(e)}
+                    info["status"][f"{mode}_{key}"] = {"ok": False, "msg": str(e)}
         cal = ink.get("cal") or {}
         info["swatch"] = {k: _swatch(cal.get(k)) for k in MEAS_KEYS}
         inks.append(info)
@@ -293,11 +324,10 @@ def describe_library(doc, lib=None):
             if smp is None:
                 continue
             try:
-                t_, g_, _ = model._plate(lib, t.get("plate") or None)
-                lab = model.sample_color(lib, smp, mode, t_, g_)
-                de = cm.delta_e2000(lab, smp["measured"])
+                lab = model.sample_color(lib, smp, mode, t.get("plate") or None)
+                de = cm.delta_e2000(lab, smp["measured_lab"])
                 row[mode] = {"dE": round(de, 2), "hex": cm.lab_to_hex(lab), "lab": [round(x, 2) for x in lab],
-                             "diff": cm.describe(cm.lab_parts(smp["measured"], lab))}
+                             "diff": cm.describe(cm.lab_parts(smp["measured_lab"], lab))}
                 per_plate.setdefault((t.get("plate") or "", mode), []).append(de)
             except model.ModelError as e:
                 row[mode] = {"error": str(e)}
@@ -310,7 +340,21 @@ def describe_library(doc, lib=None):
         plates[p["lot"]] = {"thickness": round(info["thickness"], 3), "thickness_src": info["thickness_src"],
                             "dot50": round(info["dot50"], 4), "gain_src": info["gain_src"], "accuracy": acc,
                             "samples": sum(1 for t in doc.get("transfers") or [] if t.get("plate") == p["lot"])}
-    return {"inks": inks, "substrates": subs, "plates": plates, "transfers": trs}
+    fits = doc.get("fits") or {}
+    profile = {"active": _run_summary(fits.get("active"), doc), "previous": _run_summary(fits.get("previous"), None),
+               "basis": lib.basis}
+    return {"inks": inks, "substrates": subs, "plates": plates, "transfers": trs, "profile": profile}
+
+
+def _run_summary(run, doc):
+    if not run:
+        return None
+    out = {k: run.get(k) for k in ("id", "created", "mode", "space", "plate", "confidence", "assumptions", "applicability")}
+    out["inks"] = sorted((run.get("inks") or {}).keys())
+    out["tone_curve"] = ((run.get("plates") or {}).get(run.get("plate")) or {}).get("tone_curve")
+    if doc is not None:
+        out["stale"] = fitmod.stale_reasons(run, doc)
+    return out
 
 
 def _sub_ref(doc, s):
@@ -401,34 +445,40 @@ def _tone(body):
     return v / 100.0
 
 
-def fit_plate_from_library(lib, doc, lot, mode):
-    """저장된 전사 시료 중 이 동판 것으로 막두께 · 망점 퍼짐을 맞춘다."""
-    if not lot or str(lot) not in lib.plates:
-        raise model.ModelError("동판을 고르세요")
-    rows = [t for t in doc.get("transfers") or [] if t.get("plate") == lot]
-    samples, idx, skipped = [], [], []
-    for i, t in enumerate(doc.get("transfers") or []):
-        if t.get("plate") != lot:
-            continue
-        smp = transfer_sample(t, mode)
-        if smp is None:
-            skipped.append(f"{i + 1}번: {mode.upper()} 값 없음")
-            continue
-        try:                                    # 바탕·잉크가 라이브러리에 있는지 미리 확인
-            model.sample_color(lib, smp, mode, 1.0, 1.0)
-        except model.ModelError as e:
-            skipped.append(f"{i + 1}번: {e}")
-            continue
-        samples.append(smp)
-        idx.append(i + 1)
-    if not samples:
-        raise model.ModelError(f"동판 {lot}의 전사 시료 중 계산할 수 있는 것이 없습니다"
-                               + (f" ({' / '.join(skipped)})" if skipped else f" (저장된 시료 {len(rows)}개)"))
-    info = lib.plate_info(lot)
-    r = model.fit_plate(lib, samples, mode=mode, start=(info["thickness"], info["gamma"]))
-    r.update({"lot": lot, "rows": idx, "skipped": skipped,
-              "start": {"thickness": round(info["thickness"], 3), "dot50": round(info["dot50"], 4)}})
-    return r
+def apply_profile(data_root, backup_dir, body, base_rev):
+    """보정 프로필 적용: 지금 저장된 라이브러리로 다시 계산해서, 미리보기 때와 입력이 같을 때만 저장한다."""
+    with _guard:
+        doc = load_library(data_root)
+    if (doc.get("updatedAt") or "") != (base_rev or ""):
+        return 409, {"ok": False, "conflict": True, "message": "라이브러리가 그사이 바뀌었습니다 — 다시 계산해 주세요"}
+    run = fitmod.run_profile(doc, mode=body.get("mode") or "sci", plate=body.get("plate"), space=body.get("space"))
+    if fitmod.fingerprint(run["snapshot"]) != body.get("snapshot"):
+        return 409, {"ok": False, "conflict": True, "message": "미리보기 이후 입력이 바뀌었습니다 — 다시 계산해 주세요"}
+    level = run["confidence"]["level"]
+    if not run["ok"] or level == "부족":
+        raise model.ModelError("적용할 수 없는 결과입니다: " + " / ".join(run["confidence"]["reasons"]))
+    if level == "낮음" and not body.get("ack_low"):
+        raise model.ModelError("신뢰도가 낮은 결과입니다 — 확인 표시 후 적용해 주세요")
+    fits = doc.get("fits") or {}
+    doc["fits"] = {"active": run, "previous": fits.get("active") or fits.get("previous")}
+    code, r = save_library(data_root, backup_dir, doc, doc.get("updatedAt"))
+    return code, {**r, "id": run.get("id")}
+
+
+def switch_profile(data_root, backup_dir, action, base_rev):
+    """revert: 바로 전 프로필로 되돌리기 · off: 프로필 끄기 (끈 것은 '바로 전'으로 남는다)."""
+    with _guard:
+        doc = load_library(data_root)
+    fits = doc.get("fits") or {}
+    if action == "revert":
+        if not fits.get("previous"):
+            raise model.ModelError("되돌릴 이전 프로필이 없습니다")
+        doc["fits"] = {"active": fits["previous"], "previous": fits.get("active")}
+    else:
+        if not fits.get("active"):
+            raise model.ModelError("켜져 있는 프로필이 없습니다")
+        doc["fits"] = {"active": None, "previous": fits["active"]}
+    return save_library(data_root, backup_dir, doc, base_rev)
 
 
 def handle(method, path, query, body, ctx):
@@ -482,8 +532,13 @@ def handle(method, path, query, body, ctx):
                               under=body.get("under") or None, plate=body.get("plate"),
                               change_weight=_num(body.get("change_weight", 0.5), "변경 벌점"), tone=_tone(body))
             return 200, {"ok": True, **r}
-        if path == "/api/lab/fit":
-            return 200, {"ok": True, **fit_plate_from_library(lib, load_library(ctx["data"]), body.get("plate"), mode)}
+        if path == "/api/lab/profile/preview":
+            run = fitmod.run_profile(load_library(ctx["data"]), mode=mode, plate=body.get("plate"), space=body.get("space"))
+            return 200, {"ok": True, "run": run, "snapshot": fitmod.fingerprint(run["snapshot"])}
+        if path == "/api/lab/profile/apply":
+            return apply_profile(ctx["data"], ctx["backup"], body, ctx.get("rev"))
+        if path in ("/api/lab/profile/revert", "/api/lab/profile/off"):
+            return switch_profile(ctx["data"], ctx["backup"], path.rsplit("/", 1)[1], ctx.get("rev"))
         return 404, {"ok": False, "error": "not found"}
     except model.ModelError as e:
         return 400, {"ok": False, "error": str(e)}

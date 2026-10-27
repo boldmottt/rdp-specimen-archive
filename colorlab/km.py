@@ -57,7 +57,9 @@ def r_inf(kx, sx):
 
 
 # ---------------------------------------------------------------- 최적화 (Nelder–Mead)
-def nelder_mead(f, x0, step=0.5, iters=400, tol=1e-10):
+def nelder_mead(f, x0, step=0.5, iters=400, tol=1e-10, xtol=1e-6):
+    """멈춤 조건: 꼭짓점들의 값 차이 < tol 이면서 꼭짓점들이 xtol 안으로 모였을 때.
+    (값만 보면 시작 꼭짓점들의 값이 우연히 같을 때 곧바로 멈춰 버린다)"""
     n = len(x0)
     pts = [list(x0)]
     for i in range(n):
@@ -69,7 +71,7 @@ def nelder_mead(f, x0, step=0.5, iters=400, tol=1e-10):
         order = sorted(range(n + 1), key=lambda i: vals[i])
         pts = [pts[i] for i in order]
         vals = [vals[i] for i in order]
-        if abs(vals[-1] - vals[0]) < tol:
+        if abs(vals[-1] - vals[0]) < tol and max(abs(p[j] - pts[0][j]) for p in pts[1:] for j in range(n)) < xtol:
             break
         cen = [sum(p[j] for p in pts[:-1]) / n for j in range(n)]
         xr = [cen[j] + (cen[j] - pts[-1][j]) for j in range(n)]

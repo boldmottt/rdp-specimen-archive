@@ -17,7 +17,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import server  # noqa: E402
-from colorlab import api, colormath as cm, km, model, synth  # noqa: E402
+from colorlab import api, colormath as cm, fit, km, model, synth  # noqa: E402
 
 PCT = {"hardener_pct": 20, "thinner_pct": 30, "matting_pct": 0}
 
@@ -70,7 +70,7 @@ class EngineTests(unittest.TestCase):
         for mode in ("sci", "sce"):
             sub = synth._lab_mode((38.0, -0.6, -2.5), mode)
             r = model.predict(self.lib, "C 1000", rec, mode=mode)
-            self.assertEqual(r["space"], "rgb")
+            self.assertEqual(r["space"], "xyz")
             self.assertLess(cm.delta_e2000(r["regions"]["layer1"]["lab"], synth.true_color(sub, rec, mode)), 0.05)
 
     def test_two_layers_and_coverage(self):
@@ -105,20 +105,6 @@ class EngineTests(unittest.TestCase):
         after = synth.true_color((72.0, -0.8, 1.5), recipe(r["inks"]), thick=thick)
         self.assertLess(cm.delta_e2000(after, target), 0.5)
         self.assertIn("YE +", r["change_text"])
-
-    def test_fit_plate(self):
-        samples = []
-        for inks in ({"WH": 20, "YE": 6}, {"BK": 3, "MT": 30}, {"RD": 5, "WH": 10}):
-            samples.append({"substrate": "C 1000", "layer1": recipe(inks),
-                            "measured": synth.true_color((38.0, -0.6, -2.5), recipe(inks), thick=1.3)})
-        r = model.fit_plate(self.lib, samples)
-        self.assertAlmostEqual(r["thickness"], 1.3, delta=0.02)
-        self.assertLess(r["dE_after"], r["dE_before"])
-        self.assertLess(r["dE_after"], 0.1)
-        # 이미 맞는 시료면 1.0 그대로
-        same = [{"substrate": "C 1000", "layer1": recipe({"WH": 20}),
-                 "measured": synth.true_color((38.0, -0.6, -2.5), recipe({"WH": 20}))}]
-        self.assertEqual(model.fit_plate(self.lib, same)["thickness"], 1.0)
 
     def test_errors_are_model_errors(self):
         with self.assertRaises(model.ModelError):
@@ -179,13 +165,13 @@ class SolidAndPlateTests(unittest.TestCase):
     def test_solid_plus_one_print_recovers_truth(self):
         doc = synth.library()
         for ink in doc["inks"]:
-            if ink.get("cal"):
+            if ink["name"] in synth.TRUTH:
                 for k in ("black_bg", "on_black"):
                     ink["cal"].pop(k)
         lib = model.Library(doc)
         for name in ("WH", "YE", "BK", "BL"):
             for mode in ("sci", "sce"):
-                p = lib.ink_params(name, mode, "rgb")
+                p = lib.ink_params(name, mode, "xyz")
                 self.assertEqual(p["used"], ["on_white", "solid"])
                 for got, want in zip(p["k"] + p["s"], synth.TRUTH[name]["k"] + synth.TRUTH[name]["s"]):
                     self.assertAlmostEqual(got, want, delta=max(1e-3, want * 1e-3))
@@ -196,10 +182,10 @@ class SolidAndPlateTests(unittest.TestCase):
         for k in ("black_bg", "on_black", "solid"):
             cal.pop(k)
         with self.assertRaisesRegex(model.ModelError, "하나 더 필요"):
-            model.Library(doc).ink_params("WH", "sci", "rgb")
+            model.Library(doc).ink_params("WH", "sci", "xyz")
         doc["inks"][0]["cal"] = {"solid": cal["white_bg"]}
-        with self.assertRaisesRegex(model.ModelError, "솔리드만으로는"):
-            model.Library(doc).ink_params("WH", "sci", "rgb")
+        with self.assertRaisesRegex(model.ModelError, "은폐 도막만으로는.*보정 프로필"):
+            model.Library(doc).ink_params("WH", "sci", "xyz")
 
     def test_effective_tone(self):
         self.assertEqual(km.effective_tone(0, 2), 0)
@@ -231,28 +217,6 @@ class SolidAndPlateTests(unittest.TestCase):
             self.assertLess(cm.delta_e2000(r["average"]["lab"], want), 0.05)
             self.assertAlmostEqual(r["average"]["tone"]["1도"][1], km.effective_tone(0.4, 1.6), places=3)
 
-    def test_fit_from_tone_steps_recovers_plate(self):
-        doc = api.validate(synth.library())
-        lib = model.Library(doc)
-        r = api.fit_plate_from_library(lib, doc, "DEMO_001", "sci")
-        self.assertTrue(r["gain_fitted"])
-        self.assertAlmostEqual(r["thickness"], synth.DEMO_PLATE["thick"], delta=0.01)
-        self.assertAlmostEqual(r["gamma"], synth.DEMO_PLATE["gamma"], delta=0.02)
-        self.assertLess(r["dE_after"], 0.05)
-        self.assertGreater(r["dE_before"], 1.0)
-        # 100%만 있으면 막두께만 맞춘다
-        doc["transfers"] = [t for t in doc["transfers"] if t["layer1"]["tone"] == 100]
-        r = api.fit_plate_from_library(model.Library(doc), doc, "DEMO_001", "sci")
-        self.assertFalse(r["gain_fitted"])
-        self.assertAlmostEqual(r["thickness"], synth.DEMO_PLATE["thick"], delta=0.01)
-
-    def test_fit_skips_unusable_samples(self):
-        doc = api.validate(synth.library())
-        doc["transfers"][0]["substrate"] = "없는바탕"
-        r = api.fit_plate_from_library(model.Library(doc), doc, "DEMO_001", "sci")
-        self.assertEqual(r["n"], 8)
-        self.assertIn("1번", r["skipped"][0])
-
     def test_recommend_and_correct_on_tone_patch(self):
         doc = synth.library()
         doc["plates"][0].update(thickness=1.15, dot50=km.effective_tone(0.5, 1.6))
@@ -277,8 +241,226 @@ class SolidAndPlateTests(unittest.TestCase):
         doc["plates"][0].update(thickness=1.15, dot50=km.effective_tone(0.5, 1.6))
         info = api.describe_library(doc)
         self.assertLess(info["plates"]["DEMO_001"]["accuracy"]["sci"]["dE"], 0.05)
-        self.assertEqual(len(info["transfers"]), 9)
+        self.assertEqual(len(info["transfers"]), 13)
         self.assertIn("dE", info["transfers"][0]["sce"])
+
+
+class FoundationTests(unittest.TestCase):
+    """리뷰 반영: 최적화 조기 종료 · 3채널 기저 · 측정 진단."""
+
+    def test_nelder_mead_equal_start_values(self):
+        # 시작 꼭짓점 값이 우연히 모두 같아도 곧바로 멈추면 안 된다
+        x, v = km.nelder_mead(lambda p: (p[0] - 0.5) ** 2 + 0.0 * p[1], [0.0, 0.0], step=1.0)
+        self.assertAlmostEqual(x[0], 0.5, places=4)
+
+    def test_xyz_basis_keeps_strong_yellow(self):
+        yellow = (78.0, 18.0, 88.0)                    # 화면 sRGB 밖의 진한 노랑 (합성값)
+        self.assertTrue(any(c < 0 for c in cm.lab_to_tri(yellow, "srgb")))
+        t = cm.lab_to_tri(yellow, "xyz")
+        self.assertTrue(all(0 <= c <= 1 for c in t))
+        self.assertLess(cm.delta_e76(cm.tri_to_lab(t, "xyz"), yellow), 1e-9)
+
+    def test_measurement_diagnosis_separates_display_and_channel(self):
+        m = {"sci": [78.0, 18.0, 88.0]}
+        kinds = {d["kind"] for d in fit.diagnose_measurement(m, "sci", "xyz", "노랑")}
+        self.assertEqual(kinds, {"display_gamut_outside"})          # 표시 문제일 뿐 계산은 정상
+        kinds = {d["kind"] for d in fit.diagnose_measurement(m, "sci", "srgb", "노랑")}
+        self.assertIn("channel_model_invalid", kinds)               # sRGB 기저에서는 계산 문제
+        dark = {"sci": [22.0, 0.5, 0.5]}                            # Y≈3.6% < SCI 정반사 가정 4%
+        kinds = {d["kind"] for d in fit.diagnose_measurement(dark, "sci", "xyz", "검정")}
+        self.assertIn("surface_model_incompatible", kinds)
+
+    def test_predict_keeps_full_precision(self):
+        lib = model.Library(synth.library())
+        r = model.predict(lib, "C 1000", recipe({"WH": 20, "YE": 6}))
+        self.assertNotEqual(r["regions"]["layer1"]["lab"][0], round(r["regions"]["layer1"]["lab"][0], 2))
+
+    def test_transfer_sample_keeps_spectrum(self):
+        t = {"substrate": "흰 카드", "layer1": {"inks": {"Y2": 60}, "tone": 80}, "thinner_pct": 30, "hardener_pct": 20,
+             "measured": {"sci": [80, 5, 40], "sci_spec": [0.5] * 31}}
+        smp = api.transfer_sample(t, "sci")
+        self.assertEqual(smp["measured"]["sci_spec"], [0.5] * 31)
+        self.assertEqual(smp["measured_lab"], [80.0, 5.0, 40.0])
+
+
+class ProfileTests(unittest.TestCase):
+    """보정 프로필: 은폐 도막 + 망점 패치로 잉크·동판을 함께 맞춘다."""
+
+    def setUp(self):
+        self.doc = api.validate(synth.library())
+
+    def test_solid_only_ink_recovers_truth(self):
+        r = fit.run_profile(self.doc, "sci", "DEMO_002")
+        self.assertTrue(r["ok"])
+        self.assertEqual(list(r["inks"]), ["Y2"])
+        for got, want in zip(r["inks"]["Y2"]["s"], synth.SOLID_ONLY["Y2"]["s"]):
+            self.assertAlmostEqual(got, want, delta=0.01)
+        truth = dict((d, e) for d, e in synth.DEMO_PROFILE["curve"])
+        for d, e in r["plates"]["DEMO_002"]["tone_curve"]:
+            self.assertAlmostEqual(e, truth[d], delta=0.003)
+        self.assertLess(r["fit_dE_mean"], 0.05)
+        self.assertEqual(r["plates"]["DEMO_002"]["thickness"], 1.0)  # 기준 동판
+        self.assertIn("상대값", r["assumptions"][0])
+
+    def test_steep_curve_is_not_trusted_blindly(self):
+        # 80%를 빼고 맞추면 60%·95% 사이 직선으로는 급하게 메워지는 80%를 못 맞춘다 → 정직하게 크게 나와야 함
+        r = fit.run_profile(self.doc, "sci", "DEMO_002")
+        v = {x["no"]: x for x in r["validation"]}
+        no80 = next(x["no"] for x in r["samples"] if x["design"] == 0.8)
+        self.assertGreater(v[no80]["dE"], 2.0)
+        self.assertNotEqual(r["confidence"]["level"], "좋음")
+
+    def test_measured_inks_fit_thickness_and_curve(self):
+        r = fit.run_profile(self.doc, "sci", "DEMO_001")
+        self.assertEqual(r["inks"], {})
+        self.assertIn("WH", r["fixed_inks"])
+        self.assertAlmostEqual(r["plates"]["DEMO_001"]["thickness"], synth.DEMO_PLATE["thick"], delta=0.01)
+        for d, e in r["plates"]["DEMO_001"]["tone_curve"]:
+            self.assertAlmostEqual(e, km.effective_tone(d, synth.DEMO_PLATE["gamma"]), delta=0.003)
+        self.assertEqual(r["confidence"]["level"], "좋음")
+
+    def test_loo_does_not_use_left_out_sample(self):
+        doc = self.doc
+        samples, _, inks = fit.collect(doc, "sci", "DEMO_002", "xyz")
+        full = fit._fit(samples, inks, "xyz", "sci", 1.0)
+        val = fit.loo(samples, inks, "xyz", "sci", 1.0, full)
+        j = 1
+        rest = samples[:j] + samples[j + 1:]
+        f = fit._fit(rest, inks, "xyz", "sci", 1.0, warm=full, outer=30)
+        lab, _, _ = fit.predict_sample(samples[j], inks, f, "xyz", "sci", 1.0, curve=fit._curve(f["c"]))
+        self.assertAlmostEqual(val[j]["dE"], round(cm.delta_e2000(lab, samples[j]["lab"]), 3), places=3)
+
+    def test_single_sample_ink_is_unevaluable(self):
+        doc = self.doc
+        doc["transfers"] = [t for t in doc["transfers"] if t["plate"] != "DEMO_002"] + synth.profile_transfers(tones=(80,))
+        r = fit.run_profile(doc, "sci", "DEMO_002")
+        self.assertEqual(r["validation"][0]["status"], "unevaluable")
+        self.assertEqual(r["confidence"]["level"], "부족")
+        self.assertIn("single_tone", {i["kind"] for i in r["issues"]})
+
+    def test_physical_conflict_is_reported(self):
+        doc = self.doc
+        y2 = next(i for i in doc["inks"] if i["name"] == "Y2")
+        y2["cal"]["solid"] = {"sci": [93.0, -1.0, 12.0], "sce": [92.0, -1.0, 12.5]}   # 은폐 도막이 패치보다 연함
+        r = fit.run_profile(doc, "sci", "DEMO_002")
+        self.assertIn("physical_conflict", {i["kind"] for i in r["issues"]})
+        self.assertEqual(r["confidence"]["level"], "부족")
+
+    def test_unidentifiable_when_substrate_equals_opaque(self):
+        doc = self.doc
+        y2 = next(i for i in doc["inks"] if i["name"] == "Y2")
+        y2["cal"]["solid"] = json.loads(json.dumps(doc["settings"]["cards"]["white"]))
+        r = fit.run_profile(doc, "sci", "DEMO_002")
+        self.assertIn("unidentifiable_thickness", {i["kind"] for i in r["issues"]})
+
+    def test_mixtures_and_two_layers_are_excluded_with_reason(self):
+        doc = self.doc
+        extra = json.loads(json.dumps(doc["transfers"][-1]))
+        extra["layer1"]["inks"] = {"Y2": 50, "WH": 10}
+        extra2 = json.loads(json.dumps(doc["transfers"][-1]))
+        extra2["layer2"] = {"inks": {"BK": 5}, "tone": 100}
+        doc["transfers"] += [extra, extra2]
+        r = fit.run_profile(doc, "sci", "DEMO_002")
+        reasons = {x["no"]: x["reason"] for x in r["excluded"]}
+        self.assertEqual(len(r["samples"]), 5)                      # Y2 + WH 혼합: WH는 측정 보정이라 함께 쓸 수 있음
+        self.assertIn("2도", reasons[len(doc["transfers"])])
+
+    def test_spectral_profile(self):
+        wl = cm.WAVELENGTHS
+        k_over_s = [0.02 + 6.0 * math.exp(-((w - 430) / 45) ** 2) for w in wl]
+        a, b = math.log(0.5), 0.4
+        s_true = [math.exp(a + b * (w - 550) / 150) for w in wl]
+        k_true = [r * x for r, x in zip(k_over_s, s_true)]
+        paper = [0.86 - 0.0005 * i for i in range(31)]
+        rinf = [km.to_measured(km.r_inf(k, s)) for k, s in zip(k_true, s_true)]
+        w_, rel = 60 / 72, model.film_thickness(72 / 60, 18 / 60)
+        transfers = []
+        for tone, cov in ((95, 0.995), (80, 0.95), (60, 0.72), (40, 0.47)):
+            f = [km.to_measured(km.layer(km.to_internal(p), k * w_ * rel, s * w_ * rel)) for p, k, s in zip(paper, k_true, s_true)]
+            transfers.append({"date": "", "plate": "P", "substrate": "종이", "layer1": {"inks": {"Y": 60}, "tone": tone},
+                              "thinner_pct": 30, "hardener_pct": 20, "matting_pct": 0,
+                              "measured": {"sci_spec": [(1 - cov) * p + cov * x for p, x in zip(paper, f)]}})
+        doc = api.validate({"inks": [{"name": "Y", "cal": {"solid": {"sci_spec": rinf}}}],
+                            "substrates": [{"code": "종이", "sci_spec": paper}], "plates": [{"lot": "P"}],
+                            "transfers": transfers})
+        r = fit.run_profile(doc, "sci", "P")
+        self.assertEqual(r["space"], "spec")
+        self.assertLess(r["fit_dE_mean"], 0.05)
+        self.assertAlmostEqual(r["inks"]["Y"]["s"][0], s_true[0], delta=0.01 * s_true[0])
+        self.assertAlmostEqual(r["inks"]["Y"]["s"][-1], s_true[-1], delta=0.01 * s_true[-1])
+
+
+class ProfileStoreTests(unittest.TestCase):
+    """적용 · 재맞추기 필요 · 충돌 · 저장 유지."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="lab-prof-")
+        self.backup = os.path.join(self.dir, "_backup")
+        api.save_library(self.dir, self.backup, synth.library(), "")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def ctx(self):
+        return {"data": self.dir, "backup": self.backup, "patterns": lambda: [], "worklog": None,
+                "rev": api.load_library(self.dir)["updatedAt"]}
+
+    def preview(self, plate="DEMO_002"):
+        st, j = api.handle("POST", "/api/lab/profile/preview", {}, {"mode": "sci", "plate": plate}, self.ctx())
+        self.assertEqual(st, 200)
+        return j
+
+    def test_preview_does_not_change_predictions(self):
+        before = api.load_library(self.dir)
+        self.preview()
+        self.assertEqual(api.load_library(self.dir), before)
+        st, j = api.handle("POST", "/api/lab/predict", {}, {"substrate": "흰 카드", "layer1": recipe({"Y2": 60})}, self.ctx())
+        self.assertEqual(st, 400)
+
+    def test_apply_saves_snapshot_and_survives_reload(self):
+        j = self.preview()
+        st, r = api.handle("POST", "/api/lab/profile/apply", {}, {"mode": "sci", "plate": "DEMO_002", "snapshot": j["snapshot"]}, self.ctx())
+        self.assertEqual(st, 200)
+        doc = api.load_library(self.dir)
+        run = doc["fits"]["active"]
+        self.assertEqual(run["id"], r["id"])
+        self.assertIn("transfers", run["snapshot"])
+        self.assertEqual(fit.stale_reasons(run, doc), [])
+        # 시료를 고치면 '재맞추기 필요' (자동으로 다시 계산하지는 않음)
+        doc["transfers"][-1]["measured"]["sci"][0] += 1
+        self.assertIn("전사 시료 수정", fit.stale_reasons(run, doc))
+        doc["transfers"].append(json.loads(json.dumps(doc["transfers"][-1])))
+        self.assertTrue(any("추가" in x for x in fit.stale_reasons(run, doc)))
+        y2 = next(i for i in doc["inks"] if i["name"] == "Y2")
+        y2["cal"]["solid"]["sci"][0] += 1
+        self.assertIn("잉크(은폐 도막·측정) 변경", fit.stale_reasons(run, doc))
+        # 이 동판 시료와 상관없는 바탕을 고친 건 영향 없음 (DEMO_002 시료는 모두 흰 카드)
+        fresh = api.load_library(self.dir)
+        fresh["substrates"][0]["sci"][0] += 1
+        self.assertEqual(fit.stale_reasons(run, fresh), [])
+        fresh["settings"]["cards"]["white"]["sci"][0] += 0.5
+        self.assertIn("계산 설정·기본 카드값 변경", fit.stale_reasons(run, fresh))
+
+    def test_apply_refuses_changed_input(self):
+        j = self.preview()
+        doc = api.load_library(self.dir)
+        doc["transfers"][-1]["measured"]["sci"][0] += 2
+        api.save_library(self.dir, self.backup, doc, doc["updatedAt"])
+        st, r = api.handle("POST", "/api/lab/profile/apply", {}, {"mode": "sci", "plate": "DEMO_002", "snapshot": j["snapshot"]}, self.ctx())
+        self.assertEqual(st, 409)
+        self.assertIsNone(api.load_library(self.dir)["fits"]["active"])
+
+    def test_low_confidence_needs_ack(self):
+        doc = api.load_library(self.dir)
+        doc["transfers"] = [t for t in doc["transfers"] if t["plate"] != "DEMO_002"] + synth.profile_transfers(tones=(80, 70, 60))
+        api.save_library(self.dir, self.backup, doc, doc["updatedAt"])
+        j = self.preview()
+        self.assertEqual(j["run"]["confidence"]["level"], "낮음")             # 망점 범위 20%p
+        body = {"mode": "sci", "plate": "DEMO_002", "snapshot": j["snapshot"]}
+        st, r = api.handle("POST", "/api/lab/profile/apply", {}, body, self.ctx())
+        self.assertEqual(st, 400)
+        st, r = api.handle("POST", "/api/lab/profile/apply", {}, {**body, "ack_low": True}, self.ctx())
+        self.assertEqual(st, 200)
 
 
 class StoreTests(unittest.TestCase):
@@ -295,7 +477,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(code, 200)
         doc = api.load_library(self.dir)
         self.assertEqual(doc["updatedAt"], r["savedAt"])
-        self.assertEqual(len(doc["inks"]), 7)
+        self.assertEqual(len(doc["inks"]), 8)
         code, r2 = api.save_library(self.dir, self.backup, doc, "옛날값")
         self.assertEqual(code, 409)
         doc["updatedAt"] = "2000-01-01T00:00:00"   # 다음 저장이 다른 시각이 되도록
@@ -317,6 +499,9 @@ class StoreTests(unittest.TestCase):
             ({"plates": [{"lot": "1", "thickness": 0}]}, "0.05~20"),
             ({"plates": [{"lot": "1", "coverage": {"1도": 35}}]}, "0~1"),
             ({"settings": {"yn": 0.5}}, "Yule"),
+            ({"settings": {"basis": "cmyk"}}, "기저"),
+            ({"fits": {"active": {"mode": "sci", "space": "xyz", "plates": {}, "inks": {"A": {"k": [1], "s": [1]}}}}}, "형식"),
+            ({"fits": {"active": {"mode": "sci", "space": "xyz", "plates": {"P": {"thickness": 1, "tone_curve": [[0.5, 1.4]]}}}}}, "망점 곡선"),
             ({"plates": [{"lot": "1", "dot50": 1.2}]}, "50% 망점"),
             ({"plates": [{"lot": "1", "lpi": 0}]}, "LPI"),
             ({"transfers": [{"substrate": "C", "layer1": {"inks": {}}, "measured": {"sci": [50, 0, 0]}}]}, "잉크 g이 없습니다"),
@@ -330,7 +515,7 @@ class StoreTests(unittest.TestCase):
             self.assertIn(want, str(cx.exception))
         clean = api.validate(good)
         self.assertEqual(len(clean["substrates"]), 4)
-        self.assertEqual(len(clean["transfers"]), 9)
+        self.assertEqual(len(clean["transfers"]), 13)
         self.assertNotIn("thickness", clean["plates"][0])                  # 비운 막두께는 비운 채로 (추정)
         self.assertNotIn("layer2", api.validate({"transfers": [dict(good["transfers"][0], layer2={"inks": {}})]})["transfers"][0])
         self.assertIn("cards", clean["settings"])
@@ -340,8 +525,11 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([s["ref"] for s in info["substrates"]],
                          ["C 1000", "D 2000@경면", "D 2000@패브릭엠보", "BK-1", "흰 카드", "검정 카드"])
         wh = next(i for i in info["inks"] if i["name"] == "WH")
-        self.assertTrue(wh["status"]["sci_rgb"]["ok"])
+        self.assertTrue(wh["status"]["sci_tri"]["ok"])
+        self.assertEqual(wh["status"]["sci_tri"]["source"], "measured")
         self.assertFalse(wh["status"]["sci_spec"]["ok"])
+        y2 = next(i for i in info["inks"] if i["name"] == "Y2")
+        self.assertFalse(y2["status"]["sci_tri"]["ok"])                    # 은폐 도막만 — 프로필 전에는 계산 불가
 
     def test_similar_uses_archive_and_worklog_lab(self):
         patterns = [{"id": "X-1", "pattern": {"code": "W01"}, "variations": [{
@@ -422,12 +610,31 @@ class HttpTests(unittest.TestCase):
         st, j = self.req("GET", "/api/lab/similar?L=50&a=0&b=0&mode=sci")
         self.assertEqual(st, 200)
         self.assertEqual({x["source"] for x in j["items"]}, {"전사 시료"})     # 아카이브·일지 LAB는 없음
-        st, j = self.req("POST", "/api/lab/fit", {"plate": "DEMO_001"})
+        # 보정 프로필: 미리보기 → 적용 → 예측에 쓰임 → 끄기 · 되돌리기
+        st, j = self.req("POST", "/api/lab/predict", {"substrate": "흰 카드", "layer1": recipe({"Y2": 60})})
+        self.assertEqual(st, 400)                                            # 은폐 도막만 — 아직 계산 불가
+        st, j = self.req("POST", "/api/lab/profile/preview", {"mode": "sci", "plate": "DEMO_002"})
         self.assertEqual(st, 200)
-        self.assertAlmostEqual(j["thickness"], synth.DEMO_PLATE["thick"], delta=0.01)
-        self.assertEqual(j["n"], 9)
-        st, j = self.req("POST", "/api/lab/fit", {"plate": "DEMO_002"})
-        self.assertEqual(st, 400)                                            # 시료 없음
+        self.assertTrue(j["run"]["ok"])
+        snap = j["snapshot"]
+        rev = api.load_library(self.dir)["updatedAt"]
+        st, j = self.req("POST", "/api/lab/profile/apply", {"mode": "sci", "plate": "DEMO_002", "snapshot": snap},
+                         extra={"X-Base-Rev": rev})
+        self.assertEqual(st, 200, j)
+        st, j = self.req("POST", "/api/lab/predict", {"substrate": "흰 카드", "layer1": recipe({"Y2": 60}), "plate": "DEMO_002"})
+        self.assertEqual((st, j["sources"]), (200, {"Y2": "profile"}))
+        st, j = self.req("GET", "/api/lab/library")
+        self.assertEqual(j["info"]["profile"]["active"]["inks"], ["Y2"])
+        self.assertEqual(j["info"]["profile"]["active"]["stale"], [])
+        rev = j["library"]["updatedAt"]
+        st, j = self.req("POST", "/api/lab/profile/off", {}, extra={"X-Base-Rev": rev})
+        self.assertEqual(st, 200)
+        st, j = self.req("POST", "/api/lab/predict", {"substrate": "흰 카드", "layer1": recipe({"Y2": 60})})
+        self.assertEqual(st, 400)
+        rev = api.load_library(self.dir)["updatedAt"]
+        st, j = self.req("POST", "/api/lab/profile/revert", {}, extra={"X-Base-Rev": rev})
+        self.assertEqual(st, 200)
+        self.assertEqual(api.load_library(self.dir)["fits"]["active"]["plate"], "DEMO_002")
         st, j = self.req("POST", "/api/lab/predict", {"substrate": "없는코드", "layer1": recipe({"WH": 1})})
         self.assertEqual(st, 400)
         st, j = self.req("POST", "/api/lab/predict", b"not json")
