@@ -27,6 +27,98 @@ def recipe(inks, h=20, t=30):
     return {"inks": inks, "hardener": {"g": tot * h / 100}, "thinner": {"g": tot * t / 100}}
 
 
+class InkIdentityTests(unittest.TestCase):
+    def registry(self, **fields):
+        return model.InkRegistry([dict(name="200YE-D", short_name="YE-D",
+                                       aliases=["Yellow D"], **fields)])
+
+    def test_alias_resolution_and_sum(self):
+        r = self.registry()
+        self.assertEqual(r.resolve(" yellow d ", True), "200YE-D")
+        self.assertEqual(r.normalize({"ye-d": 10, "200YE-D": 5}, True), {"200YE-D": 15})
+        with self.assertRaises(model.ModelError):
+            r.resolve("200YE", True)
+
+    def test_identity_collisions(self):
+        for other in ({"name": "ye-d"}, {"name": "B", "short_name": "YE-D"},
+                      {"name": "B", "aliases": ["yellow D"]}):
+            with self.subTest(other=other), self.assertRaises(model.ModelError):
+                model.InkRegistry([{"name": "200YE-D", "short_name": "YE-D", "aliases": ["Yellow D"]}, other])
+        with self.assertRaises(model.ModelError):
+            model.InkRegistry([{"name": "A", "db_ink": "YE-D"}, {"name": "B", "db_ink": "YE-D"}])
+
+    def test_db_mapping_is_explicit(self):
+        with self.assertRaises(model.ModelError):
+            self.registry().to_db({"YE-D": 10})
+        r = self.registry(db_ink="YE-D")
+        self.assertEqual(r.to_db({"YE-D": 10, "200YE-D": 5}), {"YE-D": 15})
+        self.assertEqual(r.from_db({"YE-D": 15}), {"200YE-D": 15})
+        self.assertEqual(model.InkRegistry().to_db({"BK": 10}), {"BK": 10})
+        with self.assertRaises(model.ModelError):
+            model.InkRegistry([{"name": "BK", "db_ink": ""}]).to_db({"BK": 10})
+
+    def test_bad_quantities(self):
+        for value in (-1, float("nan"), float("inf"), True, "bad"):
+            with self.subTest(value=value), self.assertRaises(model.ModelError):
+                self.registry().normalize({"YE-D": value})
+        self.assertEqual(self.registry().normalize({"unknown": 0}, True), {})
+
+    def test_library_roundtrip_and_catalog(self):
+        doc = {"inks": [{"name": "200YE-D", "short_name": "YE-D", "aliases": ["Yellow D"],
+                         "db_ink": "YE-D", "cal": {"solid": {"sci": [80, 1, 70], "sce": [75, 2, 65]}}}]}
+        with tempfile.TemporaryDirectory() as root:
+            status, _ = api.save_library(root, os.path.join(root, "backup"), doc, "")
+            self.assertEqual(status, 200)
+            loaded = api.load_library(root)
+            self.assertEqual(loaded["inks"][0]["aliases"], ["Yellow D"])
+            cat = api.ink_catalog(loaded)
+            self.assertEqual(cat["lookup"]["ye-d"], "200YE-D")
+            self.assertEqual(cat["inks"][0]["swatches"]["sce"]["lab"], [75, 2, 65])
+            self.assertEqual(cat["inks"][0]["db_ink"], "YE-D")
+
+    def test_preview_alias_equivalence_and_no_mutation(self):
+        doc = synth.library()
+        next(i for i in doc["inks"] if i["name"] == "YE").update(short_name="Y", aliases=["Yellow"])
+        lib = model.Library(doc)
+        a = {"recipe": recipe({"Y": 10, "YE": 5}), "substrate": "C 1000", "tone": 70}
+        before = json.dumps(a, sort_keys=True)
+        for mode in ("sci", "sce"):
+            out = api.recipe_preview(lib, doc, a, mode)
+            expected = model.predict(lib, "C 1000", recipe({"YE": 15}), mode=mode, coverage={"1도": .7})
+            self.assertEqual(out["average"]["lab"], expected["average"]["lab"])
+            self.assertEqual(out["ingredients"], [{"name": "YE", "g": 15, "pct": 100}])
+        self.assertEqual(json.dumps(a, sort_keys=True), before)
+
+    def test_preview_requires_calibration_and_conditions(self):
+        doc = synth.library()
+        lib = model.Library(doc)
+        body = {"recipe": recipe({"Y2": 10}), "substrate": "흰 카드", "tone": 70}
+        with self.assertRaisesRegex(model.ModelError, "계산 준비 안 됨"):
+            api.recipe_preview(lib, doc, body, "sci")
+        body["recipe"] = recipe({"YE": 10})
+        for key in ("tone", "substrate"):
+            with self.subTest(key=key), self.assertRaises(model.ModelError):
+                api.recipe_preview(lib, doc, {k: v for k, v in body.items() if k != key}, "sci")
+        with self.assertRaises(model.ModelError):
+            api.recipe_preview(lib, doc, dict(body, recipe={"inks": {"YE": 10}}), "sci")
+        with self.assertRaises(model.ModelError):
+            api.recipe_preview(lib, doc, dict(body, plate="unknown"), "sci")
+
+    def test_profile_collect_resolves_split_aliases(self):
+        doc = synth.library()
+        samples, excluded, inks = fit.collect(doc, "sci", "DEMO_002", "xyz")
+        next(i for i in doc["inks"] if i["name"] == "Y2")["short_name"] = "Y-two"
+        for t in doc["transfers"]:
+            amounts = t["layer1"]["inks"]
+            if "Y2" in amounts:
+                amounts["Y-two"] = amounts["Y2"] / 2
+                amounts["Y2"] /= 2
+        got, skipped, resolved = fit.collect(doc, "sci", "DEMO_002", "xyz")
+        self.assertEqual(got, samples)
+        self.assertEqual(skipped, excluded)
+        self.assertEqual(resolved, inks)
+
+
 class ColorMathTests(unittest.TestCase):
     def test_ciede2000_sharma_pairs(self):
         pairs = [((50, 2.6772, -79.7751), (50, 0, -82.7485), 2.0425),

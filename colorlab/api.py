@@ -330,7 +330,16 @@ def ink_catalog(doc):
 
 def recipe_preview(lib, doc, body, mode):
     """아카이브의 미저장 배합도 계산. 실측값을 덮어쓰거나 LAB 평균으로 대체하지 않는다."""
-    recipe = lib.recipe(body.get("recipe"))
+    raw = body.get("recipe")
+    if not isinstance(raw, dict):
+        raise model.ModelError("배합을 입력하세요")
+    if "tone" not in body:
+        raise model.ModelError("설계 망점 %를 입력하세요")
+    for key, label in (("thinner", "신나"), ("hardener", "경화제")):
+        value = raw.get(key)
+        if not isinstance(value, dict) or value.get("g") is None:
+            raise model.ModelError(f"{label} 사용량(g)을 입력하세요 (미사용이면 0)")
+    recipe = lib.recipe(raw)
     substrate = _substrate(body)
     if not substrate:
         raise model.ModelError("예상색을 계산할 바탕을 선택하세요")
@@ -362,6 +371,9 @@ def recipe_preview(lib, doc, body, mode):
         if solid:
             warnings += [x["msg"] for x in fitmod.diagnose_measurement(solid, mode, space, n)]
     if lib.profile:
+        bounds = (lib.profile.get("applicability") or {}).get("tones")
+        if bounds and not bounds[0] <= tone <= bounds[1]:
+            warnings.append(f"망점 {tone * 100:g}%는 보정 시료 범위 {bounds[0] * 100:g}~{bounds[1] * 100:g}% 밖: 외삽 가정입니다.")
         stale = fitmod.stale_reasons(lib.profile, doc)
         warnings += ["보정 프로필 재맞추기 필요: " + x for x in stale]
         confidence = (lib.profile.get("confidence") or {}).get("level")
@@ -587,7 +599,9 @@ def handle(method, path, query, body, ctx):
                          "parts": {k: round(v, 3) for k, v in parts.items()}, "text": cm.describe(parts),
                          "hex": [cm.lab_to_hex(a), cm.lab_to_hex(b)]}
         if path == "/api/lab/recipe-preview":
-            return 200, {"ok": True, **recipe_preview(lib, load_library(ctx["data"]), body, mode)}
+            # 모델과 진단은 같은 라이브러리 판본으로 계산한다.
+            doc = load_library(ctx["data"])
+            return 200, {"ok": True, **recipe_preview(model.Library(doc), doc, body, mode)}
         if path == "/api/lab/predict":
             r = model.predict(lib, _substrate(body), body.get("layer1"), body.get("layer2") or None, mode=mode,
                               plate=body.get("plate"), coverage=body.get("coverage") or None)

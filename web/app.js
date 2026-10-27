@@ -679,7 +679,7 @@
     const label = info ? info.short_name : name;
     const sw = info && info.swatches.sci;
     const title = info ? `${info.name} · ${sw ? "SCI 은폐 도막 측정색 (화면 근사)" + (sw.in_gamut ? "" : " · 화면 색역 밖") : info.clear ? "투명 잉크" : "SCI 측정 없음"} · DB ${info.db_ink || "연결 없음"}` : `${name} · 컬러연구소 미등록`;
-    return `<span class="ink-identity" title="${esc(title)}">${sw ? `<i class="labsw" style="background:${esc(sw.hex)}"></i>` : ""}${esc(label)}${info && name !== info.name ? `<small> (${esc(name)})</small>` : ""}</span>`;
+    return `<span class="ink-identity" title="${esc(title)}">${sw ? `<i class="labsw" style="background:${esc(sw.hex)}"></i>` : ""}${esc(label)}${info && name !== info.name && name !== label ? `<small> (${esc(name)})</small>` : ""}</span>`;
   }
 
   // 배합표를 바꾸지 않고 한 행의 조건부 예상색을 계산한다.
@@ -1524,7 +1524,7 @@
         <td><select data-mf="result" style="width:74px">${Object.keys(RESULT_LABEL).map((k) => `<option value="${k}"${k === (m.result || "") ? " selected" : ""}>${RESULT_LABEL[k]}</option>`).join("")}</select></td>
         <td><input type="checkbox" data-mf="isReference" ${m.isReference ? "checked" : ""}></td>
         <td class="act"><button class="mini-btn danger" data-delmix="${mi}">✕</button></td></tr>` +
-        (E.labOpen === mi ? `<tr class="lab-edit"><td colspan="${7 + inkCols.length + (showMatting ? 1 : 0)}">
+        (E.labOpen === mi ? `<tr class="lab-edit"><td colspan="${11 + inkCols.length + (showMatting ? 1 : 0)}">
           <div class="lab-grid">
             ${["sce", "sci"].map((k) => {
               const lab = m["lab" + k[0].toUpperCase() + k.slice(1)] || {};

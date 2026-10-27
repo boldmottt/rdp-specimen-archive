@@ -64,7 +64,7 @@ class Base(unittest.TestCase):
         d = self.tmp
         self.patches = [mock.patch.multiple(
             server, DATA=d, PATTERNS=os.path.join(d, "patterns"), IMAGES=os.path.join(d, "images"),
-            ORIG=os.path.join(d, "_orig"), BACKUP=os.path.join(d, "_backup"), TRASH=os.path.join(d, "_trash"),
+            THUMBS=os.path.join(d, "_thumb"), ORIG=os.path.join(d, "_orig"), BACKUP=os.path.join(d, "_backup"), TRASH=os.path.join(d, "_trash"),
             PROPOSALS=os.path.join(d, "proposals"), UI_STATE=os.path.join(d, "_ui", "state.json"),
             CONFIG_PATH=os.path.join(d, "config.json"))]
         for p in self.patches:
@@ -144,6 +144,60 @@ class Base(unittest.TestCase):
         if create:
             h["X-Create"] = "1"
         return self.req("PUT", f"/api/patterns/{pid}", doc, h)
+
+
+class InkMappingTests(Base):
+    def register(self, code="YE-D"):
+        doc = {"inks": [{"name": "200YE-D", "short_name": "YE-D", "db_ink": code}]}
+        old = server.lab_api.load_library(server.DATA).get("updatedAt", "")
+        status, _ = server.lab_api.save_library(server.DATA, server.BACKUP, doc, old)
+        self.assertEqual(status, 200)
+
+    def document(self):
+        return pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": [
+            mix("1도", "1", "26_028", inks={"200YE-D": 10, "YE-D": 5})]}])
+
+    def test_unmapped_blocks_entire_export_and_apply(self):
+        doc = self.document()
+        v = doc["variations"][0]
+        v["mixes"].append(mix("1도", "2", "26_028"))
+        plan = server.plan_push(doc, [(v, [])])
+        self.assertTrue(plan["blocked"])
+        self.assertEqual(plan["inserts"], [])
+        with self.assertRaises(ValueError):
+            server.apply_push("P", "W01", doc, {})
+        self.assertEqual(self.db_counts(), {})
+
+    def test_mapped_alias_export_and_diff(self):
+        self.register()
+        doc = self.document()
+        before = json.dumps(doc, sort_keys=True)
+        v = doc["variations"][0]
+        plan = server.plan_push(doc, [(v, [])])
+        self.assertNotIn("blocked", plan)
+        server.apply_push("P", "W01", doc, plan)
+        with sqlite3.connect(self.db) as con:
+            self.assertEqual(con.execute("SELECT ye_d FROM rdp_mixes").fetchone()[0], 15)
+        row = mix("1도", "1", "26_028", inks={"YE-D": 15})
+        self.assertEqual(server.diff_db(doc, [(v, [row])])["same"], 1)
+        self.assertEqual(json.dumps(doc, sort_keys=True), before)
+
+    def test_mapping_change_rejects_old_plan(self):
+        self.register()
+        doc = self.document()
+        plan = server.plan_push(doc, [(doc["variations"][0], [])])
+        self.register("YE")
+        with self.assertRaisesRegex(ValueError, "미리보기 이후"):
+            server.apply_push("P", "W01", doc, plan)
+        self.assertEqual(self.db_counts(), {})
+
+    def test_import_replaces_aliases_and_preserves_custom_inks(self):
+        self.register()
+        m = {"inks": {"YE-D": 10, "200YE-D": 5, "custom": 7}}
+        self.assertTrue(server.apply_db_mix(m, {"inks": {"YE-D": 20}}))
+        self.assertEqual(m["inks"], {"200YE-D": 20, "custom": 7})
+        self.assertTrue(server.apply_db_mix(m, {"inks": {}}))
+        self.assertEqual(m["inks"], {"custom": 7})
 
 
 class RenameTests(Base):
