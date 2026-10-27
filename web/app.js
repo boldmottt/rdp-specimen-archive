@@ -1022,7 +1022,7 @@
         <div><dt>Prepared by</dt><dd>${esc(App.prop.by || "—")}</dd></div>
       </div>
       <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div>
-        <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : 4},1fr)">${thumbs}</div></div>
+        <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : 4},minmax(0,1fr))">${thumbs}</div></div>
       <div class="cov-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
   }
@@ -1697,7 +1697,7 @@
         const nv = {
           id: nextVarId(d), colorName: "", colorCode: "", coating: [], status: "",
           date: todayLocal(), images: [], note: "",
-          mixes: (src.mixes || []).map(freshCopy),
+          mixes: (src.mixes || []).map((m) => freshCopy(m)),
           layerPlates: clone(src.layerPlates || {}),
           layerPatterns: clone(src.layerPatterns || {}),
         };
@@ -1711,7 +1711,7 @@
         src.id = nextVarId(d);
         src.images = [];
         src.colorName = (src.colorName || "기본") + " 복사";
-        src.mixes = (src.mixes || []).map(freshCopy);
+        src.mixes = (src.mixes || []).map((m) => freshCopy(m));
         d.variations.push(src); E.vIdx = d.variations.length - 1; renderDrawer();
       };
       $("#del-var").onclick = () => {
