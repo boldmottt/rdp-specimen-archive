@@ -11,6 +11,8 @@ RDP 시편 아카이브 v2 — 로컬 서버
 import argparse
 import base64
 import contextlib
+import copy
+import hashlib
 import io
 import json
 import mimetypes
@@ -380,16 +382,18 @@ def read_rdp_mixes(project: str, code: str):
     return out
 
 
-def apply_db_mix(m, dm):
+def apply_db_mix(m, dm, registry=None):
     """DB 행 값을 m에 반영. 실제로 바뀐 게 있으면 True."""
+    registry = registry or ink_registry()
     changed = False
     if dm.get("plate") and m.get("plate") != dm["plate"]:
         m["plate"] = dm["plate"]; changed = True
-    if dm.get("inks"):
-        # DB에는 7종(INK_COLS)만 있다 → 그 외 커스텀 잉크는 아카이브 값을 그대로 둔다
+    if "inks" in dm:
+        # 명시적으로 연결한 제품은 DB 값으로 교체, 미지원 커스텀 잉크는 보존한다.
         cur = m.get("inks") or {}
-        merged = {k: x for k, x in cur.items() if k not in DB_INKS}
-        merged.update(dm["inks"])
+        normalized = registry.normalize(cur)
+        merged = {k: x for k, x in normalized.items() if not registry.db_code(k)}
+        merged.update(registry.from_db(dm["inks"]))
         if merged != cur:
             m["inks"] = merged; changed = True
     for f in ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG"):
@@ -406,6 +410,7 @@ def apply_db_mix(m, dm):
 
 def merge_mixes(v, db_mixes):
     """(도수, 배치) 키로 병합. 같은 키가 동판별로 여러 개면 동판까지 본다."""
+    registry = ink_registry()
     cur = v.setdefault("mixes", [])
     groups = {}
     for dm in db_mixes:
@@ -430,6 +435,7 @@ def merge_mixes(v, db_mixes):
             if pick is None and len(cands) == 1:
                 pick = cands[0]
             if pick is None:
+                dm["inks"] = registry.from_db(dm.get("inks") or {})
                 cur.append(dm)
                 new_i = len(cur) - 1
                 idx.setdefault(key, []).append(new_i)
@@ -437,7 +443,7 @@ def merge_mixes(v, db_mixes):
                 added += 1
             else:
                 used.add(pick)
-                if apply_db_mix(cur[pick], dm):
+                if apply_db_mix(cur[pick], dm, registry):
                     updated += 1
 
     cur.sort(key=lambda m: (m.get("layer") or "", m.get("date") or "", m.get("batch") or "", m.get("plate") or ""))
@@ -583,7 +589,42 @@ def db_taken_keys(doc):
     return taken
 
 
+def ink_registry():
+    return lab_api.model.InkRegistry(lab_api.load_library(DATA).get("inks") or [])
+
+
+def db_document(doc):
+    """DB 전송용 사본만 7개 코드로 변환. 일부 성분을 버린 배합은 절대 보내지 않는다."""
+    registry = ink_registry()
+    prepared = copy.deepcopy(doc)
+    issues = []
+    for v in prepared.get("variations") or []:
+        for m in v.get("mixes") or []:
+            try:
+                m["inks"] = registry.to_db(m.get("inks") or {})
+            except lab_api.model.ModelError as e:
+                issues.append({"vid": v.get("id"), "layer": m.get("layer"), "batch": m.get("batch"),
+                               "plate": m.get("plate"), "reason": str(e)})
+    return prepared, issues
+
+
+def db_ink_signature(doc):
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
+    prepared, issues = db_document(doc)
+    if issues:
+        return {"updates": [], "inserts": [], "moves": [], "skipped": issues, "ink_errors": issues,
+                "blocked": "DB에 연결되지 않은 잉크 또는 중복 연결이 있습니다. 컬러연구소에서 연결을 확인하세요. 전체 전송을 중단합니다."}
+    vs = {v["id"]: v for v in prepared.get("variations") or []}
+    mapped = [(vs[v["id"]], rows) for v, rows in assigned]
+    plan = _plan_push(prepared, mapped, old_rows, old_key, taken)
+    plan["ink_signature"] = db_ink_signature(prepared)
+    return plan
+
+
+def _plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
     """아카이브 -> DB 반영 계획. 실제 쓰기는 하지 않는다.
     assigned: load_doc_rows() 결과. 배합 키 = (도수 패턴 코드, 도수, 배치, 동판)."""
     if old_rows:
@@ -713,6 +754,11 @@ def backup_rdp_db(path: str) -> str:
 
 
 def apply_push(project, code, doc, plan):
+    doc, issues = db_document(doc)
+    if plan.get("blocked") or issues:
+        raise ValueError("DB 전송 중단: " + " / ".join(x["reason"] for x in issues or plan.get("ink_errors") or []))
+    if plan.get("ink_signature") and plan["ink_signature"] != db_ink_signature(doc):
+        raise ValueError("미리보기 이후 배합 또는 잉크 연결이 바뀌었습니다. 다시 미리보기 하세요")
     path = rdp_db_path()
     bpath = backup_rdp_db(path)
 
@@ -823,6 +869,14 @@ def rename_db_rows(old_key, new_key):
 
 
 def diff_db(doc, assigned):
+    prepared, issues = db_document(doc)
+    if issues:
+        raise ValueError("DB 비교 불가: " + " / ".join(x["reason"] for x in issues))
+    vs = {v["id"]: v for v in prepared.get("variations") or []}
+    return _diff_db(prepared, [(vs[v["id"]], rows) for v, rows in assigned])
+
+
+def _diff_db(doc, assigned):
     """아카이브 JSON과 DB를 비교해 차이만 뽑는다 (쓰기 없음). 키 = (도수 패턴 코드, 도수, 배치, 동판)."""
     main = doc_code(doc)
     new, changed, same, unmatched = [], [], 0, []
