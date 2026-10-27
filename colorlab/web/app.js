@@ -533,7 +533,7 @@
         <button class="cl-btn ghost sm" id="cards-all"${cards.white || cards.black ? "" : " disabled"}>모든 잉크에 적용</button></div>
       ${(L.inks || []).map((ink, i) => `<div class="cl-inkcard">
         <div class="cl-inkhead">
-          <input class="cl-name" data-p="inks.${i}.name" value="${esc(ink.name)}" placeholder="잉크 이름">
+          <input class="cl-name" data-p="inks.${i}.name" value="${esc(ink.name)}" placeholder="정식 제품명 (예: 200YE-D)" aria-label="정식 제품명">
           <label class="cl-check"><input type="checkbox" data-p="inks.${i}.clear" data-type="bool" data-re="1"${ink.clear ? " checked" : ""}> 투명 (CL 등 색 없음)</label>
           ${ink.clear ? "" : `<label class="cl-f xs"><span>경화제 %</span><input type="number" data-p="inks.${i}.cal.hardener_pct" data-type="num" value="${esc(ink.cal?.hardener_pct ?? 20)}"></label>
           <label class="cl-f xs"><span>신나 %</span><input type="number" data-p="inks.${i}.cal.thinner_pct" data-type="num" value="${esc(ink.cal?.thinner_pct ?? 30)}"></label>
@@ -542,9 +542,16 @@
           <input class="cl-memo" data-p="inks.${i}.note" value="${esc(ink.note || "")}" placeholder="메모">
           <div class="grow"></div><span class="cl-status-tags">${inkStatus(ink.name)}</span>
           <button class="cl-x" data-del="inks.${i}" title="삭제">×</button></div>
+        <div class="cl-identity">
+          <label class="cl-f"><span>표시 약칭 <em>입력 별칭으로도 인식</em></span><input data-p="inks.${i}.short_name" value="${esc(ink.short_name || "")}" placeholder="YE-D" maxlength="80"></label>
+          <label class="cl-f wide"><span>입력 별칭 <em>쉼표로 구분</em></span><input data-p="inks.${i}.aliases" data-type="aliases" value="${esc((ink.aliases || []).join(", "))}" placeholder="현장에서 사용하는 다른 이름"></label>
+          <label class="cl-f"><span>회사 DB 연결 <em>별칭과 별도 지정</em></span><select data-p="inks.${i}.db_ink" aria-label="회사 DB 연결">
+            <option value="">연결 안 함 (DB 전송 차단)</option>${["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"].map((code) => `<option value="${code}"${(ink.db_ink ?? (["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"].includes(ink.name) ? ink.name : "")) === code ? " selected" : ""}>${code}</option>`).join("")}</select></label>
+        </div>
         ${ink.clear ? "" : `<div class="cl-measrow">${MEAS.map(([k, t]) => measCell(`inks.${i}.cal.${k}`, t)).join("")}</div>`}
       </div>`).join("")}
-      <button class="cl-btn ghost" id="add-ink">+ 잉크</button></div>
+      <button class="cl-btn ghost" id="add-ink">+ 잉크</button>
+      <p class="cl-note">저장하면 아카이브와 컬러연구소가 같은 별칭을 사용합니다. 대소문자·앞뒤 공백은 무시하며, 같은 제품의 정식명과 별칭 중량은 합산합니다. 다른 제품과 이름·별칭·DB 연결은 중복할 수 없습니다. 기존 정식명 변경 대신 약칭을 지정하세요. DB 연결은 제품을 확인한 뒤 지정하며 과거 DB 행은 자동 변경하지 않습니다.</p></div>
 
     <div class="cl-card"><h3>도장 시편 (바탕) <small>${(L.substrates || []).length}개</small></h3>
       <div class="cl-scroll"><table class="cl-table lib"><thead><tr><th>컬러코드</th><th>도장처</th><th>표면</th><th>설명</th><th>도장일</th><th>측정일</th><th>SCI · SCE · 분광</th><th></th></tr></thead><tbody>
@@ -776,7 +783,8 @@
           v = lab || undefined;
           const s = el.parentElement.querySelector(".cl-sw");
           if (s) s.style.background = lab ? labToHex(lab) : "transparent";
-        } else if (type === "num") v = v === "" ? undefined : +v;
+        } else if (type === "aliases") v = [...new Set(String(v).split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean))];
+        else if (type === "num") v = v === "" ? undefined : +v;
         else if (type === "pct") v = v === "" ? undefined : +v / 100;
         setPath(E(), p, v);
         markDirty();

@@ -539,3 +539,25 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .sameas-bar.muted{color:var(--ink-2);border-left-color:var(--line-2)}
 .sameas-bar select{border:1px solid var(--line-2);border-radius:6px;padding:3px 6px;font-size:11.5px}
 .sameas{padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:#faf9f6;font-size:12px;margin-bottom:8px}
+
+/* 공통 잉크 정보 / 조건부 배합 예상색 */
+.ink-identity{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.ink-identity small{font-size:9px;font-weight:400;color:var(--ink-3)}
+.recipe-preview{border:1px solid var(--line-2);border-radius:14px;width:min(760px,94vw);max-height:90vh;overflow:auto;padding:24px;color:var(--ink);background:var(--surface)}
+.recipe-preview::backdrop{background:rgba(20,21,23,.55)}
+.recipe-preview h3{margin:0 0 14px;font-size:20px}
+.recipe-close{float:right}
+.recipe-help{font-size:12px;color:var(--ink-2);line-height:1.7}
+.recipe-ingredients{display:flex;flex-wrap:wrap;gap:8px 18px;padding:12px;background:#f4f2ec;border-radius:8px;font-size:13px}
+.recipe-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0}
+.recipe-form label{display:flex;flex-direction:column;gap:6px;font-size:12px}
+.recipe-form input,.recipe-form select{padding:8px;border:1px solid var(--line-2);border-radius:6px;min-width:0;width:100%;background:#fff;color:var(--ink)}
+.recipe-form button{align-self:end}
+.recipe-result{padding:14px;border:1px solid var(--line);border-radius:8px;font-size:12px;line-height:1.7;margin-bottom:14px;white-space:normal;overflow-wrap:anywhere}
+.recipe-result ul{padding-left:18px;color:var(--ink-2)}
+.recipe-color{display:flex;gap:14px;align-items:center}
+.recipe-color>i{width:82px;height:64px;flex:none;border:1px solid var(--line);border-radius:8px}
+.recipe-color p{margin:4px 0}
+.recipe-preview a{font-size:12px;text-decoration:underline}
+@media screen and (max-width:500px){.recipe-form{grid-template-columns:1fr}.recipe-preview{padding:16px}}
+@media print{.recipe-preview{display:none!important}}

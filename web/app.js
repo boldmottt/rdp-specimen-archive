@@ -15,6 +15,7 @@
 
   const App = {
     patterns: [],
+    inkCatalog: null, inkCatalogError: "",
     config: {},
     q: "", project: "all", sort: "recent",
     cart: [],
@@ -656,6 +657,98 @@
     return `${n(lab.L)} ${n(lab.a)} ${n(lab.b)}`;
   }
 
+  async function loadInkCatalog() {
+    try {
+      App.inkCatalog = await apiGet("/api/lab/inks");
+      App.inkCatalogError = "";
+    } catch (e) {
+      App.inkCatalog = null;
+      App.inkCatalogError = "공통 잉크 목록을 읽지 못했습니다. 컬러연구소에서 라이브러리를 확인하세요.";
+      throw e;
+    }
+  }
+
+  function inkInfo(name) {
+    const catalog = App.inkCatalog;
+    const canonical = catalog && catalog.lookup[String(name).trim().toLowerCase()];
+    return canonical ? catalog.inks.find((i) => i.name === canonical) : null;
+  }
+
+  function inkLabel(name) {
+    const info = inkInfo(name);
+    const label = info ? info.short_name : name;
+    const sw = info && info.swatches.sci;
+    const title = info ? `${info.name} · ${sw ? "SCI 은폐 도막 측정색 (화면 근사)" + (sw.in_gamut ? "" : " · 화면 색역 밖") : info.clear ? "투명 잉크" : "SCI 측정 없음"} · DB ${info.db_ink || "연결 없음"}` : `${name} · 컬러연구소 미등록`;
+    return `<span class="ink-identity" title="${esc(title)}">${sw ? `<i class="labsw" style="background:${esc(sw.hex)}"></i>` : ""}${esc(label)}${info && name !== info.name ? `<small> (${esc(name)})</small>` : ""}</span>`;
+  }
+
+  // 배합표를 바꾸지 않고 한 행의 조건부 예상색을 계산한다.
+  async function openRecipePreview(mix) {
+    const source = clone(mix);
+    const previousFocus = document.activeElement;
+    const dialog = document.createElement("dialog");
+    dialog.className = "recipe-preview";
+    dialog.innerHTML = '<button class="mini-btn recipe-close" type="button">닫기</button><h3>배합 예상색</h3><div class="recipe-content">공통 잉크 목록을 불러오는 중…</div>';
+    document.body.appendChild(dialog);
+    dialog.querySelector(".recipe-close").onclick = () => dialog.close();
+    dialog.addEventListener("close", () => { dialog.remove(); if (previousFocus && previousFocus.isConnected) previousFocus.focus(); });
+    dialog.showModal();
+    const content = dialog.querySelector(".recipe-content");
+    try {
+      await loadInkCatalog();
+      if (!dialog.isConnected) return;
+      const catalog = App.inkCatalog;
+      const total = Object.values(source.inks || {}).reduce((sum, n) => sum + Number(n), 0);
+      const grams = (key) => source[`${key}G`] != null ? source[`${key}G`] : source[`${key}Pct`] != null ? total * source[`${key}Pct`] / 100 : (key === "matting" ? 0 : "");
+      content.innerHTML = `<p class="recipe-help">${esc(source.layer || "")} ${esc(source.batch || "")} · 이 배합 한 도를 선택한 바탕 위에 찍는 예상입니다. 2도 배합도 겹침색이 아니라 단독 전사색입니다. 실측 LAB는 변경하지 않습니다.</p>
+        <div class="recipe-ingredients">${Object.entries(source.inks || {}).map(([n, g]) => `<span>${inkLabel(n)} <b>${esc(g)}g</b></span>`).join("")}</div>
+        <p class="recipe-help">잉크 옆 색상칩은 SCI 은폐 도막 측정색의 화면 근사입니다. 배합색이 아닙니다.</p>
+        <form class="recipe-form">
+          <label>측정 모드<select name="mode"><option value="sci">SCI</option><option value="sce">SCE</option></select></label>
+          <label>바탕<select name="substrate" required><option value="">바탕 선택</option>${catalog.substrates.map((x) => `<option value="${esc(x.ref)}">${esc(x.ref)} (${x.modes.map((m) => m.toUpperCase()).join("/")})</option>`).join("")}</select></label>
+          <label>동판<select name="plate"><option value="">기본 ×1.00 (가정)</option>${catalog.plates.map((x) => `<option value="${esc(x)}"${source.plate === x ? " selected" : ""}>${esc(x)}</option>`).join("")}</select></label>
+          <label>설계 망점 %<input name="tone" type="number" min="0.01" max="100" step="any" required placeholder="예: 70" value="${esc(source.tone ?? "")}"></label>
+          ${[["thinner", "신나"], ["hardener", "경화제"], ["matting", "소광제"]].map(([key, label]) => `<label>${label} g<input name="${key}" type="number" min="0" step="any" required value="${esc(grams(key))}" placeholder="실제 사용량"></label>`).join("")}
+          <button class="btn-dark" type="submit">예상색 계산</button>
+        </form>
+        ${source.plate && !catalog.plates.includes(source.plate) ? `<p class="recipe-help">배합의 동판 ${esc(source.plate)}은 컬러연구소에 없습니다. 기본 계수를 쓰거나 동판을 등록하세요.</p>` : ""}
+        <div class="recipe-result" aria-live="polite">바탕·망점·첨가량을 확인한 뒤 계산하세요.</div>
+        <a href="/lab/#/library" target="_blank" rel="noopener">컬러연구소에서 잉크·별칭·보정 관리</a>`;
+      const form = content.querySelector("form"), output = content.querySelector(".recipe-result");
+      let sequence = 0;
+      form.addEventListener("input", () => { sequence++; output.textContent = "조건이 바뀌었습니다. 다시 계산하세요."; });
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const ticket = ++sequence;
+        const values = new FormData(form);
+        const recipe = { inks: source.inks };
+        ["thinner", "hardener", "matting"].forEach((key) => { recipe[key] = { g: Number(values.get(key)) }; });
+        output.textContent = "계산 중…";
+        try {
+          const result = await apiPost("/api/lab/recipe-preview", { recipe, mode: values.get("mode"), substrate: values.get("substrate"), plate: values.get("plate"), tone: Number(values.get("tone")) });
+          if (!dialog.isConnected || ticket !== sequence) return;
+          const swatch = result.average;
+          const measured = source[result.mode === "sci" ? "labSci" : "labSce"];
+          output.innerHTML = `<div class="recipe-color"><i style="background:${esc(swatch.hex)}"></i><div><b>모델 예상색 · ${esc(result.mode.toUpperCase())}</b><p>L* a* b*: ${swatch.lab.map((n) => Number(n).toFixed(2)).join(" / ")}</p><small>${esc(result.space === "spec" ? "분광 31채널" : "3채널 " + result.space.toUpperCase())} · 상대 두께 ×${Number(result.plate).toFixed(3)} (µm 아님)</small></div></div>
+            ${measured ? `<p>별도 저장된 실측 LAB: ${esc(labText(measured))} (실측 조건과 일치하는지 확인)</p>` : ""}
+            <p>${result.ingredients.map((i) => `${esc(i.name)} ${Number(i.g).toFixed(2)}g (${Number(i.pct).toFixed(1)}%)`).join(" · ")}</p>
+            <ul>${[result.note, ...(result.warnings || [])].filter(Boolean).map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`;
+        } catch (e) {
+          if (dialog.isConnected && ticket === sequence) output.textContent = "계산할 수 없습니다: " + e.message;
+        }
+      };
+    } catch (e) {
+      if (dialog.isConnected) content.textContent = App.inkCatalogError || e.message;
+    }
+  }
+
+  function bindRecipePreviews(root, mixes) {
+    $$("[data-recipe-preview]", root).forEach((button) => {
+      button.onclick = () => { const mix = mixes[Number(button.dataset.recipePreview)]; if (mix) openRecipePreview(mix); };
+    });
+  }
+
   function inkOrder(list) {
     const PRIORITY = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
     return list.slice().sort((a, b) => {
@@ -674,11 +767,13 @@
     App.patterns.forEach((p) => (p.variations || []).forEach((v) => (v.mixes || []).forEach((m) => {
       Object.keys(m.inks || {}).forEach((k) => set.add(k));
     })));
-    return inkOrder(Array.from(set));
+    ((App.inkCatalog && App.inkCatalog.inks) || []).forEach((i) => set.add(i.name));
+    return inkOrder(Array.from(new Set(Array.from(set).map((n) => inkInfo(n)?.name || n))));
   }
 
   function addInkTag(tag) {
-    const t = String(tag || "").trim().toUpperCase();
+    const raw = String(tag || "").trim();
+    const t = inkInfo(raw)?.name || raw.toUpperCase();
     if (!t) return "";
     App.prop.inkTags = App.prop.inkTags || [];
     if (!App.prop.inkTags.includes(t)) { App.prop.inkTags.push(t); saveLS(); }
@@ -689,8 +784,8 @@
     const used = inkOrder(Array.from(new Set(mixes.flatMap((m) => Object.keys(m.inks || {})))));
     const hasMatting = mixes.some((m) => m.mattingPct != null || m.mattingG != null);
     const hasLab = mixes.some((m) => m.labSce || m.labSci);
-    const head = `<tr><th>배합</th>${used.map((c) => `<th>${c}</th>`).join("")}${hasMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>결과</th><th>비고</th></tr>`;
-    const body = mixes.map((m) => `<tr>
+    const head = `<tr><th>배합</th>${used.map((c) => `<th>${inkLabel(c)}</th>`).join("")}${hasMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>예상색</th><th>결과</th><th>비고</th></tr>`;
+    const body = mixes.map((m, mi) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
       ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
       ${hasMatting ? `<td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>` : ""}
@@ -698,6 +793,7 @@
       <td>${m.hardenerG != null ? m.hardenerG + "g" : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
       ${hasLab ? `<td>${m.labSce || m.labSci ? `<span class="lab-line"><i class="labsw" style="background:${labToCss(m.labSce || m.labSci)}"></i>${esc(labText(m.labSce || m.labSci))}</span>` : "—"}</td>` : ""}
       <td>${pigmentTotal(m)}</td>
+      <td><button type="button" class="mini-btn" data-recipe-preview="${mi}">예상색</button></td>
       <td class="res res-${esc(m.result || "")}">${esc(RESULT_LABEL[m.result] || "—")}</td>
       <td class="note">${esc(m.change || m.note || "")}</td></tr>`).join("");
     return `<div class="tbl-wrap"><table class="mix">${head}${body}</table></div>`;
@@ -828,6 +924,11 @@
       </div>
     </div>`;
 
+    $$(".mixgroup", $("#view")).forEach((group, index) => {
+      const layer = layers(v)[index];
+      bindRecipePreviews(group, mixes.filter((m) => m.layer === layer));
+    });
+    if (sameAsVar) bindRecipePreviews($("#view .sec-mix"), sameAsVar.mixes || []);
     if (isNew) {
       $("#newsave").onclick = () => saveNewPattern();
       $("#newcancel").onclick = () => { if (confirm("작성을 취소할까요?")) { App.newDraft = null; location.hash = ""; } };
@@ -1270,6 +1371,9 @@
   }
 
   function pushPanel(pv) {
+    if (pv.ink_errors && pv.ink_errors.length) {
+      return `<div class="push-panel"><div class="pp-blocked">${esc(pv.blocked)}</div><ul>${pv.ink_errors.map((x) => `<li>${esc(x.vid || "")} · ${esc(x.layer || "")} ${esc(x.batch || "-")}: ${esc(x.reason)}</li>`).join("")}</ul><div class="pp-actions"><button class="mini-btn" id="pp-cancel">닫기</button><a href="/lab/#/library" target="_blank" rel="noopener">컬러연구소에서 DB 연결 설정</a><button class="mini-btn" disabled>전체 전송 차단</button></div></div>`;
+    }
     if (pv.blocked) {
       const rf = pv.renamedFrom || {};
       return `<div class="push-panel">
@@ -1400,13 +1504,13 @@
       const pool = inkPool();
       const showMatting = v._showMatting != null ? v._showMatting
         : (v.mixes || []).some((m) => m.mattingPct != null || m.mattingG != null);
-      const head = `<tr><th></th><th>도수</th><th title="이 배합이 DB에 들어가는 동판 · 패턴 코드 (위 도수별 칸에서 정함)">동판·패턴</th><th>배합</th>${inkCols.map((c) => `<th>${c}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>LAB</th><th>결과</th><th>기준</th><th></th></tr>`;
+      const head = `<tr><th></th><th>도수</th><th title="이 배합이 DB에 들어가는 동판 · 패턴 코드 (위 도수별 칸에서 정함)">동판·패턴</th><th>배합</th>${inkCols.map((c) => `<th>${inkLabel(c)}</th>`).join("")}${showMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th><th>실측 LAB</th><th>예상색</th><th>결과</th><th>기준</th><th></th></tr>`;
       const rows = order.map((mi) => [v.mixes[mi], mi]).map(([m, mi]) => `<tr data-mi="${mi}">
         <td><input type="checkbox" data-pick="${mi}" style="accent-color:#141517"></td>
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
         <td class="mix-set${m.plate ? "" : " empty"}" title="DB 키: ${esc(layerCodeOf(d, v, m.layer))} · ${esc(m.layer || "")} · ${esc(m.plate || "동판 없음")}">${m.plate ? esc(m.plate) : "동판 없음"}<i>${esc(layerCodeOf(d, v, m.layer))}</i></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
-        ${inkCols.map((c) => `<td><input data-mf="ink:${c}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
+        ${inkCols.map((c) => `<td><input data-mf="ink:${esc(c)}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
         ${showMatting ? `<td><input data-mf="mattingG" value="${m.mattingG != null ? m.mattingG : ""}" placeholder="${m.mattingG == null && m.mattingPct != null ? m.mattingPct + "%" : ""}" style="width:36px"></td>` : ""}
         <td><input data-mf="thinnerG" value="${m.thinnerG != null ? m.thinnerG : ""}" placeholder="${m.thinnerG == null && m.thinnerPct != null ? m.thinnerPct + "%" : ""}" style="width:36px"></td>
         <td><input data-mf="hardenerG" value="${m.hardenerG != null ? m.hardenerG : ""}" placeholder="${m.hardenerG == null && m.hardenerPct != null ? m.hardenerPct + "%" : ""}" style="width:36px"></td>
@@ -1416,6 +1520,7 @@
           const line = (k, lab) => (lab ? `<span class="lab-line"><i class="labsw" style="background:${labToCss(lab)}"></i>${k} ${esc(labText(lab))}</span>` : "");
           return `<button class="lab-btn" data-lab="${mi}" title="클릭해서 수정">${line("SCE", sce)}${line("SCI", sci)}</button>`;
         })()}</td>
+        <td><button class="mini-btn" type="button" data-recipe-preview="${mi}">예상색</button></td>
         <td><select data-mf="result" style="width:74px">${Object.keys(RESULT_LABEL).map((k) => `<option value="${k}"${k === (m.result || "") ? " selected" : ""}>${RESULT_LABEL[k]}</option>`).join("")}</select></td>
         <td><input type="checkbox" data-mf="isReference" ${m.isReference ? "checked" : ""}></td>
         <td class="act"><button class="mini-btn danger" data-delmix="${mi}">✕</button></td></tr>` +
@@ -1458,13 +1563,17 @@
           <span class="it-head">잉크</span>
           <button class="itag${showMatting ? " on" : ""}" data-matttog="1" title="소광(매트) 열 켜기/끄기">소광</button>
           <span class="it-sep"></span>
-          ${pool.map((t) => `<button class="itag${inkCols.includes(t) ? " on" : ""}" data-inkadd="${esc(t)}" title="${inkCols.includes(t) ? "이 컬러에 사용 중" : "이 컬러에 열 추가"}">${esc(t)}</button>`).join("")}
-          <input id="ink-new" placeholder="+ 새 잉크" maxlength="10" autocomplete="off">
+          ${pool.map((t) => `<button class="itag${inkCols.includes(t) ? " on" : ""}" data-inkadd="${esc(t)}" title="${inkCols.includes(t) ? "이 컬러에 사용 중" : "이 컬러에 열 추가"}">${inkLabel(t)}</button>`).join("")}
+          <input id="ink-new" placeholder="+ 정식명 또는 별칭" maxlength="80" autocomplete="off" list="shared-ink-names">
+          <datalist id="shared-ink-names">${((App.inkCatalog && App.inkCatalog.inks) || []).flatMap((i) => [...new Set([i.name, i.short_name, ...i.aliases])].map((n) => `<option value="${esc(n)}" label="${esc(i.name)}"></option>`)).join("")}</datalist>
         </div>
         <div class="ink-note">태그를 누르면 이 컬러의 배합 열이 생깁니다. 한 번 쓴 잉크는 다음 시편에서도 태그로 나옵니다.
-          <b>DB 반영은 MT·BK·WH·YE·RD·CL·YE-D 7종만</b> 되고, 그 외 태그는 아카이브에만 저장됩니다.
+          약칭·별칭은 <a href="/lab/#/library" target="_blank" rel="noopener">컬러연구소 공통 잉크 목록</a>에서 관리합니다. 색상칩은 SCI 은폐 도막 측정색이며 배합 예상색과 다릅니다.
+          <b>DB 미지원 잉크가 있으면 전체 전송을 차단</b>합니다. 회사 DB 연결을 명시적으로 지정하세요.
+          <button type="button" class="mini-btn" id="reload-inks">잉크 목록 새로고침</button> ${esc(App.inkCatalogError)}
           배합은 <b>도수별 동판 · 패턴 코드</b>에 속해서 DB에도 그 패턴 코드로 들어갑니다.</div>
-        <div class="tbl-wrap" style="margin:0 -6px"><table class="mix-edit">${head}${rows}</table></div>
+        <button type="button" class="mini-btn" id="normalize-ink-names">이 컬러의 별칭 정리·중량 합산</button>
+        <div class="tbl-wrap" style="margin:8px -6px"><table class="mix-edit">${head}${rows}</table></div>
         <div style="display:flex;gap:6px;margin-top:12px">
           <button class="mini-btn" id="add-mix">+ 배합 추가</button>
           <button class="mini-btn" id="dup-mix">마지막 배합 복제</button>
@@ -1515,6 +1624,35 @@
     }
 
     $("#drawer-body").innerHTML = body;
+    if (E.tab === "mixes") {
+      const variation = d.variations[E.vIdx];
+      const source = variation.sameAs ? d.variations.find((x) => x.id === variation.sameAs) : variation;
+      bindRecipePreviews($("#drawer-body"), source?.mixes || []);
+      const refresh = $("#reload-inks");
+      if (refresh) refresh.onclick = async () => {
+        try { await loadInkCatalog(); renderDrawer(); toast("공통 잉크 목록을 새로 불러왔습니다"); }
+        catch (e) { toast(App.inkCatalogError); }
+      };
+      const normalize = $("#normalize-ink-names");
+      if (normalize) normalize.onclick = async () => {
+        try {
+          await loadInkCatalog();
+          const changes = (variation.mixes || []).map((m) => {
+            const inks = {};
+            Object.entries(m.inks || {}).forEach(([n, g]) => {
+              if (!Number.isFinite(Number(g)) || Number(g) < 0) throw new Error(`${n}: 중량을 확인하세요`);
+              const key = inkInfo(n)?.name || n;
+              inks[key] = (inks[key] || 0) + Number(g);
+            });
+            return inks;
+          });
+          if (!confirm("등록된 별칭을 정식명으로 바꾸고 같은 잉크의 중량을 합산할까요? 시편 저장 전에는 원본이 바뀌지 않습니다.")) return;
+          variation.mixes.forEach((m, i) => { m.inks = changes[i]; });
+          variation._inkCols = [...new Set((variation._inkCols || []).map((n) => inkInfo(n)?.name || n))];
+          renderDrawer(); toast("별칭 정리 완료 — 저장을 눌러 반영하세요");
+        } catch (e) { toast(e.message); }
+      };
+    }
     $("#drawer-msg").textContent = E.msg;
     $("#drawer-msg").className = "msg" + (E.msg && E.msg.indexOf("저장") === 0 ? "" : E.msg ? " err" : "");
 
@@ -2227,6 +2365,7 @@
       E.tab = b.dataset.tab; syncTabs(); renderDrawer();
     }));
 
+    try { await loadInkCatalog(); } catch (e) { /* 아카이브는 목록 없이도 열 수 있다 */ }
     try { App.rdpStatus = await apiGet("/api/rdp/status"); } catch (e) {}
 
     try {
