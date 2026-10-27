@@ -93,7 +93,7 @@ def choose_space(doc, mode, plate, basis):
         if not model.has(sub, mode, "spec"):
             return basis
         for n in (t.get("layer1") or {}).get("inks") or {}:
-            ink = lib.inks.get(n) or {}
+            ink = lib.inks.get(lib.registry.resolve(n)) or {}
             if not ink.get("clear") and not (model.has((ink.get("cal") or {}).get("solid"), mode, "spec")
                                              or lib.ink_ready(n, mode, "spec")):
                 return basis
@@ -119,7 +119,8 @@ def collect(doc, mode, plate, space):
         if t.get("layer2"):
             skip("2도 시료 (1차 범위 밖)")
             continue
-        layer = t.get("layer1") or {}
+        layer = dict(t.get("layer1") or {})
+        layer["inks"] = base.registry.normalize(layer.get("inks") or {})
         names = list((layer.get("inks") or {}).keys())
         unknown = [n for n in names if n not in base.inks]
         if unknown:
@@ -487,8 +488,9 @@ def _confidence(samples, groups, issues, validation, sens):
 # ---------------------------------------------------------------- 스냅샷 (재맞추기 필요 판단)
 def snapshot(doc, mode, plate):
     """이 프로필 계산에 영향을 주는 입력의 지문."""
+    registry = model.InkRegistry(doc.get("inks") or [])
     rows = {str(i + 1): fingerprint(t) for i, t in enumerate(doc.get("transfers") or []) if t.get("plate") == plate}
-    names = {n for t in doc.get("transfers") or [] if t.get("plate") == plate
+    names = {registry.resolve(n) for t in doc.get("transfers") or [] if t.get("plate") == plate
              for n in ((t.get("layer1") or {}).get("inks") or {})}
     inks = {i["name"]: fingerprint([i.get("clear"), i.get("cal")]) for i in doc.get("inks") or [] if i["name"] in names}
     used = {str(t.get("substrate")).split("@")[0] for t in doc.get("transfers") or [] if t.get("plate") == plate}

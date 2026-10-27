@@ -26,6 +26,108 @@ class ModelError(ValueError):
     pass
 
 
+# 아카이브와 컬러연구소가 함께 사용하는 이름/DB 연결 규칙. 별칭은 제품을 추측하지 않는다.
+DB_INK_CODES = ("MT", "BK", "WH", "YE", "RD", "CL", "YE-D")
+
+
+def ink_key(value):
+    return str(value).strip().lower()
+
+
+class InkRegistry:
+    """정식명·표시 약칭·입력 별칭을 한 제품으로 해석. 원본 배합은 변경하지 않는다."""
+
+    def __init__(self, inks=()):
+        self.inks, self.lookup, self.db_owners = {}, {}, {}
+        for ink in inks:
+            if not isinstance(ink, dict):
+                raise ModelError("잉크는 객체여야 합니다")
+            name = self._label(ink.get("name"), "잉크 이름")
+            short = self._label(ink.get("short_name", ""), f"{name} 표시 약칭", optional=True)
+            aliases = ink.get("aliases") or []
+            if not isinstance(aliases, list) or len(aliases) > 30:
+                raise ModelError(f"{name}: 입력 별칭은 최대 30개 문자열 배열")
+            if name in self.inks:
+                raise ModelError(f"잉크 이름 중복: {name}")
+            self.inks[name] = ink
+            for label in [name, short] + aliases:
+                label = self._label(label, f"{name} 별칭", optional=True)
+                if not label:
+                    continue
+                key = ink_key(label)
+                if key in self.lookup and self.lookup[key] != name:
+                    raise ModelError(f"잉크 이름/별칭 중복: {label} ({self.lookup[key]} / {name})")
+                self.lookup[key] = name
+            # 기존 7종 정식명은 호환 유지. 등록된 다른 제품의 별칭만으로 DB 연결하지 않는다.
+            code = ink.get("db_ink", name if name in DB_INK_CODES else "")
+            if not isinstance(code, str) or (code and code not in DB_INK_CODES):
+                raise ModelError(f"{name}: DB 연결은 {' / '.join(DB_INK_CODES)} 중 하나")
+            if code:
+                if code in self.db_owners:
+                    raise ModelError(f"DB 연결 중복: {code} ({self.db_owners[code]} / {name})")
+                self.db_owners[code] = name
+
+    @staticmethod
+    def _label(value, what, optional=False):
+        if not isinstance(value, str):
+            raise ModelError(f"{what}: 문자열이 필요합니다")
+        value = value.strip()
+        if (not value and not optional) or len(value) > 80 or any(c in value for c in "\n\r\t,;+"):
+            raise ModelError(f"{what}: 1~80자, 줄바꿈·쉼표·세미콜론·+ 없이 입력하세요")
+        return value
+
+    def resolve(self, name, strict=False):
+        canonical = self.lookup.get(ink_key(name))
+        if canonical is None and strict:
+            raise ModelError(f"라이브러리에 없는 잉크: {name} — 정식명 또는 별칭을 등록하세요")
+        return canonical or str(name).strip()
+
+    def normalize(self, amounts, strict=False):
+        if not isinstance(amounts, dict):
+            raise ModelError("배합 잉크는 {이름: g} 객체여야 합니다")
+        out = {}
+        for name, value in amounts.items():
+            try:
+                grams = float(value)
+            except (TypeError, ValueError):
+                raise ModelError(f"{name}: 잉크량은 숫자여야 합니다")
+            if isinstance(value, bool) or not math.isfinite(grams) or grams < 0:
+                raise ModelError(f"{name}: 잉크량은 유한한 0 이상 숫자여야 합니다")
+            if grams == 0:
+                continue
+            canonical = self.resolve(name, strict)
+            out[canonical] = out.get(canonical, 0.0) + grams
+            if not math.isfinite(out[canonical]):
+                raise ModelError(f"{name}: 합산 잉크량이 너무 큽니다")
+        return out
+
+    def db_code(self, name):
+        canonical = self.resolve(name)
+        ink = self.inks.get(canonical)
+        if ink is not None:
+            return ink.get("db_ink", canonical if canonical in DB_INK_CODES else "")
+        legacy = str(name).strip().upper()
+        return legacy if legacy in DB_INK_CODES else ""
+
+    def to_db(self, amounts):
+        out, owners, errors = {}, {}, []
+        for name, grams in self.normalize(amounts).items():
+            code = self.db_code(name)
+            if not code:
+                errors.append(f"{name} {grams:g}g: DB 연결 없음")
+            elif code in owners and owners[code] != name:
+                errors.append(f"{owners[code]} / {name}: 같은 DB 칸 {code}로 합칠 수 없습니다 (별칭 확인)")
+            else:
+                owners[code] = name
+                out[code] = out.get(code, 0.0) + grams
+        if errors:
+            raise ModelError(" / ".join(errors))
+        return out
+
+    def from_db(self, amounts):
+        return {self.db_owners.get(code, code): grams for code, grams in amounts.items()}
+
+
 # ---------------------------------------------------------------- 측정값 ↔ 채널
 # 계산 공간(space): "spec"(분광 31채널) 또는 3채널 기저 이름(colormath.BASES — "xyz" 기본, "srgb" 예전 방식)
 def n_channels(space):
@@ -102,13 +204,19 @@ class Library:
 
     def __init__(self, data=None):
         data = data or {}
-        self.inks = {str(i["name"]): i for i in data.get("inks") or [] if i.get("name")}
+        self.registry = InkRegistry(data.get("inks") or [])
+        self.inks = self.registry.inks
         self.substrates = list(data.get("substrates") or [])
         self.plates = {str(p["lot"]): p for p in data.get("plates") or [] if p.get("lot")}
         self.settings = dict(data.get("settings") or {})
         self.basis = self.settings.get("basis") if self.settings.get("basis") in cm.BASES else "xyz"
         self.profile = (data.get("fits") or {}).get("active") or None
         self._cal = {}
+
+    def recipe(self, recipe):
+        out = normalize_recipe(recipe)
+        out["inks"] = self.registry.normalize(out["inks"], strict=True)
+        return out
 
     def _profile_for(self, mode, space):
         p = self.profile
@@ -118,6 +226,7 @@ class Library:
     def ink_params(self, name, mode, space):
         """잉크 1 단위(=막 고형분 100%가 이 잉크, 기준 두께)의 채널별 (k, s).
         출처(source): 'profile'(적용한 보정 프로필) · 'measured'(얇게 찍은 측정에서 역산) · 'clear'(투명)."""
+        name = self.registry.resolve(name, strict=True)
         key = (name, mode, space)
         if key in self._cal:
             return self._cal[key]
@@ -247,10 +356,15 @@ def normalize_recipe(r):
         if isinstance(x, dict):
             x = x.get("g")
         try:
-            return max(0.0, float(x or 0))
+            v = float(x or 0)
+            if isinstance(x, bool) or not math.isfinite(v) or v < 0:
+                raise ValueError()
+            return v
         except (TypeError, ValueError):
             raise ModelError(f"숫자가 아닌 값: {x}")
-    inks = {str(k): g(v) for k, v in (r.get("inks") or {}).items() if g(v) > 0}
+    if not isinstance(r, dict) or not isinstance(r.get("inks"), dict):
+        raise ModelError("배합은 inks 객체가 필요합니다")
+    inks = {str(k): g(v) for k, v in r["inks"].items() if g(v) > 0}
     if not inks:
         raise ModelError("잉크가 없는 배합입니다")
     return {"inks": inks, "matting": g(r.get("matting")), "thinner": g(r.get("thinner")),
@@ -259,7 +373,7 @@ def normalize_recipe(r):
 
 def film_weights(lib, recipe, plate=1.0):
     """배합 → (성분별 막 비중 {잉크: w}, 상대 막 두께). 막의 K·S = Σ w·(잉크 1단위 K·S) × 두께."""
-    r = normalize_recipe(recipe)
+    r = lib.recipe(recipe)
     ink_g = sum(r["inks"].values())
     solids = ink_g + r["hardener"] + r["matting"]
     rel = film_thickness(solids / ink_g, r["thinner"] / ink_g) * plate
@@ -324,6 +438,8 @@ def predict(lib, substrate, layer1, layer2=None, mode="sci", plate=None, coverag
     반환: 영역별 LAB(반올림 없음) · 견본색 · 사용한 계산 공간."""
     if mode not in MODES:
         raise ModelError("mode는 sci 또는 sce")
+    layer1 = lib.recipe(layer1)
+    layer2 = lib.recipe(layer2) if layer2 else None
     sub_meas = lib.find_substrate(substrate) if isinstance(substrate, str) else substrate
     if not has(sub_meas, mode, lib.basis) and not has(sub_meas, mode, "spec"):
         raise ModelError(f"바탕의 {mode.upper()} 값이 없습니다")
@@ -406,6 +522,8 @@ def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60
     tone: 목표를 잰 자리의 설계 망점 비율 (1 = 솔리드)."""
     if not inks:
         raise ModelError("쓸 수 있는 잉크를 하나 이상 고르세요")
+    inks = list(dict.fromkeys(lib.registry.resolve(n, strict=True) for n in inks))
+    under = lib.recipe(under) if under else None
     target = tuple(float(x) for x in target)
     sub = lib.find_substrate(substrate) if isinstance(substrate, str) else substrate
     space = pick_space(lib, mode, set(inks) | (set(normalize_recipe(under)["inks"]) if under else set()), sub)
@@ -462,7 +580,10 @@ def correct(lib, current, measured, target, substrate, mode="sci", adjustable=No
     모델이 지금 배합에서 틀린 만큼(measured - 예측)을 그대로 옮겨 쓴다 (편차 보정).
     change_weight: 바꾸는 양에 주는 벌점 (ΔE 1당 잉크합의 몇 %를 바꿀 가치가 있나).
     tone: 잰 자리의 설계 망점 비율 (1 = 솔리드)."""
-    cur = normalize_recipe(current)
+    current = lib.recipe(current)
+    cur = current
+    under = lib.recipe(under) if under else None
+    adjustable = [lib.registry.resolve(n, strict=True) for n in (adjustable or [])]
     measured = tuple(float(x) for x in measured)
     target = tuple(float(x) for x in target)
     sub = lib.find_substrate(substrate) if isinstance(substrate, str) else substrate

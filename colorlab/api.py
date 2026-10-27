@@ -90,6 +90,7 @@ def validate(doc):
     """저장 전에 형식을 검사하고 정리한 문서를 돌려준다."""
     if not isinstance(doc, dict):
         raise model.ModelError("라이브러리 형식 오류")
+    model.InkRegistry(doc.get("inks") or [])  # 이름·약칭·별칭·DB 연결의 전역 충돌 검사
     inks, names = [], set()
     for i in doc.get("inks") or []:
         name = str((i or {}).get("name") or "").strip()
@@ -99,6 +100,9 @@ def validate(doc):
             raise model.ModelError(f"잉크 이름 중복: {name}")
         names.add(name)
         ink = {"name": name, "clear": bool(i.get("clear")), "note": str(i.get("note") or "")}
+        ink["short_name"] = str(i.get("short_name") or "").strip()
+        ink["aliases"] = list(dict.fromkeys(a.strip() for a in (i.get("aliases") or []) if a.strip()))
+        ink["db_ink"] = i.get("db_ink", name if name in model.DB_INK_CODES else "")
         cal = i.get("cal") or {}
         if not ink["clear"]:
             c = {"hardener_pct": _num(cal.get("hardener_pct", 20), f"{name} 경화제%"),
@@ -156,6 +160,11 @@ def validate(doc):
         d.update({"coverage": cov, "note": str(p.get("note") or "")})
         plates.append(d)
     transfers = [_check_transfer(t, i + 1) for i, t in enumerate(doc.get("transfers") or [])]
+    registry = model.InkRegistry(inks)
+    for t in transfers:
+        for layer in (t.get("layer1"), t.get("layer2")):
+            if layer:
+                layer["inks"] = registry.normalize(layer["inks"])
     st = doc.get("settings") or {}
     yn = _num(st.get("yn", 1.0), "Yule–Nielsen n")
     if not 1 <= yn <= 10:
@@ -273,7 +282,7 @@ def save_library(data_root, backup_dir, doc, base_rev):
         if os.path.exists(p):
             with open(p, "rb") as f:
                 _atomic_write(os.path.join(backup_dir, f"lab-library.{stamp}.json"), f.read())
-        clean["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        clean["updatedAt"] = datetime.now().isoformat(timespec="microseconds")
         _atomic_write(p, json.dumps(clean, ensure_ascii=False, indent=2).encode("utf-8"))
         return 200, {"ok": True, "savedAt": clean["updatedAt"]}
 
@@ -292,6 +301,73 @@ def _cached_library(data_root):
 def _swatch(m, mode="sci"):
     lab = model.meas_lab(m, mode) if m else None
     return {"lab": [round(x, 2) for x in lab], "hex": cm.lab_to_hex(lab)} if lab else None
+
+
+def ink_catalog(doc):
+    """아카이브용 가벼운 공통 잉크 목록. 보정 최적화를 실행하지 않는다."""
+    registry = model.InkRegistry(doc.get("inks") or [])
+    rows = []
+    for name, ink in registry.inks.items():
+        solid = (ink.get("cal") or {}).get("solid")
+        swatches = {}
+        for mode in model.MODES:
+            swatch = _swatch(solid, mode)
+            if swatch:
+                swatch["in_gamut"] = cm.in_gamut(swatch["lab"])
+            swatches[mode] = swatch
+        rows.append({"name": name, "short_name": ink.get("short_name") or name,
+                     "aliases": ink.get("aliases") or [], "db_ink": registry.db_code(name),
+                     "clear": bool(ink.get("clear")), "swatches": swatches})
+    subs = [{"ref": _sub_ref(doc, s), "modes": [m for m in model.MODES if model.has(s, m, "xyz")]}
+            for s in doc.get("substrates") or []]
+    cards = (doc.get("settings") or {}).get("cards") or {}
+    subs += [{"ref": name, "modes": [m for m in model.MODES if model.has(cards[key], m, "xyz")]}
+             for name, key in model.CARDS.items() if cards.get(key)]
+    return {"inks": rows, "lookup": registry.lookup, "db_codes": list(model.DB_INK_CODES),
+            "substrates": subs, "plates": [p["lot"] for p in doc.get("plates") or []],
+            "updatedAt": doc.get("updatedAt") or ""}
+
+
+def recipe_preview(lib, doc, body, mode):
+    """아카이브의 미저장 배합도 계산. 실측값을 덮어쓰거나 LAB 평균으로 대체하지 않는다."""
+    recipe = lib.recipe(body.get("recipe"))
+    substrate = _substrate(body)
+    if not substrate:
+        raise model.ModelError("예상색을 계산할 바탕을 선택하세요")
+    tone = _tone(body)
+    plate = body.get("plate") or None
+    if plate and plate not in lib.plates:
+        raise model.ModelError(f"라이브러리에 없는 동판: {plate}")
+    sub = lib.find_substrate(substrate) if isinstance(substrate, str) else substrate
+    space = model.pick_space(lib, mode, recipe["inks"], sub)
+    errors = []
+    for name in recipe["inks"]:
+        try:
+            lib.ink_params(name, mode, space)
+        except model.ModelError as e:
+            errors.append(str(e))
+    if errors:
+        raise model.ModelError("계산 준비 안 됨: " + " / ".join(errors))
+    result = model.predict(lib, substrate, recipe, mode=mode, plate=plate, coverage={"1도": tone})
+    total = sum(recipe["inks"].values())
+    ingredients = [{"name": n, "g": g, "pct": g / total * 100} for n, g in recipe["inks"].items()]
+    warnings = ["모델 예상색이며 실측값이 아닙니다. 혼합·새 바탕은 실측 검증이 필요합니다.",
+                "LAB/화면 견본은 D65·2° 가정입니다. 측정 조건과 다르면 비교할 수 없습니다."]
+    if not plate:
+        warnings.append("동판 미지정: 상대 두께 ×1.00, 퍼짐 없음 가정")
+    if len(ingredients) < len([v for v in (body.get("recipe") or {}).get("inks", {}).values() if float(v) > 0]):
+        warnings.append("정식명과 별칭으로 입력한 같은 잉크의 중량을 합산했습니다.")
+    for n in recipe["inks"]:
+        solid = (lib.inks[n].get("cal") or {}).get("solid")
+        if solid:
+            warnings += [x["msg"] for x in fitmod.diagnose_measurement(solid, mode, space, n)]
+    if lib.profile:
+        stale = fitmod.stale_reasons(lib.profile, doc)
+        warnings += ["보정 프로필 재맞추기 필요: " + x for x in stale]
+        confidence = (lib.profile.get("confidence") or {}).get("level")
+        if confidence:
+            warnings.append(f"저장된 보정 프로필 신뢰도: {confidence} (현재 배합의 검증 결과는 아님)")
+    return {**result, "ingredients": ingredients, "warnings": list(dict.fromkeys(warnings))}
 
 
 def describe_library(doc, lib=None):
@@ -485,6 +561,8 @@ def handle(method, path, query, body, ctx):
     """ctx: {'data': dataRoot, 'backup': 백업 폴더, 'patterns': fn, 'worklog': fn|None, 'rev': X-Base-Rev}
     반환: (HTTP 상태, JSON)."""
     try:
+        if method == "GET" and path == "/api/lab/inks":
+            return 200, {"ok": True, **ink_catalog(load_library(ctx["data"]))}
         if method == "GET" and path == "/api/lab/library":
             doc = load_library(ctx["data"])
             return 200, {"ok": True, "library": doc, "info": describe_library(doc, _cached_library(ctx["data"]))}
@@ -508,6 +586,8 @@ def handle(method, path, query, body, ctx):
             return 200, {"ok": True, "dE2000": round(cm.delta_e2000(a, b), 3), "dE76": round(cm.delta_e76(a, b), 3),
                          "parts": {k: round(v, 3) for k, v in parts.items()}, "text": cm.describe(parts),
                          "hex": [cm.lab_to_hex(a), cm.lab_to_hex(b)]}
+        if path == "/api/lab/recipe-preview":
+            return 200, {"ok": True, **recipe_preview(lib, load_library(ctx["data"]), body, mode)}
         if path == "/api/lab/predict":
             r = model.predict(lib, _substrate(body), body.get("layer1"), body.get("layer2") or None, mode=mode,
                               plate=body.get("plate"), coverage=body.get("coverage") or None)
