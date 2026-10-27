@@ -388,8 +388,10 @@ def apply_db_mix(m, dm, registry=None):
     changed = False
     if dm.get("plate") and m.get("plate") != dm["plate"]:
         m["plate"] = dm["plate"]; changed = True
-    if "inks" in dm:
+    if dm.get("inks"):
         # 명시적으로 연결한 제품은 DB 값으로 교체, 미지원 커스텀 잉크는 보존한다.
+        # DB 행에 잉크가 하나도 없으면(미입력과 삭제를 DB에서 구분할 수 없음) 아카이브 값을 그대로 둔다
+        # — 'DB 동기화'가 모든 시편에 돌기 때문에, 빈 행 하나가 배합을 지우면 안 된다.
         cur = m.get("inks") or {}
         normalized = registry.normalize(cur)
         merged = {k: x for k, x in normalized.items() if not registry.db_code(k)}

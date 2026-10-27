@@ -196,8 +196,9 @@ class InkMappingTests(Base):
         m = {"inks": {"YE-D": 10, "200YE-D": 5, "custom": 7}}
         self.assertTrue(server.apply_db_mix(m, {"inks": {"YE-D": 20}}))
         self.assertEqual(m["inks"], {"200YE-D": 20, "custom": 7})
-        self.assertTrue(server.apply_db_mix(m, {"inks": {}}))
-        self.assertEqual(m["inks"], {"custom": 7})
+        # DB 행에 잉크가 비어 있으면(미입력 · 삭제 구분 불가) 아카이브 배합을 지우지 않는다
+        self.assertFalse(server.apply_db_mix(m, {"inks": {}}))
+        self.assertEqual(m["inks"], {"200YE-D": 20, "custom": 7})
 
 
 class RenameTests(Base):
