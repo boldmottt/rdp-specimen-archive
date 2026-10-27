@@ -327,7 +327,7 @@
     const nm = p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "";
     const title = `<span class="c-code">${esc(p.pattern.code)}</span><span class="c-name">${esc([nm, p.pattern.nameKo].filter(Boolean).join(" ") || "")}</span>`;
     const when = (v && v.date) ? fmtDate(v.date).slice(2) : (p.updatedAt ? String(p.updatedAt).slice(2, 10).replace(/-/g, ".") : "");
-    const meta = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : (when ? esc(when) : "")]
+    const meta = [(p.work.plate || [])[0] ? "동판 " + esc(p.work.plate[0]) : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : (when ? esc(when) : "")]
       .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("") + (layers(v).length ? `<span class="layer-pill">${esc(layers(v).join("·"))}</span>` : "");
     const chips = vars.length > 1
       ? vars.map((x) => `
@@ -787,10 +787,10 @@
     const head = `<tr><th>배합</th>${used.map((c) => `<th>${inkLabel(c)}</th>`).join("")}${hasMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>예상색</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m, mi) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
-      ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
-      ${hasMatting ? `<td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>` : ""}
-      <td>${m.thinnerG != null ? m.thinnerG + "g" : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
-      <td>${m.hardenerG != null ? m.hardenerG + "g" : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
+      ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? esc(m.inks[c]) : "—"}</td>`).join("")}
+      ${hasMatting ? `<td>${m.mattingG != null ? esc(m.mattingG) + "g" : m.mattingPct != null ? esc(m.mattingPct) + "%" : "—"}</td>` : ""}
+      <td>${m.thinnerG != null ? esc(m.thinnerG) + "g" : m.thinnerPct != null ? esc(m.thinnerPct) + "%" : "—"}</td>
+      <td>${m.hardenerG != null ? esc(m.hardenerG) + "g" : m.hardenerPct != null ? esc(m.hardenerPct) + "%" : "—"}</td>
       ${hasLab ? `<td>${m.labSce || m.labSci ? `<span class="lab-line"><i class="labsw" style="background:${labToCss(m.labSce || m.labSci)}"></i>${esc(labText(m.labSce || m.labSci))}</span>` : "—"}</td>` : ""}
       <td>${pigmentTotal(m)}</td>
       <td><button type="button" class="mini-btn" data-recipe-preview="${mi}">예상색</button></td>
@@ -1365,9 +1365,9 @@
     const o = opts || {};
     const val = key.split(".").reduce((a, k) => (a == null ? "" : a[k]), E.draft) ?? "";
     const v = Array.isArray(val) ? val.join(", ") : val;
-    if (o.type === "textarea") return `<div class="field-row"><label>${label}</label><textarea data-k="${key}" placeholder="${o.ph || ""}">${esc(v)}</textarea></div>`;
+    if (o.type === "textarea") return `<div class="field-row"><label>${label}</label><textarea data-k="${key}" placeholder="${esc(o.ph || "")}">${esc(v)}</textarea></div>`;
     if (o.type === "select") return `<div class="field-row"><label>${label}</label><select data-k="${key}">${o.options.map((x) => `<option value="${esc(x)}"${x === v ? " selected" : ""}>${esc(x || "—")}</option>`).join("")}</select></div>`;
-    return `<div class="field-row"><label>${label}</label><input data-k="${key}" value="${esc(v)}" placeholder="${o.ph || ""}" ${o.mono ? 'style="font-family:var(--mono);font-size:12px"' : ""}></div>`;
+    return `<div class="field-row"><label>${label}</label><input data-k="${key}" value="${esc(v)}" placeholder="${esc(o.ph || "")}" ${o.mono ? 'style="font-family:var(--mono);font-size:12px"' : ""}></div>`;
   }
 
   function pushPanel(pv) {
@@ -1510,10 +1510,10 @@
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
         <td class="mix-set${m.plate ? "" : " empty"}" title="DB 키: ${esc(layerCodeOf(d, v, m.layer))} · ${esc(m.layer || "")} · ${esc(m.plate || "동판 없음")}">${m.plate ? esc(m.plate) : "동판 없음"}<i>${esc(layerCodeOf(d, v, m.layer))}</i></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
-        ${inkCols.map((c) => `<td><input data-mf="ink:${esc(c)}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
-        ${showMatting ? `<td><input data-mf="mattingG" value="${m.mattingG != null ? m.mattingG : ""}" placeholder="${m.mattingG == null && m.mattingPct != null ? m.mattingPct + "%" : ""}" style="width:36px"></td>` : ""}
-        <td><input data-mf="thinnerG" value="${m.thinnerG != null ? m.thinnerG : ""}" placeholder="${m.thinnerG == null && m.thinnerPct != null ? m.thinnerPct + "%" : ""}" style="width:36px"></td>
-        <td><input data-mf="hardenerG" value="${m.hardenerG != null ? m.hardenerG : ""}" placeholder="${m.hardenerG == null && m.hardenerPct != null ? m.hardenerPct + "%" : ""}" style="width:36px"></td>
+        ${inkCols.map((c) => `<td><input data-mf="ink:${esc(c)}" value="${m.inks && m.inks[c] != null ? esc(m.inks[c]) : ""}" style="width:34px"></td>`).join("")}
+        ${showMatting ? `<td><input data-mf="mattingG" value="${m.mattingG != null ? esc(m.mattingG) : ""}" placeholder="${m.mattingG == null && m.mattingPct != null ? esc(m.mattingPct) + "%" : ""}" style="width:36px"></td>` : ""}
+        <td><input data-mf="thinnerG" value="${m.thinnerG != null ? esc(m.thinnerG) : ""}" placeholder="${m.thinnerG == null && m.thinnerPct != null ? esc(m.thinnerPct) + "%" : ""}" style="width:36px"></td>
+        <td><input data-mf="hardenerG" value="${m.hardenerG != null ? esc(m.hardenerG) : ""}" placeholder="${m.hardenerG == null && m.hardenerPct != null ? esc(m.hardenerPct) + "%" : ""}" style="width:36px"></td>
         <td class="lab-cell">${(() => {
           const sce = m.labSce, sci = m.labSci;
           if (!sce && !sci) return `<button class="lab-btn empty" data-lab="${mi}" title="LAB 값 입력">+ LAB</button>`;

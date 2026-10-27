@@ -1910,6 +1910,7 @@ if __name__ == "__main__":
         BACKUP = os.path.join(DATA, "_backup")
         TRASH = os.path.join(DATA, "_trash")
         PROPOSALS = os.path.join(DATA, "proposals")
+        THUMBS = os.path.join(DATA, "_thumb")
         UI_STATE = os.path.join(DATA, "_ui", "state.json")
         CFG["worklogDir"] = os.path.join(HERE, "pccs", "sample-worklogs")   # 익명 예시 일지
         from colorlab import synth   # 컬러연구소 합성 데모 라이브러리 (실측값 아님)
