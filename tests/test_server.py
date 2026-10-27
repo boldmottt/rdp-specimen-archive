@@ -265,6 +265,50 @@ class RenameTests(Base):
         self.assertEqual(st, 404)
 
 
+class SaveIntegrityTests(Base):
+    def test_same_second_saves_still_conflict(self):
+        """같은 초에 두 번 저장돼도 rev가 달라져, 첫 rev를 가진 다른 탭의 저장은 409."""
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": []}], rev=None)
+        st, r1 = self.put("P-W01", doc, create=True)
+        self.assertEqual(st, 200, r1)
+        st, r2 = self.put("P-W01", dict(doc, client="X"), rev=r1["savedAt"])
+        self.assertEqual(st, 200, r2)
+        self.assertNotEqual(r1["savedAt"], r2["savedAt"])
+        st, r3 = self.put("P-W01", dict(doc, client="Y"), rev=r1["savedAt"])
+        self.assertEqual(st, 409, r3)
+        self.assertEqual(self.read_pattern("P-W01")["client"], "X")
+
+    def test_next_rev_moves_past_future_rev(self):
+        self.assertEqual(server.next_rev("2999-01-01T00:00:00"), "2999-01-01T00:00:01")
+        self.assertRegex(server.next_rev(""), r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
+
+    def test_save_with_rev_after_delete_is_409(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": []}])
+        self.write_pattern(doc)
+        st, _ = self.req("DELETE", "/api/patterns/P-W01")
+        self.assertEqual(st, 200)
+        st, r = self.put("P-W01", doc, rev=doc["updatedAt"])
+        self.assertEqual(st, 409, r)
+        self.assertTrue(r.get("deleted"))
+        self.assertFalse(os.path.exists(os.path.join(server.PATTERNS, "P-W01.json")))
+
+    def test_nan_is_rejected_and_file_unchanged(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": []}])
+        self.write_pattern(doc)
+        body = json.dumps(dict(doc, work={"volume": float("nan")})).encode()
+        st, r = self.req("PUT", "/api/patterns/P-W01", body, {"X-Base-Rev": doc["updatedAt"]})
+        self.assertEqual(st, 400, r)
+        self.assertEqual(self.read_pattern("P-W01")["work"], {})
+
+    def test_non_object_mix_is_400_before_write(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": []}])
+        self.write_pattern(doc)
+        bad = dict(doc, variations=[{"id": "v01", "mixes": ["garbage"]}])
+        st, r = self.put("P-W01", bad, rev=doc["updatedAt"])
+        self.assertEqual(st, 400, r)
+        self.assertEqual(self.read_pattern("P-W01")["variations"][0]["mixes"], [])
+
+
 class RenameDbTests(Base):
     def setUp(self):
         super().setUp()

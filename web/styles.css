@@ -265,6 +265,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .mix-edit td{padding:2px 1px}
 .mix-edit input,.mix-edit select{width:100%;border:1px solid var(--line);border-radius:5px;padding:5px 3px;font:inherit;font-size:11px;text-align:center;font-family:var(--mono)}
 .mix-edit input:focus,.mix-edit select:focus{border-color:var(--ink);outline:none}
+.mix-edit input.bad{border-color:#c0392b;background:#fdecea}
 .mix-edit td.act{width:34px}
 .img-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .img-cell{border:1px solid var(--line);border-radius:10px;overflow:hidden;position:relative}

@@ -798,6 +798,14 @@
       <td class="note">${esc(m.change || m.note || "")}</td></tr>`).join("");
     return `<div class="tbl-wrap"><table class="mix">${head}${body}</table></div>`;
   }
+  // 배합 숫자칸: "" → null(비움), 숫자가 아니면 undefined(무시), "1,5"는 1.5
+  function parseNum(str) {
+    const t = String(str).trim().replace(",", ".");
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
   function pigmentTotal(m) {
     const keys = Object.keys(m.inks || {});
     const t = keys.reduce((a, k) => a + (Number(m.inks[k]) || 0), 0);
@@ -1297,7 +1305,7 @@
     $("#drawer").classList.add("on"); $("#drawer-scrim").classList.add("on");
   }
   function isDirty() {
-    return !!(E.draft && E.origJson && JSON.stringify(E.draft) !== E.origJson);
+    return !!(E.draft && ((E.origJson && JSON.stringify(E.draft) !== E.origJson) || E.jsonErr));
   }
 
   function closeEditor(force) {
@@ -1319,6 +1327,12 @@
     d.nextVarSeq = seq + 1;
     return "v" + String(seq).padStart(2, "0");
   }
+
+  function startNewDraft() {
+    App.newDraft = newDoc();
+    App.newDraftOrig = JSON.stringify(App.newDraft);
+  }
+  const newDraftTouched = () => !!App.newDraft && JSON.stringify(App.newDraft) !== App.newDraftOrig;
 
   function newDoc() {
     return {
@@ -1716,7 +1730,9 @@
       };
       $("#del-var").onclick = () => {
         if (d.variations.length <= 1) return;
-        if (!confirm(vName(d.variations[E.vIdx]) + " 베리에이션을 삭제할까요? 이미지는 유지됩니다.")) return;
+        const nImg = (d.variations[E.vIdx].images || []).length;
+        if (!confirm(vName(d.variations[E.vIdx]) + " 베리에이션을 삭제할까요?"
+          + (nImg ? `\n이미지 ${nImg}장은 저장할 때 휴지통(_trash)으로 옮겨집니다.` : ""))) return;
         d.variations.splice(E.vIdx, 1); E.vIdx = 0; renderDrawer();
       };
       $$("[data-c]").forEach((el) => (el.oninput = () => {
@@ -1785,17 +1801,24 @@
           if (f.startsWith("ink:")) {
             m.inks = m.inks || {};
             const k = f.slice(4);
-            const num = parseFloat(el.value);
-            if (el.value === "" || isNaN(num)) delete m.inks[k]; else m.inks[k] = num;
+            const num = parseNum(el.value);
+            el.classList.toggle("bad", num === undefined);
+            if (num === null) delete m.inks[k]; else if (num !== undefined) m.inks[k] = num;
           } else if (f === "isReference") {
             m.isReference = el.checked;
             if (el.checked) v.mixes.forEach((x) => { if (x !== m && x.layer === m.layer) x.isReference = false; });
           }
           else if (["mattingPct", "thinnerPct", "hardenerPct", "mattingG", "thinnerG", "hardenerG"].includes(f)) {
-            const num = parseFloat(el.value); m[f] = isNaN(num) ? null : num;
+            const num = parseNum(el.value);
+            el.classList.toggle("bad", num === undefined);
+            if (num === undefined) return;
             const pair = { mattingPct: "mattingG", thinnerPct: "thinnerG", hardenerPct: "hardenerG",
                            mattingG: "mattingPct", thinnerG: "thinnerPct", hardenerG: "hardenerPct" }[f];
-            if (pair) delete m[pair];
+            // g를 넣으면 %는 지우되, 칸을 다시 비우면 입력 전 % 값을 되살린다
+            if (!("pairBackup" in el.dataset) && m[pair] != null) el.dataset.pairBackup = m[pair];
+            m[f] = num;
+            if (num !== null) delete m[pair];
+            else if ("pairBackup" in el.dataset) { m[pair] = Number(el.dataset.pairBackup); delete el.dataset.pairBackup; }
           } else m[f] = el.value;
         };
         el.oninput = handler;
@@ -2148,10 +2171,11 @@
         });
       }
       saveLS();
-      E.msg = "저장됨 " + (r.savedAt || "");
+      const warns = r.warnings || [];
+      E.msg = "저장됨 " + (r.savedAt || "") + (warns.length ? " · 확인: " + warns.join(" / ") : "");
       E.isNew = false;
       E.origJson = JSON.stringify(saved);
-      toast("저장됨");
+      toast(warns.length ? "저장됨 · " + warns.join(" / ") : "저장됨");
       E.draft = clone(saved);
       E.origJson = JSON.stringify(saved);
       if (prevId && prevId !== d.id) {
@@ -2268,7 +2292,8 @@
     v.images[C.slot - 1] = res.file;
     v.images = v.images.filter(Boolean);
     renderDrawer();
-    toast(res.lowRes ? "저장됨 · 해상도가 낮습니다 (" + res.sourceWidth + "px)" : "이미지 저장됨");
+    toast((res.lowRes ? "해상도가 낮습니다 (" + res.sourceWidth + "px) · " : "")
+      + "이미지를 올렸습니다 — 아래 [저장]을 눌러야 시편에 반영됩니다");
   }
 
   async function uploadCenter() {
@@ -2332,7 +2357,7 @@
     const nav = $("#navhome");
     if (nav) nav.style.display = h ? "" : "none";
     if (h === "/new") {
-      if (!App.newDraft) App.newDraft = newDoc();
+      if (!App.newDraft) startNewDraft();
       renderDetail("__new__", null, App.newDraft);
       renderCart();
     } else if (h.indexOf("/p/") === 0) {
@@ -2355,7 +2380,17 @@
     $("#brand").onclick = () => (location.hash = "");
     $("#navhome").onclick = () => (location.hash = "");
     $("#cartbtn").onclick = () => (location.hash = "#/proposal");
-    $("#newbtn").onclick = () => { App.newDraft = newDoc(); location.hash = "#/new"; };
+    $("#newbtn").onclick = () => {
+      if (newDraftTouched()) toast("작성 중이던 새 시편을 이어서 엽니다");
+      else startNewDraft();
+      location.hash = "#/new";
+    };
+    // 새로고침·탭 닫기: 편집기나 새 시편에 저장하지 않은 내용이 있으면 브라우저 확인창
+    window.addEventListener("beforeunload", (e) => {
+      if (($("#drawer").classList.contains("on") && isDirty()) || newDraftTouched()) {
+        e.preventDefault(); e.returnValue = "";
+      }
+    });
     $("#drawer-close").onclick = () => closeEditor();
     $("#drawer-cancel").onclick = () => closeEditor();
     $("#drawer-scrim").onclick = () => closeEditor();

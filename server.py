@@ -28,7 +28,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -124,6 +124,17 @@ def pid_lock(pid: str) -> threading.Lock:
         return lk
 
 
+def next_rev(prev_rev: str) -> str:
+    """저장 시각(초 단위)이 rev. 같은 초에 다시 저장되면 이전 rev + 1초로 올려 충돌 감지가 빠지지 않게 한다."""
+    fmt = "%Y-%m-%dT%H:%M:%S"
+    now = datetime.now().replace(microsecond=0)
+    try:
+        prev = datetime.strptime(prev_rev or "", fmt)
+    except ValueError:
+        return now.strftime(fmt)
+    return max(now, prev + timedelta(seconds=1)).strftime(fmt)
+
+
 def now_stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
 
@@ -212,14 +223,20 @@ def validate_pattern(doc: dict):
         return errors
     seen = set()
     for i, v in enumerate(vars_):
+        if not isinstance(v, dict):
+            errors.append(f"variations[{i}]가 객체가 아닙니다")
+            continue
         vid = v.get("id") or ""
         if not ID_RE.match(vid):
             errors.append(f"variations[{i}].id가 올바르지 않습니다")
         if vid in seen:
             errors.append(f"variation id 중복: {vid}")
         seen.add(vid)
-        if not isinstance(v.get("mixes", []), list):
+        mixes = v.get("mixes", [])
+        if not isinstance(mixes, list):
             errors.append(f"variations[{i}].mixes가 배열이 아닙니다")
+        elif any(not isinstance(m, dict) for m in mixes):
+            errors.append(f"variations[{i}].mixes에 객체가 아닌 항목이 있습니다")
     return errors
 
 
@@ -1430,7 +1447,7 @@ class Handler(BaseHTTPRequestHandler):
                     touched.append(v.get("id"))
             v = vs[0]
             if added or updated:
-                doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                doc["updatedAt"] = next_rev(doc.get("updatedAt") or "")
                 with open(path, encoding="utf-8") as f:
                     old = f.read()
                 atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
@@ -1550,7 +1567,7 @@ class Handler(BaseHTTPRequestHandler):
                             new_key = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")
                             res = rename_db_rows(old_key, new_key)
                         doc.pop("renamedFrom", None)
-                        doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                        doc["updatedAt"] = next_rev(doc.get("updatedAt") or "")
                         with open(path, encoding="utf-8") as f:
                             old = f.read()
                         atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
@@ -1718,6 +1735,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"[warn] 기존 파일을 읽지 못했습니다 {rename_from or pid}: {e}")
         base_rev = (self.headers.get("X-Base-Rev") or "").strip()
+        if base_rev and not rename_from and not os.path.exists(src_path):
+            return self.json({"ok": False, "conflict": True, "deleted": True,
+                              "message": "이 시편은 다른 곳에서 삭제되었습니다"}, 409)
         if prev is not None and (base_rev or rename_from):
             prev_rev = prev.get("updatedAt") or ""
             if prev_rev and base_rev != prev_rev:
@@ -1738,7 +1758,7 @@ class Handler(BaseHTTPRequestHandler):
             if rf and (rf.get("project") or "", rf.get("code") or "") != new_key:
                 doc["renamedFrom"] = rf
 
-        doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        doc["updatedAt"] = next_rev(prev.get("updatedAt") if isinstance(prev, dict) else "")
         if prev is not None or os.path.exists(src_path):
             try:
                 with open(src_path, encoding="utf-8") as f:
@@ -1746,7 +1766,10 @@ class Handler(BaseHTTPRequestHandler):
                 atomic_write(os.path.join(BACKUP, f"{rename_from or pid}.{now_stamp()}.json"), old.encode("utf-8"))
             except Exception as e:
                 return self.error(500, f"백업 실패로 저장을 중단했습니다: {e}")
-        data = json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8")
+        try:
+            data = json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
+        except ValueError:
+            return self.json({"ok": False, "errors": ["숫자가 아닌 값(NaN/Infinity)이 있습니다"]}, 400)
         if rename_from:
             try:
                 rename_pattern(rename_from, pid, data)
