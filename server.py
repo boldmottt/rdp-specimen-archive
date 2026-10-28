@@ -1955,6 +1955,8 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isfile(path):
             path = os.path.join(WEB, "index.html")
         ctype = mimetypes.guess_type(path)[0] or "text/html"
+        if path.endswith(".js"):
+            ctype = "text/javascript"   # 모듈 스크립트는 MIME이 정확해야 실행된다 (OS 레지스트리 값에 기대지 않음)
         if ctype.startswith("text/") or ctype in ("application/javascript",):
             ctype += "; charset=utf-8"
         with open(path, "rb") as f:
