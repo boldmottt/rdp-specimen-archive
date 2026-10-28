@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 
 /* ---------------- catalog ---------------- */
@@ -29,6 +29,27 @@ function filtered() {
   });
 }
 
+// 카드 썸네일: 축소본 srcset + 원본 대체. 컬러 칩으로 바꿀 때도 이걸 통째로 다시 그린다
+// (srcset이 있으면 브라우저는 src를 무시하므로 src만 바꾸면 화면이 그대로다)
+function cardMedia(p, v) {
+  const n = v && v.images && v.images.length ? v.images[0] : "";
+  const vid = v ? v.id : "";
+  if (!n) return html`<div class="empty" data-vid="${vid}">IMAGE N/A</div>`;
+  const full = imgUrl(p.id, n);
+  const alt = [p.pattern.code, vName(v)].filter(Boolean).join(" ");
+  return html`<img loading="lazy" data-vid="${vid}" src="${thumbUrl(p.id, n, 480)}" srcset="${thumbUrl(p.id, n, 480)} 480w, ${thumbUrl(p.id, n, 960)} 960w, ${full} 2400w" sizes="(max-width:760px) 94vw, (max-width:1180px) 44vw, 340px" onerror="this.onerror=null;this.removeAttribute('srcset');this.src='${full}'" alt="${alt}">`;
+}
+function showVar(card, p, v) {
+  const media = card.querySelector("a.media");
+  if (!media || !v) return;
+  const cur = media.querySelector("img, .empty");
+  if (cur && cur.dataset.vid === v.id) return;
+  const box = document.createElement("div");
+  box.innerHTML = String(cardMedia(p, v));
+  const next = box.firstElementChild;
+  if (cur) cur.replaceWith(next); else media.prepend(next);
+}
+
 function cardHTML(p) {
   const vars = p.variations || [];
   const vid = p._sel || (vars[0] && vars[0].id);
@@ -43,24 +64,20 @@ function cardHTML(p) {
   const dot = (x) => (x.images && x.images.length ? html`<span class="vdot" data-src="${thumbUrl(p.id, x.images[0], 120)}"></span>` : raw('<span class="vdot"></span>'));
   const chips = vars.length > 1
     ? html`${vars.map((x) => html`
-      <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}" data-sel="${x.id}" data-img="${vImg(p.id, x) || ""}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
+      <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}" data-sel="${x.id}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
         ${dot(x)}
         <span class="nm">${vName(x)}</span>
       </button>`)}<button class="vchip vchip-all" data-all="1" title="이 패턴의 모든 컬러를 한 번에">${vars.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${vars.length}색`}</button>`
     : (v ? html`
-      <button class="vchip${inCart(p.id, v.id) ? " in" : ""}${v.id === vid ? " on" : ""}" data-sel="${v.id}" data-img="${vImg(p.id, v) || ""}" title="클릭: 제안서에 담기/빼기">
+      <button class="vchip${inCart(p.id, v.id) ? " in" : ""}${v.id === vid ? " on" : ""}" data-sel="${v.id}" title="클릭: 제안서에 담기/빼기">
         ${dot(v)}
         <span class="nm" style="font-family:var(--mono)">${vName(v)}</span>
       </button>` : "");
   const href = `#/p/${encodeURIComponent(p.id)}${v ? "/" + encodeURIComponent(v.id) : ""}`;
   const alt = [p.pattern.code, v ? vName(v) : ""].filter(Boolean).join(" ");
-  const img = (n) => {
-    const full = imgUrl(p.id, n);
-    return html`<img loading="lazy" src="${thumbUrl(p.id, n, 480)}" srcset="${thumbUrl(p.id, n, 480)} 480w, ${thumbUrl(p.id, n, 960)} 960w, ${full} 2400w" sizes="(max-width:760px) 94vw, (max-width:1180px) 44vw, 340px" onerror="this.onerror=null;this.src='${full}'" alt="${alt}">`;
-  };
   return String(html`<article class="card${picked ? " picked" : ""}" data-pid="${p.id}">
       <a class="media" href="${href}" aria-label="${alt} 상세 보기">
-        ${v && v.images && v.images.length ? img(v.images[0]) : raw('<div class="empty">IMAGE N/A</div>')}
+        ${cardMedia(p, v)}
         ${p.project ? html`<div class="badge">${p.project}</div>` : ""}
       </a>
       <div class="card-body">
@@ -146,18 +163,15 @@ export function renderCatalog() {
   $$("[data-sel]").forEach((el) => {
     const card = el.closest(".card");
     const p = byId(card.dataset.pid);
-    const img = () => card.querySelector(".media img");
-    el.onmouseenter = () => { const im = img(); if (im && el.dataset.img) im.src = el.dataset.img; };
-    el.onmouseleave = () => {
-      const im = img(); if (!im) return;
-      const cur = varOf(p, p._sel);
-      im.src = vImg(p.id, cur) || im.src;
-    };
+    const x = varOf(p, el.dataset.sel);
+    el.onmouseenter = () => showVar(card, p, x);
+    el.onmouseleave = () => showVar(card, p, varOf(p, p._sel));
     el.onclick = (e) => {
       e.stopPropagation();
       toggleCart(p.id, el.dataset.sel);
       p._sel = el.dataset.sel;
-      const im = img(); if (im && el.dataset.img) im.src = el.dataset.img;
+      showVar(card, p, x);
+      card.querySelectorAll("[data-sel]").forEach((b) => b.classList.toggle("on", b.dataset.sel === p._sel));
       card.classList.toggle("picked", inCart(p.id, el.dataset.sel));
       card.querySelectorAll("[data-sel]").forEach((b) => b.classList.toggle("in", inCart(p.id, b.dataset.sel)));
       // 썸네일 링크도 방금 고른 컬러로 열리게
