@@ -1031,6 +1031,9 @@ def _plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
                 fields.append({"name": "result", "from": cur.get("result") or "", "to": RESULT_TO_DB[enum]})
             if m.get("date") and m["date"] != (cur.get("date") or ""):
                 fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
+            # 기준 배합 표시는 아카이브가 원본 — 처음 넣을 때만 맞고 그 뒤 바꾼 것이 DB에 안 가던 문제
+            if bool(m.get("isReference")) != bool(cur.get("isReference")):
+                fields.append({"name": "is_base", "from": int(bool(cur.get("isReference"))), "to": int(bool(m.get("isReference")))})
             if fields:
                 updates.append(dict(base, id=cur.get("_id"), fields=fields))
     return {"updates": updates, "inserts": inserts, "moves": moves, "skipped": skipped, "shared": shared}
@@ -1103,6 +1106,8 @@ def apply_push(project, code, doc, plan):
                     sets.append("result=?"); vals.append(f["to"])
                 elif f["name"] == "date":
                     sets.append("date=?"); vals.append(f["to"])
+                elif f["name"] == "is_base":
+                    sets.append("is_base=?"); vals.append(1 if f["to"] else 0)
                 elif f["name"] in DB_INKS:
                     sets.append(f"{dict(INK_COLS)[f['name']]}=?"); vals.append(f["to"])
                 else:
@@ -1212,6 +1217,8 @@ def _diff_db(doc, assigned):
                 fields.append("result")
             if dm.get("date") and m.get("date") != dm["date"]:
                 fields.append("date")
+            if bool(m.get("isReference")) != bool(dm.get("isReference")):
+                fields.append("is_base")
             if fields:
                 changed.append({"vid": v.get("id"), "batch": m.get("batch"), "plate": m.get("plate"), "fields": fields})
             else:

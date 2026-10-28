@@ -754,6 +754,38 @@ class LayerPatternTests(Base):
         self.assertEqual((r["same"] + len(r["changed"]), r["archiveOnly"], r["dbOnly"]), (1, [], []), r)
 
 
+class ReferenceSyncTests(Base):
+    """기준 배합(isReference)은 아카이브가 원본 — 처음 넣을 때만이 아니라 나중에 바꿔도 DB is_base에 반영."""
+
+    def base_flags(self):
+        con = sqlite3.connect(self.db)
+        out = dict(con.execute("SELECT batch_no, is_base FROM rdp_mixes").fetchall())
+        con.close()
+        return out
+
+    def test_reference_change_updates_is_base(self):
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [
+            mix("1도", "A", "26_001", isReference=True), mix("1도", "B", "26_001")]}]))
+        st, r = self.push("P-W01")
+        self.assertEqual(r["inserted"], 2, r)
+        self.assertEqual(self.base_flags(), {"A": 1, "B": 0})
+        d = self.read_pattern("P-W01")
+        d["variations"][0]["mixes"][0]["isReference"] = False
+        d["variations"][0]["mixes"][1]["isReference"] = True
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        st, r = self.req("GET", "/api/rdp/diff/P-W01")
+        self.assertEqual(sorted(c["batch"] for c in r["changed"]), ["A", "B"], r)
+        st, pv = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(sorted((u["batch"], [(f["name"], f["from"], f["to"]) for f in u["fields"]]) for u in pv["updates"]),
+                         [("A", [("is_base", 1, 0)]), ("B", [("is_base", 0, 1)])])
+        st, r = self.push("P-W01")
+        self.assertEqual((r["updated"], r["inserted"]), (2, 0), r)
+        self.assertEqual(self.base_flags(), {"A": 0, "B": 1})
+        st, r = self.req("GET", "/api/rdp/diff/P-W01")   # 날짜(신규 행에 오늘 날짜)만 다르고 기준은 같다
+        self.assertFalse([c for c in r["changed"] if "is_base" in c["fields"]], r)
+
+
 class StalePushTests(Base):
     """DB 전송은 미리보기에서 본 계획 그대로일 때만 — 그사이 시편·잉크 연결·DB가 바뀌면 409로 다시 보게."""
 

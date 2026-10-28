@@ -132,7 +132,9 @@ function pushPanel(pv) {
   const moveText = (x) => [x.from !== x.to ? `패턴 코드 ${esc(x.from)} → <b>${esc(x.to)}</b>` : "",
     x.fromPlate && x.fromPlate !== x.toPlate ? `동판 ${esc(x.fromPlate)} → <b>${esc(x.toPlate)}</b>` : ""].filter(Boolean).join(" · ");
   mv.forEach((x) => rows.push(`<li><b>${esc(x.batch)}</b> ${tag(x)}<span class="pp-f">${esc(x.layer || "")} ${moveText(x)} 이동</span></li>`));
-  upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
+  const fieldText = (f) => (f.name === "is_base" ? `기준 배합 ${f.from ? "기준" : "아님"} → <b>${f.to ? "기준" : "아님"}</b>`
+    : `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`);
+  upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map(fieldText).join(", ")}</span></li>`));
   ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> ${tag(i)}<span class="pp-f">신규 배합 (${esc(i.code || "")} · ${esc(i.layer || "")} · ${esc(i.plate)})</span></li>`));
   const n = rows.length;
   sh.forEach((x) => rows.push(`<li class="pp-skip"><b>${esc(x.batch || "-")}</b> ${esc(x.vid || "")} 공유 — ${esc(x.reason || "")}</li>`));
