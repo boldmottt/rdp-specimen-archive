@@ -199,8 +199,8 @@ export function paintDots(root) {
   });
 }
 
-export function toast(msg) {
+export function toast(msg, ms = 1800) {
   const t = $("#toast");
   t.textContent = msg; t.classList.add("on");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 1800);
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), ms);
 }

@@ -70,6 +70,10 @@ async function boot() {
     $("#brand-name").textContent = health.brand || "RDP";
     $("#brand-sub").textContent = health.brandSub || "SPECIMEN ARCHIVE";
     document.title = (health.brand || "RDP") + " 시편 아카이브";
+    const others = health.otherServers || [];
+    if (others.length) {
+      toast(`다른 PC(${others.map((o) => o.host).join(", ")})에서도 아카이브 서버가 켜져 있어요 — 같은 시편을 동시에 고치면 저장이 엇갈릴 수 있어요`, 8000);
+    }
   } catch (e) {}
 
   $("#search").addEventListener("input", (e) => {

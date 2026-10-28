@@ -1308,8 +1308,9 @@ def load_all():
     return out, errors
 
 
-def gc_images(pid: str, doc: dict) -> list:
-    """JSON에서 참조하지 않는 이미지 파일을 _trash로 이동."""
+def gc_images(pid: str, doc: dict, min_age: float = 600) -> list:
+    """JSON에서 참조하지 않는 이미지 파일을 _trash로 이동. min_age초보다 최근 파일은 남긴다
+    (저장 때는 10분 — 막 올린 사진, 서버 시작 때는 하루 — 다른 PC에서 JSON보다 먼저 동기화된 사진)."""
     ref = set()
     for v in doc.get("variations", []):
         for name in (v.get("images") or []):
@@ -1325,7 +1326,7 @@ def gc_images(pid: str, doc: dict) -> list:
             continue
         fp = os.path.join(pdir, f)
         try:
-            if now - os.path.getmtime(fp) < 600:   # 10분 이내 업로드는 보존
+            if now - os.path.getmtime(fp) < min_age:
                 continue
         except OSError:
             continue
@@ -1564,6 +1565,68 @@ def next_doc_no(prefix: str, taken) -> str:
     while f"{prefix}{n:02d}" in taken:
         n += 1
     return f"{prefix}{n:02d}"
+
+
+# ---------------------------------------------------------------- 여러 PC 감지
+# 같은 드라이브 폴더를 두 PC의 서버가 함께 쓰면 잠금이 PC마다 따로라 저장이 엇갈릴 수 있다.
+# 서버마다 1분에 한 번 _ui/servers/<PC>-<포트>.json에 '살아 있음'을 남기고, 다른 PC 것이 최근이면 알린다.
+HEARTBEAT_EVERY = 60
+HEARTBEAT_FRESH = 600          # 드라이브 동기화가 늦어도 잡히게 10분
+
+
+def heartbeat_dir() -> str:
+    return os.path.join(DATA, "_ui", "servers")
+
+
+def my_server_id() -> str:
+    host = re.sub(r"[^A-Za-z0-9._-]+", "-", socket.gethostname() or "pc").strip("-.")[:60] or "pc"
+    return f"{host}-{PORT}"
+
+
+def write_heartbeat(started: str):
+    os.makedirs(heartbeat_dir(), exist_ok=True)
+    atomic_write(os.path.join(heartbeat_dir(), my_server_id() + ".json"), json.dumps(
+        {"host": socket.gethostname(), "port": PORT, "pid": os.getpid(), "startedAt": started, "beat": time.time()},
+        ensure_ascii=False).encode("utf-8"))
+
+
+def other_servers(now=None) -> list:
+    """최근에 살아 있다고 남긴 다른 PC(또는 다른 포트)의 서버들."""
+    now, out, d = now or time.time(), [], heartbeat_dir()
+    if not os.path.isdir(d):
+        return out
+    for name in sorted(os.listdir(d)):
+        if not name.endswith(".json") or name == my_server_id() + ".json":
+            continue
+        try:
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                hb = json.load(f)
+            beat = float(hb.get("beat") or 0)
+        except Exception:
+            continue
+        if 0 <= now - beat < HEARTBEAT_FRESH:
+            out.append({"host": str(hb.get("host") or name[:-5]), "port": hb.get("port"), "secondsAgo": int(now - beat)})
+    return out
+
+
+def start_heartbeat():
+    started = datetime.now().isoformat(timespec="seconds")
+
+    def loop():
+        while True:
+            try:
+                write_heartbeat(started)
+            except Exception as e:   # noqa: BLE001 — 드라이브가 잠깐 안 돼도 서버는 계속
+                print(f"[warn] 서버 표시를 쓰지 못했습니다: {e}")
+            time.sleep(HEARTBEAT_EVERY)
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def stop_heartbeat():
+    try:
+        os.remove(os.path.join(heartbeat_dir(), my_server_id() + ".json"))
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- LAN PIN (선택)
@@ -1828,7 +1891,8 @@ class Handler(BaseHTTPRequestHandler):
                                   "brandSub": CFG.get("brandSub", "SPECIMEN ARCHIVE"),
                                   "company": CFG.get("company", ""),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
-                                  "pageMax": CFG.get("pageMax", 2)})
+                                  "pageMax": CFG.get("pageMax", 2),
+                                  "otherServers": other_servers()})
             if p.startswith("/api/rdp/push-preview/"):
                 pid = p[len("/api/rdp/push-preview/"):].strip("/")
                 try:
@@ -2579,13 +2643,21 @@ if __name__ == "__main__":
         print(f"    정리:  kill <PID>     (또는 --port 로 다른 번호 지정)")
         sys.exit(1)
 
-    try:
-        for doc in load_all()[0]:
-            moved = gc_images(doc["id"], doc)
-            if moved:
-                print(f"[gc] {doc['id']}: {len(moved)}개 정리")
-    except Exception as e:
-        print(f"[gc] 건너뜀: {e}")
+    others = other_servers()
+    if others:
+        print("[!] 같은 데이터 폴더를 쓰는 서버가 다른 곳에서도 켜져 있습니다: "
+              + ", ".join(f"{o['host']}:{o['port']} ({o['secondsAgo']}초 전)" for o in others))
+        print("    두 PC에서 같은 시편을 동시에 고치면 저장이 엇갈릴 수 있어요. 한 대에서만 켜 두기를 권합니다.")
+        print("[gc] 다른 서버가 켜져 있어 시작 시 이미지 정리를 건너뜁니다")
+    else:
+        try:
+            for doc in load_all()[0]:
+                moved = gc_images(doc["id"], doc, min_age=86400)   # 하루 지난, JSON에 없는 이미지만
+                if moved:
+                    print(f"[gc] {doc['id']}: {len(moved)}개 정리")
+        except Exception as e:
+            print(f"[gc] 건너뜀: {e}")
+    start_heartbeat()
 
     bind_addr = "127.0.0.1"
     lan_ips = set()
@@ -2624,3 +2696,5 @@ if __name__ == "__main__":
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\n종료합니다.")
+    finally:
+        stop_heartbeat()

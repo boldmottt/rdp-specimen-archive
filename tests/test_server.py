@@ -1175,6 +1175,31 @@ class ProposalTests(Base):
         self.assertEqual(self.req("GET", "/api/proposals/nope")[0], 404)
 
 
+class MultiServerTests(Base):
+    """같은 데이터 폴더를 쓰는 다른 PC의 서버 감지 + 시작 시 이미지 정리 유예."""
+
+    def beat(self, name, ago, host):
+        os.makedirs(server.heartbeat_dir(), exist_ok=True)
+        with open(os.path.join(server.heartbeat_dir(), name + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"host": host, "port": 8791, "beat": time.time() - ago}, f)
+
+    def test_recent_other_server_is_reported(self):
+        server.write_heartbeat("now")                               # 내 것은 빼고
+        self.beat("OTHER-PC-8791", 30, "OTHER-PC")
+        self.beat("OLD-PC-8791", 3600, "OLD-PC")                    # 한 시간 전에 멈춘 것도 빼고
+        st, r = self.req("GET", "/api/health")
+        self.assertEqual([o["host"] for o in r["otherServers"]], ["OTHER-PC"])
+
+    def test_startup_gc_waits_a_day(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "images": []}])
+        self.add_image("P-W01", "orphan.jpg")
+        path = os.path.join(server.IMAGES, "P-W01", "orphan.jpg")
+        hour_ago = time.time() - 3600
+        os.utime(path, (hour_ago, hour_ago))
+        self.assertEqual(server.gc_images("P-W01", doc, min_age=86400), [])   # 시작 때: 다른 PC에서 막 동기화된 사진일 수 있음
+        self.assertEqual(server.gc_images("P-W01", doc), ["orphan.jpg"])      # 저장 때(10분 유예)는 정리
+
+
 class LanPinTests(Base):
     """LAN 모드 PIN(선택): 같은 네트워크의 다른 기기는 PIN 쿠키가 있어야 하고, PIN을 안 정하면 예전과 같다."""
 
