@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 편집 서랍 (기본 · 컬러 · 배합 · 이미지 · JSON) */
-import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, deriveId, esc, imgUrl, markSaved, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
+import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, deriveId, esc, imgUrl, markSaved, normalizeDoc, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { addInkTag, bindRecipePreviews, inkInfo, inkLabel, inkOrder, inkPool, labOf, labText, labToCss, layerCodeOf, layerPlate, loadInkCatalog, mixTable, platePatterns, setLayerPlate, syncLayerPlates } from "./detail.js";
 import { renderCart } from "./proposal.js";
@@ -68,7 +68,7 @@ export function newDoc() {
 function freshCopy(m, existing) {
   const c = clone(m);
   c.isReference = false; c.result = ""; c.date = todayLocal();
-  delete c._id;
+  delete c._id; delete c.plateFrom;
   // 배합 이름(batch)은 그대로 가져가되, 같은 컬러에 같은 도수·이름이 이미 있으면 -2, -3 …
   const list = existing || [];
   const same = (x, b) => (x.layer || "") === (c.layer || "") && (x.batch || "") === b;
@@ -101,6 +101,13 @@ function fieldRow(label, key, opts) {
   return `<div class="field-row"><label>${label}</label><input data-k="${key}" value="${esc(v)}" placeholder="${o.ph || ""}" ${o.mono ? 'style="font-family:var(--mono);font-size:12px"' : ""}></div>`;
 }
 
+// 미리보기는 서버에 저장된 시편으로 계산한다 — 편집기가 보고 있는 버전과 다르면(다른 탭·PC에서 저장) 보내지 않는다
+function staleDraft(pv) {
+  if (!pv.rev || !E.baseRev || pv.rev === E.baseRev) return false;
+  toast("다른 곳에서 이 시편이 바뀌었어요 — 편집기를 닫고 다시 열어 최신 내용을 확인한 뒤 보내세요");
+  return true;
+}
+
 function pushPanel(pv) {
   if (pv.ink_errors && pv.ink_errors.length) {
     return `<div class="push-panel"><div class="pp-blocked">${esc(pv.blocked)}</div><ul>${pv.ink_errors.map((x) => `<li>${esc(x.vid || "")} · ${esc(x.layer || "")} ${esc(x.batch || "-")}: ${esc(x.reason)}</li>`).join("")}</ul><div class="pp-actions"><button class="mini-btn" id="pp-cancel">닫기</button><a href="/lab/#/library" target="_blank" rel="noopener">컬러연구소에서 DB 연결 설정</a><button class="mini-btn" disabled>전체 전송 차단</button></div></div>`;
@@ -121,8 +128,13 @@ function pushPanel(pv) {
   const multi = new Set([...upd, ...ins].map((x) => x.vid)).size > 1;
   const tag = (x) => (multi && x.vid ? `<span class="pp-skip">${esc(x.vid)}</span> ` : "");
   const rows = [];
-  mv.forEach((x) => rows.push(`<li><b>${esc(x.batch)}</b> ${tag(x)}<span class="pp-f">${esc(x.layer || "")} 패턴 코드 이동 ${esc(x.from)} → <b>${esc(x.to)}</b></span></li>`));
-  upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
+  // 이동: 예전 코드·동판으로 들어간 DB 행을 새 행 대신 옮긴다 (코드와 동판이 함께 바뀌었으면 둘 다)
+  const moveText = (x) => [x.from !== x.to ? `패턴 코드 ${esc(x.from)} → <b>${esc(x.to)}</b>` : "",
+    x.fromPlate && x.fromPlate !== x.toPlate ? `동판 ${esc(x.fromPlate)} → <b>${esc(x.toPlate)}</b>` : ""].filter(Boolean).join(" · ");
+  mv.forEach((x) => rows.push(`<li><b>${esc(x.batch)}</b> ${tag(x)}<span class="pp-f">${esc(x.layer || "")} ${moveText(x)} 이동</span></li>`));
+  const fieldText = (f) => (f.name === "is_base" ? `기준 배합 ${f.from ? "기준" : "아님"} → <b>${f.to ? "기준" : "아님"}</b>`
+    : `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`);
+  upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map(fieldText).join(", ")}</span></li>`));
   ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> ${tag(i)}<span class="pp-f">신규 배합 (${esc(i.code || "")} · ${esc(i.layer || "")} · ${esc(i.plate)})</span></li>`));
   const n = rows.length;
   sh.forEach((x) => rows.push(`<li class="pp-skip"><b>${esc(x.batch || "-")}</b> ${esc(x.vid || "")} 공유 — ${esc(x.reason || "")}</li>`));
@@ -130,7 +142,7 @@ function pushPanel(pv) {
   const shown = rows.slice(0, 14).join("");
   const more = rows.length > 14 ? `<li class="pp-more">외 ${rows.length - 14}건</li>` : "";
   return `<div class="push-panel">
-      <div class="pp-head">DB에 반영할 변경 — ${mv.length ? `코드 이동 <b>${mv.length}</b> · ` : ""}수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sh.length ? ` · 공유 배합 ${sh.length}` : ""}${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
+      <div class="pp-head">DB에 반영할 변경 — ${mv.length ? `이동 <b>${mv.length}</b> · ` : ""}수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sh.length ? ` · 공유 배합 ${sh.length}` : ""}${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
       ${rows.length ? `<ul>${shown}${more}</ul>` : ""}${n ? "" : `<div class="pp-empty">반영할 변경이 없습니다</div>`}
       <div class="pp-actions">
         <button class="mini-btn" id="pp-cancel">취소</button>
@@ -162,9 +174,9 @@ export function renderDrawer() {
   let body = "";
   if (E.tab === "base") {
     body = `<div class="sec-label">패턴</div>
-        ${fieldRow("프로젝트", "project", { ph: "NX5a" })}
-        ${fieldRow("차종명", "projectName", { ph: "NX5a (투싼)" })}
-        ${fieldRow("고객", "client", { ph: "현대자동차" })}
+        ${fieldRow("프로젝트", "project", { ph: "PJ01" })}
+        ${fieldRow("차종명", "projectName", { ph: "PJ01 (차종명)" })}
+        ${fieldRow("고객", "client", { ph: "고객사" })}
         ${fieldRow("패턴 코드", "pattern.code", { ph: "WB7", mono: true })}
         ${fieldRow("영문명", "pattern.name", { ph: "Wood" })}
         ${fieldRow("한글명", "pattern.nameKo", { ph: "우드" })}
@@ -207,8 +219,8 @@ export function renderDrawer() {
         ${fieldRow("Rev", "variations." + E.vIdx + ".rev", { ph: "0" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 샘플의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 공통값을 씁니다 (패턴 코드·이름은 공통)</span></div>
-        ${fieldRow("Company", "variations." + E.vIdx + ".label.company", { ph: d.client || "현대자동차" })}
-        ${fieldRow("Project", "variations." + E.vIdx + ".label.project", { ph: d.project || "NX5a", mono: true })}
+        ${fieldRow("Company", "variations." + E.vIdx + ".label.company", { ph: d.client || "고객사" })}
+        ${fieldRow("Project", "variations." + E.vIdx + ".label.project", { ph: d.project || "PJ01", mono: true })}
         ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "Design Sample" })}
         ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "Padprint Layer 1" })}
         ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}
@@ -657,15 +669,22 @@ export function renderDrawer() {
       if (isDirty()) { toast("먼저 저장한 뒤 보내세요"); return; }
       pok.disabled = true; pok.textContent = "반영 중…";
       try {
-        const r = await fetch(`/api/rdp/push/${encodeURIComponent(d.id)}`, { method: "POST" }).then((x) => x.json());
-        if (!r.ok) throw new Error(r.error || "반영 실패");
+        // 미리보기에서 본 계획 그대로일 때만 서버가 쓴다 (그사이 시편·잉크 연결·DB가 바뀌면 409 → 새 미리보기)
+        const r = await apiPost(`/api/rdp/push/${encodeURIComponent(d.id)}`, { planHash: (E.push && E.push.planHash) || "" });
         E.push = null;
         renderDrawer();
         const nf = (r.failed || []).length;
-        toast(`DB 반영 완료 · ${r.moved ? `코드 이동 ${r.moved} · ` : ""}수정 ${r.updated || 0} · 신규 ${r.inserted || 0}`
+        toast(`DB 반영 완료 · ${r.moved ? `이동 ${r.moved} · ` : ""}수정 ${r.updated || 0} · 신규 ${r.inserted || 0}`
           + (nf ? ` · 실패 ${nf}건 (${(r.failed || []).map((f) => `${f.layer} ${f.batch}: ${f.reason}`).join(", ")})` : "")
           + (r.backup ? ` (백업 ${r.backup})` : ""));
       } catch (e) {
+        if (e.status === 409 && e.payload && e.payload.stale) {
+          toast(e.message);
+          try { E.push = await apiGet(`/api/rdp/push-preview/${encodeURIComponent(d.id)}`); } catch (e2) { E.push = null; }
+          if (E.push && staleDraft(E.push)) E.push = null;
+          renderDrawer();
+          return;
+        }
         toast("반영 실패: " + e.message);
         pok.disabled = false; pok.textContent = "DB에 반영";
       }
@@ -675,6 +694,7 @@ export function renderDrawer() {
       if (isDirty()) { toast("먼저 저장한 뒤 보내세요"); return; }
       try {
         const pv = await apiGet(`/api/rdp/push-preview/${encodeURIComponent(d.id)}`);
+        if (staleDraft(pv)) return;
         E.push = pv; renderDrawer();
       } catch (e) { toast("미리보기 실패: " + e.message); }
     };
@@ -698,7 +718,7 @@ export function renderDrawer() {
         const r = await fetch(`/api/rdp/sync/${encodeURIComponent(d.id)}`, { method: "POST" }).then((x) => x.json());
         if (!r.ok) throw new Error(r.error || "동기화 실패");
         const fresh = await apiGet("/api/patterns");
-        const p2 = (fresh.patterns || []).find((x) => x.id === d.id);
+        const p2 = normalizeDoc((fresh.patterns || []).find((x) => x.id === d.id));
         if (p2) {
           const idx = App.patterns.findIndex((x) => x.id === d.id);
           if (idx >= 0) App.patterns[idx] = p2; else App.patterns.push(p2);
@@ -798,14 +818,19 @@ export function renderDrawer() {
 
   if (E.tab === "json") {
     $("#jsonarea").oninput = (e) => {
-      try { E.draft = JSON.parse(e.target.value); E.jsonErr = null; }
-      catch (err) { E.jsonErr = err.message; }
+      try {
+        const parsed = JSON.parse(e.target.value);
+        const why = jsonShapeError(parsed);
+        if (why) { E.jsonErr = why; return; }
+        E.draft = normalizeDoc(parsed); E.jsonErr = null;
+        E.vIdx = Math.min(E.vIdx, E.draft.variations.length - 1);
+      } catch (err) { E.jsonErr = err.message; }
     };
   }
 
   const del = $("#del-pattern");
   if (del) del.onclick = async () => {
-    if (!confirm("이 시편을 삭제할까요? JSON과 이미지가 _trash로 이동합니다.")) return;
+    if (!confirm("이 시편을 삭제할까요? JSON·이미지·업로드 원본이 _trash로 이동합니다.")) return;
     try {
       await apiDelete(`/api/patterns/${encodeURIComponent(E.draft.id)}`, revOf(byId(E.draft.id)));
       App.patterns = App.patterns.filter((x) => x.id !== E.draft.id);
@@ -815,16 +840,26 @@ export function renderDrawer() {
   };
 }
 
+// JSON 탭: 편집기가 그릴 수 없는 모양은 탭 이동·저장 전에 막는다 (최상위 객체 + 컬러 1개 이상)
+const jsonShapeError = (x) => (!x || typeof x !== "object" || Array.isArray(x) ? "최상위는 객체여야 합니다"
+  : !Array.isArray(x.variations) || !x.variations.some((v) => v && typeof v === "object" && !Array.isArray(v))
+    ? "variations에 컬러가 하나 이상 있어야 합니다" : "");
+
 export async function saveDraft() {
   if (!E.draft) return;
   let d = E.draft;
   try {
     if (E.tab === "json" && $("#jsonarea")) {
-      try { d = E.draft = JSON.parse($("#jsonarea").value); } catch (e) {
+      let parsed;
+      try { parsed = JSON.parse($("#jsonarea").value); } catch (e) { parsed = e; }
+      const why = parsed instanceof Error ? "JSON 문법 오류" : jsonShapeError(parsed);
+      if (why) {
         const msg = $("#drawer-msg");
-        if (msg) { msg.textContent = "JSON 문법 오류 — 고친 뒤 다시 저장하세요"; msg.className = "msg err"; }
+        if (msg) { msg.textContent = why + " — 고친 뒤 다시 저장하세요"; msg.className = "msg err"; }
         return;
       }
+      d = E.draft = normalizeDoc(parsed);
+      E.vIdx = Math.min(E.vIdx, d.variations.length - 1);
     }
     if (!d.pattern.code) { E.msg = "패턴 코드를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
     if (!d.id) {
@@ -904,7 +939,7 @@ export async function saveDraft() {
     if (e.status === 409 && e.payload && e.payload.current) {
       const ok = confirm("다른 곳에서 먼저 저장되었습니다.\n최신 내용을 불러올까요? 지금 편집 중인 내용은 사라집니다.");
       if (ok) {
-        const cur = e.payload.current;
+        const cur = normalizeDoc(e.payload.current);
         const i = App.patterns.findIndex((x) => x.id === cur.id);
         if (i >= 0) App.patterns[i] = cur; else App.patterns.push(cur);
         closeEditor(); rerender(); toast("최신 내용을 불러왔습니다");

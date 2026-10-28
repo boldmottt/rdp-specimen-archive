@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 라우터 · 부팅 (진입점) */
-import { $, $$, App, apiGet, esc, loadLS, toast } from "./core.js";
+import { $, $$, App, apiGet, esc, loadLS, normalizeDoc, toast } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
@@ -45,7 +45,7 @@ async function boot() {
   $("#drawer-scrim").onclick = () => closeEditor();
   $("#drawer-save").onclick = saveDraft;
   $$("#drawer-tabs button").forEach((b) => (b.onclick = () => {
-    if (E.tab === "json" && E.jsonErr) { E.msg = "JSON 문법 오류를 먼저 고치세요"; renderDrawer(); return; }
+    if (E.tab === "json" && E.jsonErr) { E.msg = "JSON 오류를 먼저 고치세요 — " + E.jsonErr; renderDrawer(); return; }
     E.tab = b.dataset.tab; syncTabs(); renderDrawer();
   }));
 
@@ -70,6 +70,10 @@ async function boot() {
     $("#brand-name").textContent = health.brand || "RDP";
     $("#brand-sub").textContent = health.brandSub || "SPECIMEN ARCHIVE";
     document.title = (health.brand || "RDP") + " 시편 아카이브";
+    const others = health.otherServers || [];
+    if (others.length) {
+      toast(`다른 PC(${others.map((o) => o.host).join(", ")})에서도 아카이브 서버가 켜져 있어요 — 같은 시편을 동시에 고치면 저장이 엇갈릴 수 있어요`, 8000);
+    }
   } catch (e) {}
 
   $("#search").addEventListener("input", (e) => {
@@ -81,8 +85,12 @@ async function boot() {
     const typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
     if (e.key === "/" && !typing) { e.preventDefault(); $("#search").focus(); }
     if (e.key === "Escape") {
+      // Esc는 '지금 하던 것 취소'다 — 인라인 편집·대화상자가 이미 처리했거나 입력 중이면 목차로 나가지 않는다
+      if (e.defaultPrevented) return;
       if ($("#crop-modal").classList.contains("on")) return $("#crop-modal").classList.remove("on");
       if ($("#drawer").classList.contains("on")) return closeEditor();
+      if (document.querySelector("dialog[open]")) return;   // 배합 미리보기·확정 저장 대화상자는 스스로 닫힌다
+      if (typing) { ae.blur(); return; }
       if (location.hash) location.hash = "";
     }
   });
@@ -90,8 +98,9 @@ async function boot() {
   try {
     const data = await apiGet("/api/patterns");
     App.patterns = (data.patterns || []).map((pp) => {
-      (pp.variations || []).forEach((vv) => (vv.mixes || []).forEach((mm) => {
-        if (mm.result === "planned") mm.result = "plan";
+      normalizeDoc(pp);
+      pp.variations.forEach((vv) => vv.mixes.forEach((mm) => {
+        if (mm && mm.result === "planned") mm.result = "plan";
       }));
       return pp;
     });
@@ -110,5 +119,10 @@ async function boot() {
   rerender();
 }
 
-window.addEventListener("hashchange", rerender);
-boot();
+// 같은 파일이 다른 주소(main.js?v=…)로 한 번 더 실행되면 모든 이벤트가 두 번씩 걸린다
+// (Esc가 입력 취소 뒤 목차 이동까지 하던 원인) → 부팅은 한 번만
+if (!window.__rdpBooted) {
+  window.__rdpBooted = true;
+  window.addEventListener("hashchange", rerender);
+  boot();
+}

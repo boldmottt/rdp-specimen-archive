@@ -22,8 +22,12 @@
   const lotLink = (lot) => `<a class="lot" href="#/plate/${encodeURIComponent(lot)}">${esc(lot)}</a>`;
   const evalBadge = (e) => `<span class="pc-badge e-${esc(e || "")}">${esc(e || "—")}</span>`;
   const fmtNum = (x) => (x == null ? "" : String(x));
-  const pctTxt = (x) => (x && x.g != null ? `${fmtNum(x.g)}${x.pct != null ? ` <span class="sub">(${fmtNum(x.pct)}%)</span>` : ""}` : "");
-  const inksTxt = (inks) => Object.entries(inks || {}).map(([k, v]) => `${esc(k)} ${esc(v)}`).join(" · ");
+  // 일지는 손으로 쓰므로 모양이 틀릴 수 있다 (검사 결과에 오류로 나오고, 화면은 그대로 그린다)
+  const obj = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
+  const arr = (x) => (Array.isArray(x) ? x : []);
+  const pctTxt = (x) => (x && typeof x === "object" ? (x.g != null ? `${esc(fmtNum(x.g))}${x.pct != null ? ` <span class="sub">(${esc(fmtNum(x.pct))}%)</span>` : ""}` : "")
+    : esc(fmtNum(x)));
+  const inksTxt = (inks) => Object.entries(obj(inks)).map(([k, v]) => `${esc(k)} ${esc(v)}`).join(" · ");
 
   /* ---------- status / list ---------- */
   function renderStatus() {
@@ -64,10 +68,10 @@
   }
 
   function jobCard(j) {
-    const plate = j.plate || {};
-    const layers = plate.layers || {};
-    const batches = (j.batches || []).filter((b) => b && typeof b === "object");
-    const samples = (j.samples || []).filter((s) => s && typeof s === "object");
+    const plate = obj(j.plate);
+    const layers = obj(plate.layers);
+    const batches = arr(j.batches).filter((b) => b && typeof b === "object");
+    const samples = arr(j.samples).filter((s) => s && typeof s === "object");
     const layerKeys = Object.keys(layers);
     return `<div class="pc-card">
       <h3>작업 ${esc(j.seq == null ? "?" : j.seq)} ${plate.lot ? lotLink(plate.lot) : ""} ${esc(j.title || "")} ${j.status ? `<span class="pc-badge mute">${esc(j.status)}</span>` : ""}</h3>
@@ -83,7 +87,7 @@
       </table>
       <table class="pc" style="margin-top:12px"><tr><th>#</th><th>도장 시편</th>${layerKeys.map((l) => `<th>${esc(l)}</th>`).join("")}<th>장</th><th>평가</th><th>메모</th></tr>
         ${samples.map((s) => `<tr><td>${esc(s.seq)}</td><td class="mono">${esc(s.substrate)}</td>
-          ${layerKeys.map((l) => `<td class="mono"><b>${esc((s.layers || {})[l] || "")}</b></td>`).join("")}
+          ${layerKeys.map((l) => `<td class="mono"><b>${esc(obj(s.layers)[l] || "")}</b></td>`).join("")}
           <td>${esc(s.qty)}</td><td>${evalBadge(s.eval)}</td><td>${esc(s.note || "")}</td></tr>`).join("")}
       </table>
     </div>`;
@@ -106,7 +110,7 @@
       if (r.warnings.length) html += `<h3 style="margin-top:12px">참고 ${r.warnings.length}</h3>${msgList(r.warnings, "warn")}`;
       if (f.kind === "v3" && !r.errors.length && !r.warnings.length) html += `<p class="sub" style="margin-top:8px">✅ 자가 점검을 모두 통과했습니다.</p>`;
       html += `</div>`;
-      if (f.kind === "v3") html += (fm.jobs || []).filter((j) => j && typeof j === "object").map(jobCard).join("");
+      if (f.kind === "v3") html += arr(fm.jobs).filter((j) => j && typeof j === "object" && !Array.isArray(j)).map(jobCard).join("");
       $("#main").innerHTML = html;
     } catch (e) {
       $("#main").innerHTML = `<div class="pc-empty">${esc(e.message)}</div>`;
@@ -145,7 +149,7 @@
         } else {
           body = `<div class="sub">${esc([e.title, e.customer, e.stage].filter(Boolean).join(" · "))}</div>`
             + (e.samples.length ? `<table class="pc"><tr><th>도장 시편</th>${layerKeys.map((l) => `<th>${esc(l)}</th>`).join("")}<th>장</th><th>평가</th><th>메모</th></tr>
-              ${e.samples.map((s) => `<tr><td class="mono">${esc(s.substrate)}</td>${layerKeys.map((l) => `<td class="mono"><b>${esc((s.layers || {})[l] || "")}</b></td>`).join("")}<td>${esc(s.qty)}</td><td>${evalBadge(s.eval)}</td><td>${esc(s.note || "")}</td></tr>`).join("")}</table>`
+              ${e.samples.map((s) => `<tr><td class="mono">${esc(s.substrate)}</td>${layerKeys.map((l) => `<td class="mono"><b>${esc(obj(s.layers)[l] || "")}</b></td>`).join("")}<td>${esc(s.qty)}</td><td>${evalBadge(s.eval)}</td><td>${esc(s.note || "")}</td></tr>`).join("")}</table>`
               : `<div class="sub">시료 기록 없음</div>`);
         }
         return `<li><div class="dt">${esc(e.date)}<a href="#/file/${encodeURIComponent(e.file)}">${esc(e.file)}</a></div><div>${head}${body}</div></li>`;
@@ -159,7 +163,8 @@
   function setTab(t) { $$(".pc-tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === t)); }
 
   function route() {
-    const h = decodeURIComponent(location.hash.replace(/^#/, ""));
+    let h = location.hash.replace(/^#/, "");
+    try { h = decodeURIComponent(h); } catch (e) { /* 잘린 % 주소는 그대로 */ }
     if (h.startsWith("/file/")) return showFile(h.slice(6));
     if (h === "/plates") return showPlates(null);
     if (h.startsWith("/plate/")) return showPlates(h.slice(7));

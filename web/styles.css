@@ -220,7 +220,7 @@ td.res{text-align:left!important;font-weight:600}
 .p-sec dd.mono{font-family:var(--mono);font-size:9.5px}
 .p-comment{margin-top:5mm;padding-top:4mm;border-top:1px solid #e4e1da}
 .p-comment h4{margin:0 0 2mm;font-size:9.5px;letter-spacing:0;color:#8d9198;font-weight:600}
-.p-comment .c{font-size:11px;line-height:1.75;min-height:9mm;outline:none;border-left:2px solid #141517;padding:1mm 0 1mm 3mm}
+.p-comment .c{font-size:11px;line-height:1.75;min-height:9mm;outline:none;border-left:2px solid #141517;padding:1mm 0 1mm 3mm;white-space:pre-wrap}
 .p-comment .c:empty:before{content:"클릭해서 이 시편의 제안 포인트를 입력하세요";color:#b9b6ae}
 .s-page .p-foot{display:flex;justify-content:space-between;font-size:8px;color:#b9b6ae;letter-spacing:.1em;border-top:1px solid #e4e1da;padding-top:2.5mm;margin-top:auto}
 .caution{margin-top:4mm;font-size:8px;color:#8d9198;letter-spacing:.02em}

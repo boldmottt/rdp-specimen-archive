@@ -128,7 +128,25 @@ export async function apiUpload(pid, vid, slot, blob, crop) {
 export const byId = (pid) => App.patterns.find((p) => p.id === pid);
 // 서버 충돌 검사용 버전 (rev가 없는 예전 파일은 updatedAt)
 export const revOf = (p) => (p && (p.rev || p.updatedAt)) || "";
-export const markSaved = (doc, r) => { if (r.savedAt) doc.updatedAt = r.savedAt; if (r.rev) doc.rev = r.rev; return doc; };
+
+// 서버 normalize_shape와 같은 뼈대: label·work는 객체, 동판·태그·도장은 목록.
+// 손으로 고친 문서 하나가 목차·상세 전체를 멈추게 하지 않도록, 화면에 들어오는 문서는 모두 이걸 거친다.
+const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+const asList = (x) => (Array.isArray(x) ? x : typeof x === "string" ? x.split(",").map((s) => s.trim()).filter(Boolean) : []);
+export function normalizeDoc(p) {
+  if (!isObj(p)) return p;
+  ["pattern", "label", "work"].forEach((k) => { if (!isObj(p[k])) p[k] = {}; });
+  if ("plate" in p.work) p.work.plate = asList(p.work.plate);
+  if ("tags" in p.pattern) p.pattern.tags = asList(p.pattern.tags);
+  if (p.history != null && !Array.isArray(p.history)) p.history = [];
+  p.variations = (Array.isArray(p.variations) ? p.variations : []).filter(isObj);
+  p.variations.forEach((v) => {
+    ["coating", "images", "mixes"].forEach((k) => { if (!Array.isArray(v[k])) v[k] = []; });
+    ["label", "layerPlates", "layerPatterns"].forEach((k) => { if (k in v && !isObj(v[k])) delete v[k]; });
+  });
+  return p;
+}
+export const markSaved = (doc, r) => { if (r.savedAt) doc.updatedAt = r.savedAt; if (r.rev) doc.rev = r.rev; return normalizeDoc(doc); };
 export const varOf = (p, vid) => (p ? (p.variations || []).find((v) => v.id === vid) || (p.variations || [])[0] : null);
 export const imgUrl = (pid, name) => `/img/${encodeURIComponent(pid)}/${encodeURIComponent(name)}`;
 export const thumbUrl = (pid, name, w) => `/api/thumb/${encodeURIComponent(pid)}/${encodeURIComponent(name)}?w=${w}`;
@@ -141,7 +159,14 @@ export const inCart = (pid, vid) => App.cart.some((c) => c.pid === pid && c.vid 
 export function toggleCart(pid, vid) {
   const i = App.cart.findIndex((c) => c.pid === pid && c.vid === vid);
   if (i >= 0) App.cart.splice(i, 1); else App.cart.push({ pid, vid });
+  if (!App.cart.length) resetPropIdentity();
   saveLS();
+}
+
+// 담은 시편을 다 비우면 새 제안서로 본다: 문서 번호·날짜·확정 상태를 새로 (지난 확정의 날짜·번호가 남지 않게)
+export function resetPropIdentity() {
+  Object.assign(App.prop, { date: "", docNo: "", rev: "0", confirmed: null });
+  delete App.prop.confirmedDocNo;
 }
 
 const colorCache = new Map();
@@ -174,8 +199,8 @@ export function paintDots(root) {
   });
 }
 
-export function toast(msg) {
+export function toast(msg, ms = 1800) {
   const t = $("#toast");
   t.textContent = msg; t.classList.add("on");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 1800);
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), ms);
 }

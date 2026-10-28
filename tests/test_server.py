@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -136,6 +137,11 @@ class Base(unittest.TestCase):
         con.close()
         return rows
 
+    def push(self, pid):
+        """화면처럼: 미리보기에서 받은 계획 지문(planHash)을 함께 보낸다."""
+        st, pv = self.req("GET", f"/api/rdp/push-preview/{pid}")
+        return self.req("POST", f"/api/rdp/push/{pid}", {"planHash": pv.get("planHash", "") if isinstance(pv, dict) else ""})
+
     def put(self, pid, doc, rev=None, rename_from=None, create=False):
         h = {}
         if rev:
@@ -145,6 +151,75 @@ class Base(unittest.TestCase):
         if create:
             h["X-Create"] = "1"
         return self.req("PUT", f"/api/patterns/{pid}", doc, h)
+
+
+class PortTests(unittest.TestCase):
+    """재시작 직후: 끈 서버의 TIME_WAIT 흔적은 '사용 중'이 아니고, 실제로 듣는 서버가 있으면 '사용 중'."""
+
+    def test_time_wait_is_free_but_listener_is_not(self):
+        srv = server.Server(("127.0.0.1", 0), server.Handler)
+        port = srv.server_address[1]
+        th = threading.Thread(target=srv.serve_forever, daemon=True)
+        th.start()
+        self.assertFalse(server.port_free(port))           # 듣고 있는 중
+        for _ in range(3):                                  # 서버가 먼저 닫는 연결 → 서버 쪽 TIME_WAIT
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", "/api/health", headers={"Host": "localhost"})
+            c.getresponse().read()
+            c.close()
+        srv.shutdown()
+        srv.server_close()
+        self.assertTrue(server.port_free(port))
+        again = server.Server(("127.0.0.1", port), server.Handler)   # 실제로 다시 켤 수 있다
+        again.server_close()
+
+
+class DemoModeTests(unittest.TestCase):
+    """--demo는 임시 폴더만 쓴다: 썸네일·회사 rdp.db·작업일지가 실제 경로로 새지 않게."""
+    NAMES = ("DATA", "PATTERNS", "IMAGES", "ORIG", "BACKUP", "TRASH", "PROPOSALS", "THUMBS", "UI_STATE",
+             "CONFIG_PATH", "_CFG_MTIME")
+
+    def setUp(self):
+        self.saved = {k: getattr(server, k) for k in self.NAMES}
+        self.cfg, self.over, self.hosts = dict(server.CFG), dict(server.CFG_OVERRIDES), set(server.SAFE_HOSTS)
+        self.tmp, self.cfgdir = "", tempfile.mkdtemp(prefix="rdp-cfg-")
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(server, k, v)
+        server.CFG.clear()
+        server.CFG.update(self.cfg)
+        server.CFG_OVERRIDES.clear()
+        server.CFG_OVERRIDES.update(self.over)
+        server.SAFE_HOSTS.clear()
+        server.SAFE_HOSTS.update(self.hosts)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        shutil.rmtree(self.cfgdir, ignore_errors=True)
+
+    def test_demo_uses_only_temp_paths(self):
+        server.CFG.update(rdpDbPath="/real/company/rdp.db", worklogDir="/real/worklogs")
+        self.tmp = server.enter_demo_mode()
+        for k in self.NAMES[1:9]:
+            self.assertTrue(getattr(server, k).startswith(self.tmp + os.sep), k)
+        db = server.CFG["rdpDbPath"]
+        self.assertTrue(db.startswith(self.tmp + os.sep))
+        self.assertTrue(server.CFG["worklogDir"].endswith("sample-worklogs"))
+        cols = lambda con: [r[1] for r in con.execute("PRAGMA table_info(rdp_mixes)")]   # noqa: E731
+        con = sqlite3.connect(db)
+        got = cols(con)
+        con.close()
+        con = sqlite3.connect(":memory:")
+        con.execute(SCHEMA)
+        self.assertEqual(got, cols(con))            # 서버의 데모 DB = 테스트(실제) 스키마
+        con.close()
+        # config.json이 바뀌어 다시 읽어도 데모 값이 실제 경로로 돌아가지 않는다
+        server.CONFIG_PATH = os.path.join(self.cfgdir, "config.json")
+        with open(server.CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"rdpDbPath": "/real/company/rdp.db", "worklogDir": "/real/worklogs"}, f)
+        server._CFG_MTIME = None
+        server.Handler._maybe_reload_cfg(server.Handler.__new__(server.Handler))
+        self.assertEqual(server.CFG["rdpDbPath"], db)
+        self.assertTrue(server.CFG["worklogDir"].endswith("sample-worklogs"))
 
 
 class InkMappingTests(Base):
@@ -303,6 +378,113 @@ class ValidationTests(Base):
         self.assertEqual(st, 200, r)
         self.assertEqual(len(r["warnings"]), 1)
 
+    def test_wrong_shapes_rejected(self):
+        for path, val in ((("label",), "Design Sample"), (("work",), []), (("work", "plate"), {"a": 1}),
+                          (("pattern", "tags"), [{"x": 1}]), (("history",), "memo")):
+            d = json.loads(json.dumps(self.doc))
+            o = d
+            for k in path[:-1]:
+                o = o[k]
+            o[path[-1]] = val
+            self.assertIn(path[-1], " ".join(self.bad(d)))
+        d = json.loads(json.dumps(self.doc))
+        d["variations"][0]["coating"] = "C1000"
+        self.assertIn("coating", " ".join(self.bad(d)))
+
+
+class ThumbTests(Base):
+    def test_odd_widths_share_fixed_steps(self):
+        """아무 폭이나 캐시하면 축소본이 끝없이 쌓인다 → 정해진 단계로 올려서 저장."""
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow 없음")
+        os.makedirs(os.path.join(server.IMAGES, "P-W01"))
+        Image.new("RGB", (2400, 988), (80, 80, 80)).save(os.path.join(server.IMAGES, "P-W01", "a.jpg"))
+        for w in (130, 200, 239, 481, 999, 1999, 9999):
+            st, body = self.req("GET", f"/api/thumb/P-W01/a.jpg?w={w}")
+            self.assertEqual(st, 200, w)
+        self.assertEqual(sorted(os.listdir(os.path.join(server.THUMBS, "P-W01"))),
+                         ["1440-a.jpg", "2000-a.jpg", "240-a.jpg", "960-a.jpg"])
+        self.assertEqual(self.req("GET", "/api/thumb/P-W01/a.jpg?w=abc")[0], 400)
+
+
+class SmallServerTests(Base):
+    def test_sync_all_is_allowed_in_lan_mode(self):
+        """DB는 읽기만 하는 동기화 — 한 건씩 가져오기처럼 LAN 모드에서도 된다 (DB 쓰기만 allowLanWrite)."""
+        with mock.patch.object(server, "LAN_MODE", True):
+            self.assertEqual(self.req("POST", "/api/rdp/sync-all")[0], 200)
+            self.assertEqual(self.req("POST", "/api/rdp/push/P-W01", {"planHash": "x"})[0], 403)   # DB 쓰기는 그대로 막힘
+
+    def test_open_folder_only_from_this_computer(self):
+        with mock.patch.object(server.subprocess, "Popen") as popen, mock.patch.object(server.os, "startfile", create=True):
+            self.assertEqual(self.req("POST", "/api/open-folder")[0], 200)
+            with mock.patch.object(server.Handler, "_is_local_direct", lambda self: False):
+                self.assertEqual(self.req("POST", "/api/open-folder")[0], 403)
+        self.assertLessEqual(popen.call_count, 1)
+
+    def test_merge_sort_survives_numeric_layer(self):
+        v = {"mixes": [mix(1, "B1", "26_001"), mix("1도", "A1", "26_001")]}
+        server.merge_mixes(v, [])
+        self.assertEqual([m["batch"] for m in v["mixes"]], ["B1", "A1"])
+
+    def test_prune_old_only_when_configured(self):
+        folder = os.path.join(self.tmp, "box")
+        os.makedirs(os.path.join(folder, "old-dir"))
+        for name in ("old.json", "new.json"):
+            with open(os.path.join(folder, name), "w") as f:
+                f.write("x")
+        old = time.time() - 40 * 86400
+        for name in ("old.json", "old-dir"):
+            os.utime(os.path.join(folder, name), (old, old))
+        self.assertEqual(server.prune_old(folder, None), 0)
+        self.assertEqual(server.prune_old(folder, 30), 2)
+        self.assertEqual(os.listdir(folder), ["new.json"])
+
+
+class ShapeTests(Base):
+    """label·work가 빠진 문서 하나가 목차 전체를 멈추게 하던 문제."""
+
+    def test_missing_label_and_work_are_filled_on_save(self):
+        d = {"schemaVersion": 2, "project": "ZZ", "pattern": {"code": "T1", "tags": "우드, 엠보"},
+             "variations": [{"id": "v01"}]}
+        st, r = self.put("ZZ-T1", d, create=True)
+        self.assertEqual(st, 200, r)
+        saved = self.read_pattern("ZZ-T1")
+        self.assertEqual((saved["label"], saved["work"]), ({}, {}))
+        self.assertEqual(saved["pattern"]["tags"], ["우드", "엠보"])
+        self.assertEqual(saved["variations"][0]["coating"], [])
+
+    def test_plate_text_becomes_list(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": []}])
+        doc["work"] = {"plate": "26_001, 26_002"}
+        st, r = self.put("P-W01", doc, create=True)
+        self.assertEqual(st, 200, r)
+        self.assertEqual(self.read_pattern("P-W01")["work"]["plate"], ["26_001", "26_002"])
+
+    def test_listing_reads_bad_files_safely(self):
+        ok = pattern("A-1", "A", "1", [{"id": "v01"}])
+        del ok["label"], ok["work"]
+        self.write_pattern(ok)
+        odd = pattern("B-1", "B", "1", [{"id": "v01", "coating": "x"}, None])
+        odd["label"] = "문자열 라벨"
+        self.write_pattern(odd)
+        broken = pattern("C-1", "C", "1", [{"id": "v01"}])
+        broken["pattern"] = "C 1"
+        self.write_pattern(broken)
+        st, r = self.req("GET", "/api/patterns")
+        self.assertEqual(st, 200)
+        got = {p["id"]: p for p in r["patterns"]}
+        self.assertEqual(sorted(got), ["A-1", "B-1"])               # 뼈대가 없는 C-1만 뺀다
+        self.assertEqual((got["A-1"]["label"], got["A-1"]["work"]), ({}, {}))
+        self.assertEqual(got["B-1"]["label"], {})
+        self.assertEqual(got["B-1"]["variations"], [{"id": "v01", "coating": []}])
+        errs = " ".join(r["errors"])
+        self.assertIn("B-1.json", errs)
+        self.assertIn("C-1.json", errs)
+        self.assertNotIn("A-1.json", errs)                           # 빈 칸 채우기는 오류가 아니다
+        self.assertEqual(self.read_pattern("B-1")["label"], "문자열 라벨")   # 읽기만 하고 파일은 안 바꾼다
+
 
 class UploadTests(Base):
     def test_same_second_uploads_get_distinct_names(self):
@@ -320,6 +502,57 @@ class UploadTests(Base):
         self.assertIn(a["file"], names)
         self.assertIn(b["file"], names)
         self.assertFalse([n for n in names if n.endswith(".part")])
+
+
+class UploadInputTests(Base):
+    """잘못된 업로드 입력은 500이 아니라 400 (전에는 slot=abc·깨진 그림이 서버 오류로 보였다)."""
+
+    def png(self):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (340, 140), (120, 80, 40)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def put_img(self, query, body):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("PUT", "/api/image/P-W01/v01" + query, body=body,
+                  headers={"Host": "localhost", "Content-Type": "application/octet-stream"})
+        r = c.getresponse()
+        r.read()
+        c.close()
+        return r.status
+
+    def test_bad_inputs_are_400(self):
+        try:
+            ok = self.png()
+        except ImportError:
+            self.skipTest("Pillow 없음")
+        for q in ("?slot=abc", "?slot=0", "?slot=1&x=abc&y=0&w=10&h=10", "?slot=1&x=-5&y=0&w=10&h=10", "?slot=1&x=nan&y=0&w=1&h=1"):
+            self.assertEqual(self.put_img(q, ok), 400, q)
+        self.assertEqual(self.put_img("?slot=1", b"not an image"), 400)
+        self.assertEqual(self.put_img("?slot=1", b""), 400)
+        self.assertEqual(self.put_img("?slot=1&x=0&y=0&w=340&h=140", ok), 200)
+
+    def test_unservable_image_names_are_rejected_on_save(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "images": ["v01.jpg"]}])
+        self.write_pattern(doc)
+        for bad in ("사진.jpg", "a.gif", "a b.jpg"):
+            d = json.loads(json.dumps(doc))
+            d["variations"][0]["images"] = [bad]
+            st, r = self.put("P-W01", d, rev=server.doc_rev(doc))
+            self.assertEqual(st, 400, bad)
+            self.assertIn("쓸 수 없는 이미지 이름", " ".join(r["errors"]))
+
+    def test_abandoned_presave_uploads_are_trashed_after_a_week(self):
+        old = time.time() - 8 * 86400
+        for pid in ("NEW-1", "NEW-2", "P-W01"):
+            self.add_image(pid, "a.jpg")
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01"}]))
+        for pid in ("NEW-1", "P-W01"):
+            os.utime(os.path.join(server.IMAGES, pid, "a.jpg"), (old, old))
+        self.assertEqual(server.gc_unsaved_uploads(), ["images/NEW-1"])   # 일주일 지난 것만, 저장된 시편은 그대로
+        self.assertTrue(os.path.isdir(os.path.join(server.IMAGES, "NEW-2")))
+        self.assertTrue(os.path.isdir(os.path.join(server.IMAGES, "P-W01")))
 
 
 class RenameTests(Base):
@@ -386,6 +619,51 @@ class RenameTests(Base):
         self.assertEqual(st, 404)
 
 
+class LeftoverTests(Base):
+    """삭제할 때 _orig·_thumb도 정리 — 남으면 그 이름으로 바꾸기가 막히고, 새 시편에 옛 원본이 섞였다."""
+
+    def touch(self, base, pid, name="x.jpg"):
+        os.makedirs(os.path.join(base, pid), exist_ok=True)
+        with open(os.path.join(base, pid, name), "wb") as f:
+            f.write(b"x")
+
+    def trash(self):
+        return " ".join(os.listdir(server.TRASH))
+
+    def test_delete_moves_originals_and_drops_thumbs(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "images": ["x.jpg"]}])
+        self.write_pattern(doc)
+        for base in (server.IMAGES, server.ORIG, server.THUMBS):
+            self.touch(base, "P-W01")
+        st, r = self.req("DELETE", "/api/patterns/P-W01", headers={"X-Base-Rev": server.doc_rev(doc)})
+        self.assertEqual(st, 200, r)
+        for base in (server.IMAGES, server.ORIG, server.THUMBS):
+            self.assertFalse(os.path.exists(os.path.join(base, "P-W01")), base)
+        self.assertIn("P-W01_orig", self.trash())
+
+    def test_rename_onto_old_leftover_works(self):
+        self.touch(server.ORIG, "P-W09")                       # 예전에 지운 P-W09의 원본만 남은 상태
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01"}])
+        self.write_pattern(doc)
+        d = json.loads(json.dumps(doc))
+        d["pattern"]["code"] = "W09"
+        st, r = self.put("P-W09", d, rev=server.doc_rev(doc), rename_from="P-W01")
+        self.assertEqual(st, 200, r)
+        self.assertIn("P-W09_orig-leftover", self.trash())
+
+    def test_create_moves_leftover_but_keeps_presave_uploads(self):
+        self.touch(server.ORIG, "P-W09")
+        st, r = self.put("P-W09", pattern("P-W09", "P", "W09", [{"id": "v01"}], rev=None), create=True)
+        self.assertEqual(st, 200, r)
+        self.assertFalse(os.path.exists(os.path.join(server.ORIG, "P-W09")))
+        # 새 시편을 저장하기 전에 올린 사진(이미지 폴더가 있음)의 원본은 그대로
+        self.touch(server.IMAGES, "P-N01")
+        self.touch(server.ORIG, "P-N01")
+        st, r = self.put("P-N01", pattern("P-N01", "P", "N01", [{"id": "v01"}], rev=None), create=True)
+        self.assertEqual(st, 200, r)
+        self.assertTrue(os.path.exists(os.path.join(server.ORIG, "P-N01", "x.jpg")))
+
+
 class RenameDbTests(Base):
     def setUp(self):
         super().setUp()
@@ -417,7 +695,7 @@ class RenameDbTests(Base):
     def test_push_refused_after_rename(self):
         self.renamed()
         before = self.db_counts()
-        st, r = self.req("POST", "/api/rdp/push/P-W05")
+        st, r = self.push("P-W05")
         self.assertEqual(st, 409, r)
         self.assertEqual(self.db_counts(), before)
 
@@ -429,7 +707,7 @@ class RenameDbTests(Base):
         st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
         self.assertNotIn("blocked", r)
         self.assertEqual((len(r["updates"]), len(r["inserts"])), (1, 1))
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(st, 200, r)
         self.assertEqual((r["updated"], r["inserted"]), (1, 1))
         self.assertEqual(self.db_counts()[("P", "W01")], 7)
@@ -482,7 +760,7 @@ class PushTests(Base):
         self.db_insert("P", "W01", "1도", "B9", "26_001", bk=5.0, coating="K-2")
         st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
         self.assertEqual([(u["vid"], u["batch"]) for u in r["updates"]], [("v02", "B9")])
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(r["updated"], 1)
         con = sqlite3.connect(self.db)
         self.assertEqual(con.execute("SELECT bk FROM rdp_mixes WHERE batch_no='B9'").fetchone()[0], 20.0)
@@ -493,7 +771,7 @@ class PushTests(Base):
             {"id": "v01", "colorCode": "K-1", "mixes": []},
             {"id": "v02", "colorCode": "K-2", "mixes": [mix("1도", "B9", "26_001")]}])
         self.write_pattern(doc)
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(r["inserted"], 1)
         st, r = self.req("POST", "/api/rdp/sync/P-W01")
         self.assertEqual(st, 200, r)
@@ -545,7 +823,7 @@ class LayerPatternTests(Base):
 
     def test_insert_uses_layer_pattern_code(self):
         self.w01([mix("1도", "B1", "26_001"), mix("2도", "B2", "26_002")], {"2도": "M01"})
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(st, 200, r)
         self.assertEqual(self.codes(), [("M01", "2도", "B2"), ("W01", "1도", "B1")])
 
@@ -558,7 +836,7 @@ class LayerPatternTests(Base):
         self.assertEqual([(m["from"], m["to"], m["batch"]) for m in r["moves"]], [("W01", "M01", "B2")])
         self.assertEqual(r["inserts"], [])
         self.assertEqual([u["batch"] for u in r["updates"]], ["B2"])
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual((r["moved"], r["updated"], r["inserted"]), (1, 1, 0))
         self.assertEqual(self.codes(), [("M01", "2도", "B2"), ("W01", "1도", "B1")])
         st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
@@ -578,7 +856,7 @@ class LayerPatternTests(Base):
         """W01이 2도를 M01 코드로 보낸 행은 M01 시편으로 딸려 가지 않는다."""
         self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
         self.write_pattern(pattern("P-M01", "P", "M01", [{"id": "v01", "colorCode": "K-9", "mixes": []}]))
-        self.req("POST", "/api/rdp/push/P-W01")
+        self.push("P-W01")
         self.db_insert("P", "M01", "2도", "B5", "26_002", coating="K-9")
         st, r = self.req("POST", "/api/rdp/sync/P-M01")
         self.assertEqual(st, 200, r)
@@ -598,7 +876,7 @@ class LayerPatternTests(Base):
     def test_changed_layer_code_moves_rows(self):
         """M01로 보낸 뒤 M02로 고치면 M01 행을 옮긴다 (중복 생성 X). 비우면 시편 코드로 되돌린다."""
         doc = self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
-        self.req("POST", "/api/rdp/push/P-W01")
+        self.push("P-W01")
         self.assertEqual(self.codes(), [("M01", "2도", "B2")])
         rev = server.doc_rev(self.read_pattern("P-W01"))
         for want in ("M02", ""):
@@ -612,7 +890,7 @@ class LayerPatternTests(Base):
             st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
             self.assertEqual(r["inserts"], [], r)
             self.assertEqual([m["to"] for m in r["moves"]], [want or "W01"], r)
-            self.req("POST", "/api/rdp/push/P-W01")
+            self.push("P-W01")
             self.assertEqual(self.codes(), [(want or "W01", "2도", "B2")])
 
     def test_diff_uses_layer_code(self):
@@ -621,6 +899,149 @@ class LayerPatternTests(Base):
         st, r = self.req("GET", "/api/rdp/diff/P-W01")
         # M01 코드 행과 같은 배합으로 매칭되어야 한다 (날짜만 달라서 changed로 잡힘)
         self.assertEqual((r["same"] + len(r["changed"]), r["archiveOnly"], r["dbOnly"]), (1, [], []), r)
+
+
+class ReferenceSyncTests(Base):
+    """기준 배합(isReference)은 아카이브가 원본 — 처음 넣을 때만이 아니라 나중에 바꿔도 DB is_base에 반영."""
+
+    def base_flags(self):
+        con = sqlite3.connect(self.db)
+        out = dict(con.execute("SELECT batch_no, is_base FROM rdp_mixes").fetchall())
+        con.close()
+        return out
+
+    def test_reference_change_updates_is_base(self):
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [
+            mix("1도", "A", "26_001", isReference=True), mix("1도", "B", "26_001")]}]))
+        st, r = self.push("P-W01")
+        self.assertEqual(r["inserted"], 2, r)
+        self.assertEqual(self.base_flags(), {"A": 1, "B": 0})
+        d = self.read_pattern("P-W01")
+        d["variations"][0]["mixes"][0]["isReference"] = False
+        d["variations"][0]["mixes"][1]["isReference"] = True
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        st, r = self.req("GET", "/api/rdp/diff/P-W01")
+        self.assertEqual(sorted(c["batch"] for c in r["changed"]), ["A", "B"], r)
+        st, pv = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(sorted((u["batch"], [(f["name"], f["from"], f["to"]) for f in u["fields"]]) for u in pv["updates"]),
+                         [("A", [("is_base", 1, 0)]), ("B", [("is_base", 0, 1)])])
+        st, r = self.push("P-W01")
+        self.assertEqual((r["updated"], r["inserted"]), (2, 0), r)
+        self.assertEqual(self.base_flags(), {"A": 0, "B": 1})
+        st, r = self.req("GET", "/api/rdp/diff/P-W01")   # 날짜(신규 행에 오늘 날짜)만 다르고 기준은 같다
+        self.assertFalse([c for c in r["changed"] if "is_base" in c["fields"]], r)
+
+
+class StalePushTests(Base):
+    """DB 전송은 미리보기에서 본 계획 그대로일 때만 — 그사이 시편·잉크 연결·DB가 바뀌면 409로 다시 보게."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1",
+                                                          "mixes": [mix("1도", "A", "26_001")]}]))
+
+    def preview(self):
+        st, pv = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(st, 200, pv)
+        return pv
+
+    def test_push_without_preview_is_refused(self):
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {})
+        self.assertEqual((st, r.get("stale")), (409, True), r)
+        self.assertEqual(self.db_counts(), {})
+
+    def test_doc_changed_after_preview_is_refused(self):
+        pv = self.preview()
+        d = self.read_pattern("P-W01")
+        d["variations"][0]["mixes"][0]["inks"] = {"BK": 99.0}   # 신규 행의 값은 미리보기에 안 보이므로 버전으로 잡는다
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {"planHash": pv["planHash"]})
+        self.assertEqual((st, r.get("stale")), (409, True), r)
+        self.assertEqual(self.db_counts(), {})
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {"planHash": self.preview()["planHash"]})
+        self.assertEqual((st, r["inserted"]), (200, 1), r)
+
+    def test_db_changed_after_preview_is_refused(self):
+        pv = self.preview()                                                       # 신규 1건으로 봤는데
+        self.db_insert("P", "W01", "1도", "A", "26_001", bk=5.0, coating="K-1")   # 그사이 같은 키가 DB에 생김
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {"planHash": pv["planHash"]})
+        self.assertEqual((st, r.get("stale")), (409, True), r)
+        self.assertEqual(sum(self.db_counts().values()), 1)
+
+
+class PlateMoveTests(Base):
+    """DB 키에 동판이 들어간다 → 동판만 바꾼 배합은 새 행을 넣지 않고 옛 동판 행을 옮긴다 (같은 배합 두 줄 방지)."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [
+            mix("1도", "A", "26_001"), mix("1도", "B", "26_001"), mix("2도", "A", "26_002")]}]))
+        st, r = self.push("P-W01")
+        self.assertEqual((st, r["inserted"]), (200, 3), r)
+
+    def rows(self):
+        con = sqlite3.connect(self.db)
+        out = sorted(con.execute("SELECT layer, batch_no, plate, bk FROM rdp_mixes").fetchall())
+        con.close()
+        return out
+
+    def save(self, change):
+        d = self.read_pattern("P-W01")
+        change(d["variations"][0]["mixes"])
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        return self.read_pattern("P-W01")["variations"][0]["mixes"]
+
+    def test_plate_change_moves_row_instead_of_insert(self):
+        def change(ms):
+            ms[0].update(plate="26_009", inks={"BK": 12.0}, plateFrom=["HACK"])   # 클라이언트 값은 무시
+        self.assertEqual(self.save(change)[0]["plateFrom"], ["26_001"])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(r["inserts"], [], r)
+        self.assertEqual([(m["batch"], m["fromPlate"], m["toPlate"]) for m in r["moves"]], [("A", "26_001", "26_009")])
+        self.assertEqual([u["batch"] for u in r["updates"]], ["A"])
+        st, r = self.push("P-W01")
+        self.assertEqual((r["moved"], r["updated"], r["inserted"]), (1, 1, 0), r)
+        self.assertEqual(self.rows(), [("1도", "A", "26_009", 12.0), ("1도", "B", "26_001", 10.0), ("2도", "A", "26_002", 10.0)])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual((r["moves"], r["updates"], r["inserts"]), ([], [], []))
+
+    def test_two_changes_before_push_move_the_original_row(self):
+        self.save(lambda ms: ms[0].update(plate="26_005"))
+        self.assertEqual(self.save(lambda ms: ms[0].update(plate="26_009"))[0]["plateFrom"], ["26_001", "26_005"])
+        st, r = self.push("P-W01")
+        self.assertEqual((r["moved"], r["inserted"]), (1, 0), r)
+        self.assertEqual([x[:3] for x in self.rows()][:2], [("1도", "A", "26_009"), ("1도", "B", "26_001")])
+
+    def test_layer_plate_change_moves_every_row(self):
+        def change(ms):
+            for m in ms:
+                if m["layer"] == "1도":
+                    m["plate"] = "26_009"
+        self.save(change)
+        st, r = self.push("P-W01")
+        self.assertEqual((r["moved"], r["inserted"]), (2, 0), r)
+        self.assertEqual([x[:3] for x in self.rows()], [("1도", "A", "26_009"), ("1도", "B", "26_009"), ("2도", "A", "26_002")])
+
+    def test_new_mix_with_same_batch_on_other_plate_is_inserted(self):
+        """작업일지처럼 배치 이름은 동판마다 다시 쓴다 — 새 배합은 다른 동판의 행을 옮기지 않는다."""
+        self.assertNotIn("plateFrom", self.save(lambda ms: ms.append(mix("1도", "A", "26_003")))[-1])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(r["moves"], [])
+        self.assertEqual([(i["batch"], i["plate"]) for i in r["inserts"]], [("A", "26_003")])
+
+    def test_move_onto_other_colors_key_is_skipped(self):
+        d = self.read_pattern("P-W01")
+        d["variations"].append({"id": "v02", "colorCode": "K-9", "mixes": []})
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        self.db_insert("P", "W01", "1도", "A", "26_009", coating="K-9")
+        self.save(lambda ms: ms[0].update(plate="26_009"))
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual((r["moves"], r["inserts"]), ([], []), r)
+        self.assertIn("옮길 동판 26_009", " ".join(x["reason"] for x in r["skipped"]))
 
 
 class SharedBatchTests(Base):
@@ -639,11 +1060,11 @@ class SharedBatchTests(Base):
         self.assertEqual(sorted(i["batch"] for i in r["inserts"]), ["C", "나", "다"])
         self.assertEqual([(x["vid"], x["batch"]) for x in r["shared"]], [("v02", "C")])
         self.assertEqual(r["skipped"], [])
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual((st, r["inserted"], r["failed"]), (200, 3, []))
         st, r = self.req("GET", "/api/rdp/push-preview/P-L1")   # 두 번째 보내기도 실패하지 않는다
         self.assertEqual((r["inserts"], r["updates"]), ([], []))
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual(st, 200, r)
 
     def test_shared_batch_different_values_is_flagged(self):
@@ -658,7 +1079,7 @@ class SharedBatchTests(Base):
         st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
         self.assertEqual([i["batch"] for i in r["inserts"]], ["D"])
         self.assertIn("이미 있음", r["skipped"][0]["reason"])
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual((st, r["inserted"], r["failed"]), (200, 1, []))
 
     def test_code_move_onto_existing_key_does_not_fail_push(self):
@@ -669,7 +1090,7 @@ class SharedBatchTests(Base):
         st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
         self.assertEqual(r["moves"], [])
         self.assertIn("옮길 코드 M01", r["skipped"][0]["reason"])
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual((st, r["inserted"]), (200, 1), r)
 
     def test_apply_push_survives_race_on_move(self):
@@ -784,10 +1205,157 @@ class ProposalTests(Base):
         st, r = self.req("GET", "/api/proposals/next-no?prefix=RDP-P-20261028-")
         self.assertEqual(r["docNo"], "RDP-P-20261028-02")
 
+    def test_revision_conflict_suggests_next_rev(self):
+        """Rev 1이 이미 있는데 다시 Rev 1을 만들면 막다른 길이 아니라 다음 Rev(2)도 제안한다."""
+        for rev in ("0", "1"):
+            self.assertEqual(self.req("POST", "/api/proposals", self.doc(rev=rev))[0], 200)
+        st, r = self.req("POST", "/api/proposals", self.doc(rev="1"))
+        self.assertEqual((st, r["nextRev"], r["suggest"]), (409, "2", "RDP-P-20261028-02"), r)
+
+    def test_bad_shapes_are_400_and_write_nothing(self):
+        for bad in ({"items": [None]}, {"items": [{"pattern": "P-W01"}]}, {"items": [{"pattern": {"id": "../x"}}]},
+                    {"items": [{"pattern": {"id": "P-W01"}, "variations": [{"images": "v01.jpg"}]}]},
+                    {"items": [{"pattern": {"id": "P-W01"}, "variations": []}], "docNo": {"x": 1}}):
+            st, r = self.req("POST", "/api/proposals", bad)
+            self.assertEqual(st, 400, (bad, r))
+        self.assertEqual(os.listdir(server.PROPOSALS), [])
+
+    def test_broken_snapshot_does_not_break_list(self):
+        self.assertEqual(self.req("POST", "/api/proposals", self.doc())[0], 200)
+        bad = os.path.join(server.PROPOSALS, "broken")
+        os.makedirs(bad)
+        with open(os.path.join(bad, "proposal.json"), "w", encoding="utf-8") as f:
+            json.dump({"items": "x", "_snapshot": "x", "docNo": "B"}, f)
+        st, r = self.req("GET", "/api/proposals")
+        self.assertEqual(st, 200, r)
+        self.assertEqual(sorted(x["docNo"] for x in r["proposals"]), ["B", "RDP-P-20261028-01"])
+
+    def test_mac_nfd_folder_name_is_listed_and_opened(self):
+        import unicodedata
+        st, r = self.req("POST", "/api/proposals", dict(self.doc(), slug="2026-10-28_고객사"))
+        self.assertEqual(st, 200, r)
+        nfc_name = r["slug"]
+        nfd_name = unicodedata.normalize("NFD", nfc_name)
+        os.rename(os.path.join(server.PROPOSALS, nfc_name), os.path.join(server.PROPOSALS, nfd_name))   # 맥 동기화로 NFD가 된 폴더
+        st, r = self.req("GET", "/api/proposals")
+        self.assertEqual([x["slug"] for x in r["proposals"]], [nfc_name])
+        st, r = self.req("GET", "/api/proposals/" + urllib.parse.quote(nfc_name))
+        self.assertEqual((st, r.get("slug")), (200, nfc_name), r)
+
+    def test_missing_images_are_dropped_from_snapshot(self):
+        d = dict(self.doc(images=("v01.jpg", "gone.jpg")), allowMissing=True)
+        st, r = self.req("POST", "/api/proposals", d)
+        self.assertEqual((st, r["missing"]), (200, ["P-W01/gone.jpg"]), r)
+        st, got = self.req("GET", f"/api/proposals/{r['slug']}")
+        self.assertEqual(got["proposal"]["items"][0]["variations"][0]["images"], ["v01.jpg"])
+
+    def test_dotted_date_prefix_and_snapshot_thumbnail(self):
+        st, r = self.req("GET", "/api/proposals/next-no?prefix=RDP-P-2026.10.28-")
+        self.assertEqual((st, r.get("docNo")), (200, "RDP-P-2026.10.28-01"), r)
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow 없음")
+        buf = io.BytesIO()
+        Image.new("RGB", (800, 330), (90, 90, 90)).save(buf, "JPEG")
+        with open(os.path.join(server.IMAGES, "P-W01", "v01.jpg"), "wb") as f:
+            f.write(buf.getvalue())
+        st, r = self.req("POST", "/api/proposals", self.doc())
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("GET", f"/proposal-img/{urllib.parse.quote(r['slug'])}/P-W01/v01.jpg?w=240", headers={"Host": "localhost"})
+        res = c.getresponse()
+        body = res.read()
+        c.close()
+        self.assertEqual(res.status, 200)
+        self.assertIn("immutable", res.getheader("Cache-Control"))
+        self.assertEqual(Image.open(io.BytesIO(body)).size[0], 240)
+
     def test_bad_slug_and_path(self):
         self.assertEqual(self.req("GET", "/api/proposals/..%2Fpatterns")[0], 400)
         self.assertEqual(self.req("GET", "/proposal-img/x/../../P-W01/v01.jpg")[0], 400)
         self.assertEqual(self.req("GET", "/api/proposals/nope")[0], 404)
+
+
+class MultiServerTests(Base):
+    """같은 데이터 폴더를 쓰는 다른 PC의 서버 감지 + 시작 시 이미지 정리 유예."""
+
+    def beat(self, name, ago, host):
+        os.makedirs(server.heartbeat_dir(), exist_ok=True)
+        with open(os.path.join(server.heartbeat_dir(), name + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"host": host, "port": 8791, "beat": time.time() - ago}, f)
+
+    def test_recent_other_server_is_reported(self):
+        server.write_heartbeat("now")                               # 내 것은 빼고
+        self.beat("OTHER-PC-8791", 30, "OTHER-PC")
+        self.beat("OLD-PC-8791", 3600, "OLD-PC")                    # 한 시간 전에 멈춘 것도 빼고
+        st, r = self.req("GET", "/api/health")
+        self.assertEqual([o["host"] for o in r["otherServers"]], ["OTHER-PC"])
+
+    def test_startup_gc_waits_a_day(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "images": []}])
+        self.add_image("P-W01", "orphan.jpg")
+        path = os.path.join(server.IMAGES, "P-W01", "orphan.jpg")
+        hour_ago = time.time() - 3600
+        os.utime(path, (hour_ago, hour_ago))
+        self.assertEqual(server.gc_images("P-W01", doc, min_age=86400), [])   # 시작 때: 다른 PC에서 막 동기화된 사진일 수 있음
+        self.assertEqual(server.gc_images("P-W01", doc), ["orphan.jpg"])      # 저장 때(10분 유예)는 정리
+
+
+class LanPinTests(Base):
+    """LAN 모드 PIN(선택): 같은 네트워크의 다른 기기는 PIN 쿠키가 있어야 하고, PIN을 안 정하면 예전과 같다."""
+
+    def setUp(self):
+        super().setUp()
+        self.lan = [mock.patch.object(server, "LAN_MODE", True), mock.patch.object(server, "is_loopback", lambda ip: False),
+                    mock.patch.object(server, "_LAN_KEY", b"k" * 32)]   # 테스트가 앱 폴더에 .lan-secret을 만들지 않게
+        for x in self.lan:
+            x.start()
+        server._LAN_FAILS.clear()
+
+    def tearDown(self):
+        for x in self.lan:
+            x.stop()
+        super().tearDown()
+
+    def login(self, pin, next_="/"):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("POST", "/lan-login", body=urllib.parse.urlencode({"pin": pin, "next": next_}),
+                  headers={"Host": "localhost", "Content-Type": "application/x-www-form-urlencoded"})
+        r = c.getresponse()
+        r.read()
+        c.close()
+        return r.status, (r.getheader("Set-Cookie") or "").split(";")[0], r.getheader("Location")
+
+    def test_without_pin_nothing_changes(self):
+        self.assertEqual(self.req("GET", "/api/patterns")[0], 200)
+
+    def test_pin_required_and_login_flow(self):
+        server.CFG["lanPin"] = "2468"
+        self.assertEqual(self.req("GET", "/api/patterns")[0], 401)
+        st, page = self.req("GET", "/")
+        self.assertEqual(st, 200)
+        self.assertIn(b'action="/lan-login"', page)
+        self.assertEqual(self.login("0000")[0], 401)
+        st, cookie, loc = self.login("2468", "/lab/")
+        self.assertEqual((st, loc), (303, "/lab/"))
+        self.assertEqual(self.req("GET", "/api/patterns", headers={"Cookie": cookie})[0], 200)
+        server.CFG["lanPin"] = "1357"                                   # PIN을 바꾸면 예전 쿠키는 무효
+        self.assertEqual(self.req("GET", "/api/patterns", headers={"Cookie": cookie})[0], 401)
+
+    def test_pin_lets_lan_in_even_when_access_is_on(self):
+        server.CFG.update(lanPin="2468", requireCfAccess=True, cfAccessTeamDomain="myteam")
+        st, cookie, _ = self.login("2468")
+        self.assertEqual(self.req("GET", "/api/patterns", headers={"Cookie": cookie})[0], 200)
+
+    def test_brute_force_is_slowed(self):
+        server.CFG["lanPin"] = "2468"
+        for _ in range(5):
+            self.assertEqual(self.login("1111")[0], 401)
+        self.assertEqual(self.login("2468")[0], 429)                    # 맞아도 1분은 막힘
+
+    def test_redirect_stays_on_site(self):
+        server.CFG["lanPin"] = "2468"
+        self.assertEqual(self.login("2468", "//evil.example/x")[2], "/")
 
 
 class AccessTests(Base):

@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPut, byId, esc, fmtDate, imgUrl, inCart, layers, markSaved, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 
 /* ---------------- catalog ---------------- */
@@ -39,7 +39,8 @@ function cardHTML(p) {
   const when = (v && v.date) ? fmtDate(v.date).slice(2) : (p.updatedAt ? String(p.updatedAt).slice(2, 10).replace(/-/g, ".") : "");
   const metaParts = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? v.status : when];
   const meta = html`${metaParts.filter(Boolean).map((x, i) => html`${i ? raw("<i></i>") : ""}${x}`)}${layers(v).length ? html`<span class="layer-pill">${layers(v).join("·")}</span>` : ""}`;
-  const dot = (x) => (x.images && x.images.length ? html`<span class="vdot" data-src="${imgUrl(p.id, x.images[0])}"></span>` : raw('<span class="vdot"></span>'));
+  // 컬러 점은 평균색만 필요하다 → 원본(2400px) 대신 가장 작은 축소본
+  const dot = (x) => (x.images && x.images.length ? html`<span class="vdot" data-src="${thumbUrl(p.id, x.images[0], 120)}"></span>` : raw('<span class="vdot"></span>'));
   const chips = vars.length > 1
     ? html`${vars.map((x) => html`
       <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}" data-sel="${x.id}" data-img="${vImg(p.id, x) || ""}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
@@ -112,7 +113,7 @@ export function renderCatalog() {
     </div>`;
 
   const of = $("#openfolder");
-  if (of) of.onclick = (e) => { e.preventDefault(); fetch("/api/open-folder", { method: "POST" }).then(() => toast("Finder에서 열었습니다")).catch(() => {}); };
+  if (of) of.onclick = (e) => { e.preventDefault(); apiPost("/api/open-folder").then(() => toast("데이터 폴더를 열었습니다")).catch((err) => toast(err.message)); };
   paintDots();
   $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
   const btnAll = $("#selall");
@@ -137,7 +138,7 @@ export function renderCatalog() {
       const r = await fetch("/api/rdp/sync-all", { method: "POST" }).then((x) => x.json());
       if (!r || r.ok === false) throw new Error(r && r.error ? r.error : "동기화 실패");
       const fresh = await apiGet("/api/patterns");
-      App.patterns = fresh.patterns || [];
+      App.patterns = (fresh.patterns || []).map(normalizeDoc);
       renderCatalog();
       toast(`동기화 완료 · ${r.patterns}개 시편 / 추가 ${r.added} · 갱신 ${r.updated}`);
     } catch (e) { toast("동기화 실패: " + e.message); sa.disabled = false; sa.textContent = "DB 동기화"; }
@@ -182,7 +183,9 @@ export async function saveNewPattern() {
   if (!d) return;
   if (!d.project) { toast("프로젝트를 입력하세요"); return; }
   if (!d.pattern.code) { toast("패턴 코드를 입력하세요"); return; }
-  const id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
+  // 파일 ID는 편집기·사진 업로드와 같은 규칙(deriveId) — 다르면 저장 전에 올린 사진이 다른 폴더로 갔다
+  const id = deriveId(d.project, d.pattern.code);
+  if (!id) { toast("프로젝트·패턴 코드에 영문이나 숫자가 하나는 있어야 해요 (파일 이름에 씁니다)"); return; }
   const exists = byId(id);
   if (exists) {
     if (confirm(`'${id}' 시편이 이미 있습니다.\n기존 시편을 열까요? (지금 작성한 내용은 저장되지 않습니다)`)) {

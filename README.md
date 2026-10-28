@@ -7,13 +7,14 @@
 1. `RDP Archive.command` 더블클릭 (또는 `python3 server.py`)
 2. 브라우저가 `http://localhost:8791` 로 열림
 3. 창을 닫으면 서버 종료. 다시 쓰려면 다시 더블클릭
+   (로그인 자동 실행 `install_launchagent.sh`를 등록했다면 이 파일은 그 서버를 다시 시작하고 브라우저만 엽니다 — 창을 닫아도 계속 켜져 있음)
 
 처음 한 번만: `python3 -m pip install --user pillow`
 
 ## 데이터 위치
 
 ```
-~/Library/CloudStorage/GoogleDrive-loo4leesk@gmail.com/내 드라이브/RDP-Archive/
+~/Library/CloudStorage/GoogleDrive-<내 계정>/내 드라이브/RDP-Archive/
 ├── patterns/<패턴ID>.json     패턴 1건 = 파일 1개 (전부 여기에)
 ├── images/<패턴ID>/v01.jpg   170:70 → 2400×988
 ├── _orig/<패턴ID>/            업로드 원본
@@ -39,6 +40,7 @@
 - **기준 배합**: 층(1도/2도)마다 1개. 두 개 이상이면 저장할 때 경고가 뜹니다.
 - **이미지 비율**: 170:70 고정. 원본이 다른 비율이면 업로드할 때 잘라서 저장합니다.
 - **삭제**: 실제로 지우지 않고 `_trash`로 옮깁니다. JSON에서 빠진 이미지는 저장할 때 자동으로 정리됩니다.
+- **보관 기간(선택)**: `_backup`·`_trash`는 기본으로 계속 쌓입니다. `config.json`에 `"backupKeepDays": 180`, `"trashKeepDays": 90`처럼 넣으면 서버를 켤 때 그보다 오래된 것을 지웁니다.
 - **확정 저장**: 제안서를 보낸 시점의 내용을 `proposals/`에 복사합니다. 나중에 배합을 고쳐도 보낸 제안서는 그대로입니다.
 
 ## 제안서 규격
@@ -76,6 +78,10 @@ python3 check_tunnel.py                    # 준비 상태 점검
 python3 setup_tunnel.py rdp.내도메인.com    # 터널 주소 등록
 ./install_launchagent.sh                   # (선택) 로그인 시 자동 시작
 ```
+
+같은 네트워크(LAN)의 다른 기기에서 열려면 `RDP Archive (LAN).command`.
+`config.json`에 `"lanPin": "4자리 이상"`을 넣으면 다른 기기는 처음 한 번 PIN을 입력해야 합니다(30일 유지, 5번 틀리면 1분 막힘).
+넣지 않으면 같은 네트워크 누구나 읽고 고칠 수 있으니(배너에 '위험' 표시) PIN을 권장합니다. 이 맥에서의 접속과 터널은 PIN과 상관없습니다.
 
 `config.json`의 `requireCfAccess`가 켜져 있으면 **Cloudflare Access를 통과한 요청(`Cf-Access-Jwt-Assertion`, 서명 검증 · `cfAccessTeamDomain` 필요)만** 허용합니다.
 로컬(localhost) 접속은 그대로 됩니다.

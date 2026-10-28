@@ -90,6 +90,12 @@ def validate(doc):
     """저장 전에 형식을 검사하고 정리한 문서를 돌려준다."""
     if not isinstance(doc, dict):
         raise model.ModelError("라이브러리 형식 오류")
+    for key in ("inks", "substrates", "plates", "transfers"):
+        if doc.get(key) is not None and not isinstance(doc[key], list):
+            raise model.ModelError(f"{key}는 목록이어야 합니다")
+    for key in ("settings", "fits"):
+        if doc.get(key) is not None and not isinstance(doc[key], dict):
+            raise model.ModelError(f"{key}는 객체여야 합니다")
     model.InkRegistry(doc.get("inks") or [])  # 이름·약칭·별칭·DB 연결의 전역 충돌 검사
     inks, names = [], set()
     for i in doc.get("inks") or []:
@@ -104,6 +110,8 @@ def validate(doc):
         ink["aliases"] = list(dict.fromkeys(a.strip() for a in (i.get("aliases") or []) if a.strip()))
         ink["db_ink"] = i.get("db_ink", name if name in model.DB_INK_CODES else "")
         cal = i.get("cal") or {}
+        if not isinstance(cal, dict):
+            raise model.ModelError(f"{name}: 측정값(cal) 형식 오류")
         if not ink["clear"]:
             c = {"hardener_pct": _num(cal.get("hardener_pct", 20), f"{name} 경화제%"),
                  "thinner_pct": _num(cal.get("thinner_pct", 30), f"{name} 신나%"),
@@ -115,7 +123,9 @@ def validate(doc):
         inks.append(ink)
     subs, keys = [], set()
     for s in doc.get("substrates") or []:
-        code = str((s or {}).get("code") or "").strip()
+        if not isinstance(s, dict):
+            raise model.ModelError("도장 시편 형식 오류")
+        code = str(s.get("code") or "").strip()
         if not code:
             raise model.ModelError("컬러코드 없는 도장 시편이 있습니다")
         maker = str(s.get("maker") or "").strip()
@@ -134,7 +144,9 @@ def validate(doc):
         subs.append(d)
     plates, lots = [], set()
     for p in doc.get("plates") or []:
-        lot = str((p or {}).get("lot") or "").strip()
+        if not isinstance(p, dict):
+            raise model.ModelError("동판 형식 오류")
+        lot = str(p.get("lot") or "").strip()
         if not lot:
             raise model.ModelError("lot 없는 동판이 있습니다")
         if lot in lots:
@@ -150,6 +162,8 @@ def validate(doc):
                 raise model.ModelError(f"{lot}: {what}은(는) {lo:g}~{hi:g}")
             d[key] = v
         cov = {}
+        if not isinstance(p.get("coverage") or {}, dict):
+            raise model.ModelError(f"{lot}: 망점(coverage) 형식 오류")
         for k, v in (p.get("coverage") or {}).items():
             if v in (None, ""):
                 continue
@@ -166,6 +180,8 @@ def validate(doc):
             if layer:
                 layer["inks"] = registry.normalize(layer["inks"])
     st = doc.get("settings") or {}
+    if not isinstance(st.get("cards") or {}, dict):
+        raise model.ModelError("기본 카드값(settings.cards) 형식 오류")
     yn = _num(st.get("yn", 1.0), "Yule–Nielsen n")
     if not 1 <= yn <= 10:
         raise model.ModelError("Yule–Nielsen n은 1~10")
@@ -198,9 +214,12 @@ def _check_run(run):
             if _num(x, f"보정 프로필 {name}") < 0:
                 raise model.ModelError(f"보정 프로필 잉크 {name}: 음수")
     for lot, v in run["plates"].items():
-        if _num(v.get("thickness"), f"보정 프로필 {lot} 막두께") <= 0:
+        if not isinstance(v, dict) or _num(v.get("thickness"), f"보정 프로필 {lot} 막두께") <= 0:
             raise model.ModelError(f"보정 프로필 {lot} 막두께 오류")
-        for d, e in v.get("tone_curve") or []:
+        curve = v.get("tone_curve") or []
+        if not isinstance(curve, list) or not all(isinstance(x, (list, tuple)) and len(x) == 2 for x in curve):
+            raise model.ModelError(f"보정 프로필 {lot} 망점 곡선 형식 오류")
+        for d, e in curve:
             if not (0 <= _num(d, "망점") <= 1 and 0 <= _num(e, "망점") <= 1):
                 raise model.ModelError(f"보정 프로필 {lot} 망점 곡선 오류")
     return run
@@ -238,7 +257,7 @@ def _check_transfer(t, no):
         raise model.ModelError(f"{what}: 바탕을 고르세요")
     d = {"date": str(t.get("date") or ""), "plate": str(t.get("plate") or "").strip(), "substrate": sub,
          "layer1": _check_layer(t.get("layer1"), f"{what} 1도")}
-    if t.get("layer2") and (t["layer2"].get("inks") or {}):
+    if t.get("layer2") and (not isinstance(t["layer2"], dict) or t["layer2"].get("inks")):
         d["layer2"] = _check_layer(t["layer2"], f"{what} 2도")
     for k, label in (("thinner_pct", "신나 %"), ("hardener_pct", "경화제 %"), ("matting_pct", "소광제 %")):
         v = _num(t.get(k, {"thinner_pct": 30, "hardener_pct": 20}.get(k, 0)), f"{what} {label}")
@@ -498,13 +517,17 @@ def similar(target, mode, patterns, worklog_index=None, limit=12, transfers=None
             if w.kind != "v3":
                 continue
             for j in w.jobs:
-                for s in j.get("samples") or []:
-                    L = _full_lab(((s or {}).get("lab") or {}).get(mode))
+                plate = j.get("plate") if isinstance(j.get("plate"), dict) else {}   # 모양이 틀린 일지는 PCCS3가 오류로 알린다
+                for s in j.get("samples") if isinstance(j.get("samples"), list) else []:
+                    if not isinstance(s, dict) or not isinstance(s.get("lab"), dict):
+                        continue
+                    L = _full_lab(s["lab"].get(mode))
                     if L is None:
                         continue
-                    lot = (j.get("plate") or {}).get("lot")
+                    lot = plate.get("lot")
+                    layers = s.get("layers") if isinstance(s.get("layers"), dict) else {}
                     out.append({"source": "작업일지", "id": w.name, "title": f"{w.date} · 동판 {lot}",
-                                "detail": f"{s.get('substrate')} · " + " + ".join(f"{k} {v}" for k, v in (s.get("layers") or {}).items()),
+                                "detail": f"{s.get('substrate')} · " + " + ".join(f"{k} {v}" for k, v in layers.items()),
                                 "inks": {}, "lab": [round(x, 2) for x in L], "hex": cm.lab_to_hex(L),
                                 "dE": round(cm.delta_e2000(L, target), 2), "eval": s.get("eval"),
                                 "link": f"/pccs/#/file/{w.name}"})
@@ -636,6 +659,9 @@ def handle(method, path, query, body, ctx):
         return 404, {"ok": False, "error": "not found"}
     except model.ModelError as e:
         return 400, {"ok": False, "error": str(e)}
+    except (TypeError, AttributeError, KeyError, ValueError) as e:
+        # 모양이 틀린 입력(글자 자리에 목록, 숫자 자리에 글자 등)은 서버 오류(500)가 아니라 입력 오류로
+        return 400, {"ok": False, "error": f"입력 형식 오류 — {type(e).__name__}: {e}"}
 
 
 def static_file(rel):

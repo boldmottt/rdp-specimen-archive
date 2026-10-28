@@ -4,6 +4,9 @@ v1(pattern-archive/data.js) -> v2(패턴당 JSON + 170:70 이미지) 마이그�
 한 번만 실행하면 됩니다.
 
     python3 migrate_v1.py --src "../pattern-archive" --dest "<드라이브>/RDP-Archive"
+
+이미 있는 시편(patterns/<id>.json)은 건너뜁니다 — 다시 실행해도 그동안 고친 내용을 v1 내용으로 덮어쓰지 않게.
+정말 덮어쓰려면 --force (덮어쓰기 전 원래 파일은 _backup에 남깁니다).
 """
 import argparse
 import json
@@ -59,6 +62,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True, help="v1 폴더 (data.js + images/)")
     ap.add_argument("--dest", required=True, help="드라이브 RDP-Archive 폴더")
+    ap.add_argument("--force", action="store_true", help="이미 있는 시편도 v1 내용으로 덮어쓰기 (원래 파일은 _backup에)")
     args = ap.parse_args()
 
     src = os.path.abspath(args.src)
@@ -74,10 +78,18 @@ def main():
         os.makedirs(d, exist_ok=True)
 
     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    results = []
+    results, skipped = [], []
 
     for sp in payload["specimens"]:
         pid = sp["id"]
+        out_json = os.path.join(patterns_dir, pid + ".json")
+        if os.path.exists(out_json):
+            if not args.force:
+                skipped.append(pid)
+                continue
+            backup = os.path.join(dest, "_backup")
+            os.makedirs(backup, exist_ok=True)
+            shutil.copy2(out_json, os.path.join(backup, f"{pid}.before-migrate.{datetime.now():%Y%m%d-%H%M%S}.json"))
         label = sp.get("label", {})
         work = sp.get("work", {})
 
@@ -173,13 +185,15 @@ def main():
             "updatedAt": now,
         }
 
-        with open(os.path.join(patterns_dir, pid + ".json"), "w", encoding="utf-8") as f:
+        with open(out_json, "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
         results.append((pid, len(mixes), len(images)))
 
     print(f"[ok] {len(results)}개 패턴 마이그레이션 -> {dest}")
     for pid, nm, ni in results:
         print(f"   - {pid:<22} 배합 {nm:>2}  이미지 {ni}")
+    if skipped:
+        print(f"[i] 이미 있는 시편 {len(skipped)}개는 건너뜀 (덮어쓰려면 --force): {', '.join(skipped)}")
 
 
 if __name__ == "__main__":

@@ -163,6 +163,75 @@ class ApiTests(Folder):
         self.assertEqual(r["errors"], 1)
 
 
+HEAD = """---
+schema: worklog/v3
+date: "2026-02-0{n}"
+category: 작업일지
+tags: {tags}
+place: x
+worker: y
+"""
+OKJOB = """  - seq: 1
+    customer: c
+    project: p
+    stage: 선행연구
+    type: 샘플제작
+    plate: {lot: "A1", layers: {"1도": "P1"}}
+"""
+
+
+class RobustTests(Folder):
+    """손으로 쓴 일지의 모양이 틀려도 폴더 전체·화면이 멈추지 않고, 그 일지에 오류로 나와야 한다."""
+
+    def put(self, n, body, tags="[NIFCO]"):
+        name = f"2026-02-0{n}_틀린모양{n}.md"
+        with open(os.path.join(self.dir, name), "w", encoding="utf-8") as f:
+            f.write(HEAD.format(n=n, tags=tags) + body + "---\n본문\n")
+        return name
+
+    def test_bad_shapes_are_reported_not_crashing(self):
+        cases = {
+            self.put(1, "jobs:\n  - seq: 1\n    plate: \"A1\"\n"): "plate가 {lot:, layers:} 형식이 아님",
+            self.put(2, "jobs:\n" + OKJOB + "    batches:\n      - {layer: \"1도\", code: \"1\", inks: {WH: 10}, thinner: 3, total: 13}\n"):
+                "신나는 {g:, pct:} 형식",
+            self.put(3, "jobs:\n" + OKJOB + "    batches:\n      - {layer: \"1도\", code: \"2\", inks: [WH, 10], total: 13}\n"):
+                "inks는 {잉크: g} 형식",
+            self.put(4, "jobs:\n" + OKJOB + "    samples:\n      - {seq: 1, substrate: S, qty: \"3장\", eval: 채택, layers: [\"1도\"]}\n"):
+                "qty가 양의 정수가 아님",
+            self.put(5, "jobs: 5\n", tags="NIFCO"): "jobs가 목록이 아님",
+            self.put(6, "jobs:\n" + OKJOB + "    samples: {a: 1}\n    batches: 3\n"): "samples가 목록이 아님",
+        }
+        cfg = {"worklogDir": self.dir}
+        for path in ("/api/pccs/status", "/api/pccs/files", "/api/pccs/plates"):
+            st, r = api.handle(path, {}, cfg)
+            self.assertEqual(st, 200, (path, r))
+        st, r = api.handle("/api/pccs/files", {}, cfg)
+        errs = {f["name"]: f["errors"] for f in r["files"]}
+        for name, want in cases.items():
+            self.assertGreaterEqual(errs[name], 1, name)
+            st, one = api.handle("/api/pccs/file", {"name": [name]}, cfg)
+            self.assertEqual(st, 200, name)
+            self.assertIn(want, " | ".join(msgs(one["result"])), name)
+        st, r = api.handle("/api/pccs/plate", {"lot": ["A1"]}, cfg)
+        self.assertEqual(st, 200)
+        # 예시 일지 검사 결과는 그대로
+        self.assertEqual(self.run_check(GOOD)["errors"], [])
+        self.assertIn("tags가 목록이 아님", " | ".join(msgs(self.run_check("2026-02-05_틀린모양5.md"))))
+
+    def test_sample_layers_list_and_qty_text_in_timeline(self):
+        self.put(7, "jobs:\n" + OKJOB + "    samples:\n      - {seq: 1, substrate: S, qty: \"3장\", eval: 채택, layers: [\"1도\"]}\n")
+        idx = worklog.load_folder(self.dir)
+        self.assertTrue(any(p["lot"] == "A1" for p in idx.plates()))
+        self.assertTrue(idx.timeline_entries("A1"))
+
+    def test_colorlab_similar_survives_bad_worklog(self):
+        from colorlab import api as lab_api
+        self.put(8, "jobs:\n  - seq: 1\n    plate: \"A1\"\n    samples: {a: 1}\n")
+        idx = worklog.load_folder(self.dir)
+        items = lab_api.similar([50, 0, 0], "sci", [], idx)
+        self.assertIsInstance(items, list)
+
+
 class HttpTests(Folder):
     """/pccs·/api/pccs도 아카이브와 같은 Cloudflare Access 검사를 거친다."""
 

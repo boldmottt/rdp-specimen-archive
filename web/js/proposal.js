@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 제안서 · 확정본 보관함 · 장바구니 바 */
-import { $, $$, App, apiGet, byId, dash, html, raw, imgUrl, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
+import { $, $$, App, apiGet, apiPost, byId, dash, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
 import { labOf, layerPlate } from "./detail.js";
 import { rerender } from "./main.js";
 
@@ -176,7 +176,7 @@ function coverSheet(m, ctx) {
       <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div>
         <div class="cov-thumbs" style="grid-template-columns:repeat(${cols},1fr)">${flat.map(({ pt, v }) => html`<figure>
       ${imgTag(ctx, pt, v, "", '<div style="aspect-ratio:170/70;background:#efede8"></div>')}
-      <figcaption>${pt.code}${v.name ? " · " + v.name : ""}</figcaption></figure>`)}</div></div>
+      <figcaption>${pt.code}${v.name && v.name !== "기본" ? " · " + v.name : ""}</figcaption></figure>`)}</div></div>
       <div class="cov-foot"><span>${m.company} · <span class="docno">${docLabel(m)}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
 }
@@ -308,6 +308,7 @@ export function renderProposal() {
   $("#parchive").onclick = () => (location.hash = "#/proposals");
   $("#pprint").onclick = () => window.print();
   $("#psnapshot").onclick = saveSnapshot;
+  $("#psnapshot").disabled = snapBusy;
   const bindField = (id, key) => {
     const el = $(id);
     el.oninput = () => {
@@ -349,7 +350,24 @@ async function nextDocNo() {
   try { return (await apiGet(`/api/proposals/next-no?prefix=${encodeURIComponent(prefix)}`)).docNo; } catch (e) { return ""; }
 }
 
+// 확정 저장은 한 번에 하나만 — 두 번 누르면 두 번째가 '이미 확정된 번호' 대화상자를 띄우고 보관함에 두 번 들어갔다
+let snapBusy = false;
 async function saveSnapshot() {
+  if (snapBusy) return;
+  snapBusy = true;
+  const btn = $("#psnapshot");
+  if (btn) btn.disabled = true;
+  try { await doSaveSnapshot(); } finally {
+    snapBusy = false;
+    const b = $("#psnapshot");
+    if (b) b.disabled = false;
+  }
+}
+
+// 기다리는 사이 다른 화면으로 갔으면 제안서 화면으로 덮어쓰지 않는다 (상태만 바꿔 둔다)
+const refreshProposal = () => { if (location.hash === "#/proposal") renderProposal(); };
+
+async function doSaveSnapshot() {
   if (!App.prop.date) { App.prop.date = todayLocal(); saveLS(); }   // 날짜가 바뀌어도 확정 내용과 비교되게 고정
   let m = liveModel(false);
   // 예전 방식(confirmedDocNo)으로 확정한 기록도 같은 번호로 취급
@@ -369,7 +387,8 @@ async function saveSnapshot() {
     if (!pick) return;
     if (pick === "rev") App.prop.rev = nextRev;
     else { App.prop.docNo = fresh; App.prop.rev = "0"; }
-    saveLS(); renderProposal();
+    App.prop.date = todayLocal();   // 개정본·새 번호는 오늘 날짜로 다시 낸다
+    saveLS(); refreshProposal();
     m = liveModel(false);
   }
   const noImage = m.items.flatMap((it) => it.variations.filter((v) => !v.images.length).map((v) => `${it.pattern.code} ${v.name}`));
@@ -380,28 +399,35 @@ async function saveSnapshot() {
     slug: `${snap.date}_${(snap.client || "proposal").replace(/[^\w가-힣-]/g, "")}`,
     createdAt: new Date().toISOString(),
   });
-  const post = (body) => fetch("/api/proposals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-    .then(async (r) => ({ status: r.status, j: await r.json().catch(() => ({})) }));
-  try {
-    let { status, j } = await post(doc);
-    if (status === 409 && j.missing) {
-      if (!confirm(`원본 이미지 ${j.missing.length}장을 찾을 수 없습니다.\n${j.missing.join("\n")}\n\n이 이미지 없이 확정할까요?`)) return;
-      ({ status, j } = await post(Object.assign({}, doc, { allowMissing: true })));
+  let body = doc, j = null;
+  while (!j) {
+    try { j = await apiPost("/api/proposals", body); } catch (e) {
+      const x = e.payload || {};
+      if (e.status === 409 && x.missing && !body.allowMissing) {
+        if (!confirm(`원본 이미지 ${x.missing.length}장을 찾을 수 없습니다.\n${x.missing.join("\n")}\n\n이 이미지 없이 확정할까요?`)) return;
+        body = Object.assign({}, doc, { allowMissing: true });
+        continue;
+      }
+      if (e.status === 409 && x.duplicate) {
+        // 개정본을 만들던 중이면 다음 Rev를, 새 문서면 새 번호를 먼저 권한다 (전에는 새 번호뿐이라 개정이 막다른 길)
+        const opts = [];
+        if ((Number(m.rev) || 0) > 0 && x.nextRev) opts.push({ label: `개정본 ${m.docNo} Rev.${x.nextRev}로 확정`, value: "rev", primary: true });
+        if (x.suggest) opts.push({ label: `새 번호 ${x.suggest}로 확정`, value: "new", primary: !opts.length });
+        const pick = await choose("이미 확정된 번호예요", `${docLabel(m)}는 보관함에 이미 있습니다 (다른 PC에서 확정했을 수 있어요).`, opts);
+        if (!pick) return;
+        if (pick === "rev") App.prop.rev = x.nextRev; else { App.prop.docNo = x.suggest; App.prop.rev = "0"; }
+        saveLS(); refreshProposal();
+        return doSaveSnapshot();
+      }
+      toast("확정 실패: " + e.message);
+      return;
     }
-    if (status === 409 && j.duplicate) {
-      const pick = await choose("이미 확정된 번호예요", `${docLabel(m)}는 보관함에 이미 있습니다 (다른 PC에서 확정했을 수 있어요).`,
-        j.suggest ? [{ label: `새 번호 ${j.suggest}로 확정`, value: "new", primary: true }] : []);
-      if (pick !== "new") return;
-      App.prop.docNo = j.suggest; App.prop.rev = "0"; saveLS(); renderProposal();
-      return saveSnapshot();
-    }
-    if (!j.ok) { toast("확정 실패: " + (j.error || status)); return; }
-    App.prop.confirmed = { key: docKey(m), sig: signature(m), slug: j.slug };
-    delete App.prop.confirmedDocNo;
-    saveLS(); renderProposal();
-    const miss = (j.missing || []).length;
-    toast(`${docLabel(m)} 확정 저장됨 · 이미지 ${j.images || 0}장` + (miss ? ` · 이미지 ${miss}장 없음` : ""));
-  } catch (e) { toast("확정 실패: " + e.message); }
+  }
+  App.prop.confirmed = { key: docKey(m), sig: signature(m), slug: j.slug };
+  delete App.prop.confirmedDocNo;
+  saveLS(); refreshProposal();
+  const miss = (j.missing || []).length;
+  toast(`${docLabel(m)} 확정 저장됨 · 이미지 ${j.images || 0}장` + (miss ? ` · 이미지 ${miss}장 없음` : ""));
 }
 
 /* ---------------- 확정본 보관함 ---------------- */
@@ -418,8 +444,7 @@ export async function renderArchive() {
   let list = [];
   try { list = (await apiGet("/api/proposals")).proposals || []; } catch (e) { toast("보관함을 불러오지 못했습니다"); }
   if (location.hash !== "#/proposals") return;   // 기다리는 사이 다른 화면으로 이동
-  const q = (App.archQ || "").trim().toLowerCase();
-  const rows = list.filter((x) => !q || [x.docNo, x.title, x.client, x.by, x.date].join(" ").toLowerCase().includes(q));
+  App.archList = list;
   $("#view").innerHTML = String(html`<div class="prop-toolbar"><div class="prop-toolbar-in">
         <button class="btn-line" id="aback">← 목차</button>
         <strong class="arch-title">제안서 보관함</strong><span class="arch-count">${list.length}건</span>
@@ -427,30 +452,43 @@ export async function renderArchive() {
         <div class="field"><label for="arch-q">찾기</label><input class="w-lg" id="arch-q" value="${App.archQ || ""}" placeholder="문서번호 · 제목 · 고객"></div>
         <button class="btn-dark" id="adraft">작성 중인 제안서</button>
       </div></div>
-      <div class="wrap">${rows.length ? html`<div class="arch-list">${rows.map((x) => html`<a class="arch-row" href="#/proposals/${encodeURIComponent(x.slug)}">
-          <span class="arch-thumb">${x.thumb ? html`<img src="${archCtx(x.slug).img(x.thumb.pid, x.thumb.name)}" alt="" loading="lazy">` : ""}</span>
+      <div class="wrap" id="arch-body"></div>`);
+  $("#aback").onclick = () => (location.hash = "");
+  $("#adraft").onclick = () => (location.hash = "#/proposal");
+  const qi = $("#arch-q");
+  // 찾기: 입력 칸은 그대로 두고 받아 둔 목록만 다시 그린다 (한글 조합이 끊기지 않고, 글자마다 서버에 묻지 않음)
+  qi.oninput = () => { App.archQ = qi.value; paintArchive(); };
+  paintArchive();
+}
+
+function paintArchive() {
+  const body = $("#arch-body");
+  if (!body) return;
+  const list = App.archList || [];
+  const q = (App.archQ || "").trim().toLowerCase();
+  const rows = list.filter((x) => !q || [x.docNo, x.title, x.client, x.by, x.date].join(" ").toLowerCase().includes(q));
+  body.innerHTML = String(html`${rows.length ? html`<div class="arch-list">${rows.map((x) => html`<a class="arch-row" href="#/proposals/${encodeURIComponent(x.slug)}">
+          <span class="arch-thumb">${x.thumb ? html`<img src="${archCtx(x.slug).img(x.thumb.pid, x.thumb.name)}?w=240" alt="" loading="lazy">` : ""}</span>
           <span class="arch-main"><b>${x.title || "제안서"}</b><span>${[x.client, x.by].filter(Boolean).join(" · ") || "—"}</span></span>
           <span class="arch-doc">${x.docNo || "—"} <em>Rev.${x.rev}</em></span>
           <span class="arch-n">패턴 ${x.patterns} · 컬러 ${x.variations}${x.missing ? html` · <i class="warn">이미지 ${x.missing}장 없음</i>` : ""}</span>
           <span class="arch-date">${x.date ? fmtDate(x.date) : ""}<small>확정 ${stamp(x.createdAt)}</small></span>
         </a>`)}</div>`
-    : html`<div class="empty-state"><h2>${list.length ? "찾는 제안서가 없습니다" : "아직 확정한 제안서가 없습니다"}</h2><p>제안서 화면에서 [확정 저장]을 누르면 여기에 보관됩니다.</p></div>`}</div>`);
-  $("#aback").onclick = () => (location.hash = "");
-  $("#adraft").onclick = () => (location.hash = "#/proposal");
-  const qi = $("#arch-q");
-  qi.oninput = () => { App.archQ = qi.value; clearTimeout(qi._t); qi._t = setTimeout(() => { renderArchive().then(() => { const n = $("#arch-q"); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 200); };
+    : html`<div class="empty-state"><h2>${list.length ? "찾는 제안서가 없습니다" : "아직 확정한 제안서가 없습니다"}</h2><p>제안서 화면에서 [확정 저장]을 누르면 여기에 보관됩니다.</p></div>`}`);
 }
 
 export async function renderArchived(slug) {
   document.body.classList.add("prop-mode");
   $("#cartbar").className = "cartbar"; $("#cartbar").innerHTML = "";
+  const here = () => location.hash === `#/proposals/${encodeURIComponent(slug)}` || location.hash === `#/proposals/${slug}`;
   let res;
   try { res = await apiGet(`/api/proposals/${encodeURIComponent(slug)}`); } catch (e) {
+    if (!here()) return;   // 기다리는 사이 다른 화면으로 갔으면 덮어쓰지 않는다
     $("#view").innerHTML = `<div class="wrap"><div class="empty-state"><h2>확정본을 찾을 수 없습니다</h2><button class="btn-line" id="aback">보관함으로</button></div></div>`;
     $("#aback").onclick = () => (location.hash = "#/proposals");
     return;
   }
-  if (location.hash !== `#/proposals/${encodeURIComponent(slug)}` && location.hash !== `#/proposals/${slug}`) return;
+  if (!here()) return;
   const doc = res.proposal || {};
   const m = normalizeModel(doc);
   const snap = doc._snapshot || {};
@@ -517,6 +555,6 @@ export function renderCart() {
       <div class="cart-thumbs">${items.slice(0, 4).map(({ p, v }) => (v.images && v.images.length ? html`<img src="${imgUrl(p.id, v.images[0])}" alt="">` : ""))}</div>
       <button class="btn-ghost2" id="clearcart">비우기</button>
       <button class="btn-light" id="mkprop">제안서 만들기</button></div>`);
-  $("#clearcart").onclick = () => { App.cart = []; saveLS(); renderCart(); rerender(); };
+  $("#clearcart").onclick = () => { App.cart = []; resetPropIdentity(); saveLS(); renderCart(); rerender(); };
   $("#mkprop").onclick = () => (location.hash = "#/proposal");
 }

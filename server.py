@@ -13,6 +13,7 @@ import base64
 import contextlib
 import copy
 import hashlib
+import hmac
 import io
 import json
 import math
@@ -27,10 +28,12 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.request
 import uuid
 import webbrowser
 from datetime import datetime
+from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -56,6 +59,9 @@ except Exception:
 RATIO_W, RATIO_H = 170, 70
 TARGET_W, TARGET_H = 2400, 988
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+# 시편 이미지 파일 이름 — 저장 검사와 보내기(이미지·축소본·삭제)가 같은 규칙을 쓴다
+# (전에는 저장은 통과하는데 보낼 때 400이 나서 깨진 그림이 되는 이름이 있었다)
+IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", re.I)
 BASE_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 LAN_HOSTS = set()
 SAFE_HOSTS = set(BASE_HOSTS)
@@ -110,6 +116,52 @@ UI_STATE = os.path.join(DATA, "_ui", "state.json")
 def ensure_dirs():
     for d in (PATTERNS, IMAGES, ORIG, BACKUP, TRASH, PROPOSALS, THUMBS, os.path.dirname(UI_STATE)):
         os.makedirs(d, exist_ok=True)
+
+
+# 실행하는 동안 고정할 설정 (데모 모드). config.json을 다시 읽어도 이 값이 이긴다.
+CFG_OVERRIDES = {}
+
+# rdp.db의 rdp_mixes 표 (서버가 읽고 쓰는 칸만, 실제 DB와 같은 UNIQUE 제약) — 데모용 빈 DB를 만들 때 쓴다
+RDP_SCHEMA = """CREATE TABLE IF NOT EXISTS rdp_mixes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, project TEXT, pattern_code TEXT,
+  plate TEXT, layer TEXT, batch_no TEXT, is_base INTEGER DEFAULT 0,
+  mt REAL, bk REAL, wh REAL, ye REAL, rd REAL, cl REAL, ye_d REAL,
+  matting_agent_pct REAL, matting_agent_g REAL, thinner_pct REAL, thinner_g REAL,
+  hardener_pct REAL, hardener_g REAL,
+  result TEXT, change_summary TEXT, notes TEXT, coating_code TEXT,
+  UNIQUE(project, pattern_code, plate, layer, batch_no))"""
+
+
+def enter_demo_mode() -> str:
+    """sample-data를 임시 폴더에 복사해서 그곳만 쓴다.
+    실제 데이터 폴더(썸네일 포함)·회사 rdp.db·작업일지는 건드리지 않는다 — DB 전송은 데모용 빈 DB로."""
+    global DATA, PATTERNS, IMAGES, ORIG, BACKUP, TRASH, PROPOSALS, THUMBS, UI_STATE
+    src = os.path.join(HERE, "sample-data")
+    tmp = tempfile.mkdtemp(prefix="rdp-demo-")
+    if os.path.isdir(src):
+        shutil.copytree(src, tmp, dirs_exist_ok=True)
+    DATA = tmp
+    PATTERNS = os.path.join(DATA, "patterns")
+    IMAGES = os.path.join(DATA, "images")
+    ORIG = os.path.join(DATA, "_orig")
+    BACKUP = os.path.join(DATA, "_backup")
+    TRASH = os.path.join(DATA, "_trash")
+    PROPOSALS = os.path.join(DATA, "proposals")
+    THUMBS = os.path.join(DATA, "_thumb")
+    UI_STATE = os.path.join(DATA, "_ui", "state.json")
+    db = os.path.join(DATA, "rdp-demo.db")
+    con = sqlite3.connect(db)
+    try:
+        con.execute(RDP_SCHEMA)
+        con.commit()
+    finally:
+        con.close()
+    CFG_OVERRIDES.update({"rdpDbPath": db,
+                          "worklogDir": os.path.join(HERE, "pccs", "sample-worklogs")})   # 익명 예시 일지
+    CFG.update(CFG_OVERRIDES)
+    from colorlab import synth   # 컬러연구소 합성 데모 라이브러리 (실측값 아님)
+    lab_api.save_library(DATA, BACKUP, synth.library(), "")
+    return tmp
 
 
 # ---------------------------------------------------------------- helpers
@@ -188,6 +240,17 @@ def move_to_trash(path: str, label: str = ""):
     shutil.move(path, dest)
 
 
+def clear_leftovers(pid: str):
+    """시편 JSON도 이미지 폴더도 없는데 _orig/<id>만 남아 있으면(예전에 지운 시편의 찌꺼기) 휴지통으로 옮긴다.
+    — 그 이름으로 바꾸기가 '_orig/... 이미 쓰임'으로 막히거나, 새 시편에 옛 원본 사진이 섞이지 않게.
+    이미지 폴더가 있으면(새 시편을 저장하기 전에 올린 사진) 건드리지 않는다. 썸네일 캐시는 지운다."""
+    if os.path.exists(safe_join(PATTERNS, pid + ".json")) or os.path.isdir(os.path.join(IMAGES, pid)):
+        return
+    if os.path.isdir(os.path.join(ORIG, pid)):
+        move_to_trash(os.path.join(ORIG, pid), f"{pid}_orig-leftover")
+    shutil.rmtree(os.path.join(THUMBS, pid), ignore_errors=True)
+
+
 def rename_pattern(old_id: str, new_id: str, data: bytes):
     """이미지 → 원본 → 새 JSON → 옛 JSON(_trash) 순서로 옮긴다.
     중간에 실패하면 이미 옮긴 것을 역순으로 되돌린다. (호출 전에 대상이 비어 있는지 확인할 것)"""
@@ -243,12 +306,77 @@ def _num(val, where, errors, allow_negative=False):
     return val
 
 
+def _str_list(x):
+    """동판·태그 목록: 쉼표로 쓴 글자는 목록으로 바꾼다. (목록, 형식 오류 여부)"""
+    if x is None:
+        return [], False
+    if isinstance(x, str):
+        return [s.strip() for s in x.split(",") if s.strip()], False
+    if isinstance(x, list) and all(isinstance(s, (str, int, float)) and not isinstance(s, bool) for s in x):
+        return [str(s).strip() for s in x if str(s).strip()], False
+    return x, True
+
+
+def normalize_shape(doc: dict, coerce: bool = False) -> list:
+    """화면이 기대하는 뼈대를 맞춘다: label·work는 객체, 동판·태그·도장은 목록.
+    빠진 칸은 빈 값으로 채우고(doc을 바꿈), 형식이 틀린 칸은 목록으로 돌려준다.
+    coerce=True(읽기)면 틀린 칸도 빈 값으로 바꿔서 화면이 그릴 수 있게 한다 — 저장 전에는 오류로 막는다.
+    (label 없는 문서 하나가 목차 전체를 멈추게 하던 문제)"""
+    problems = []
+
+    def bad(obj, key, msg, empty):
+        problems.append(msg)
+        if coerce:
+            obj[key] = empty
+
+    for key in ("label", "work"):
+        if doc.get(key) is None:
+            doc[key] = {}
+        elif not isinstance(doc[key], dict):
+            bad(doc, key, f"{key}가 객체가 아닙니다", {})
+    work, pat = doc.get("work"), doc.get("pattern")
+    if isinstance(work, dict) and "plate" in work:
+        plates, wrong = _str_list(work["plate"])
+        if wrong:
+            bad(work, "plate", "work.plate는 동판 목록이어야 합니다", [])
+        else:
+            work["plate"] = plates
+    if isinstance(pat, dict) and "tags" in pat:
+        tags, wrong = _str_list(pat["tags"])
+        if wrong:
+            bad(pat, "tags", "pattern.tags는 태그 목록이어야 합니다", [])
+        else:
+            pat["tags"] = tags
+    hist = doc.get("history")
+    if hist is not None and (not isinstance(hist, list) or not all(isinstance(h, dict) for h in hist)):
+        bad(doc, "history", "history는 객체 목록이어야 합니다", [])
+    vars_ = doc.get("variations") if isinstance(doc.get("variations"), list) else []
+    if coerce and not all(isinstance(v, dict) for v in vars_):
+        problems.append("객체가 아닌 베리에이션은 빼고 읽습니다")
+        vars_[:] = [v for v in vars_ if isinstance(v, dict)]
+    for i, v in enumerate(vars_):
+        if not isinstance(v, dict):
+            continue      # 저장 검사(validate_pattern)가 따로 오류로 알린다
+        where = v.get("id") or f"variations[{i}]"
+        if v.get("coating") is None:
+            v["coating"] = []
+        elif not isinstance(v["coating"], list) or not all(isinstance(c, dict) for c in v["coating"]):
+            bad(v, "coating", f"{where}: coating은 객체 목록이어야 합니다", [])
+        for key in ("label", "layerPlates", "layerPatterns"):
+            if key in v and v[key] is None:
+                del v[key]
+            elif key in v and not isinstance(v[key], dict):
+                bad(v, key, f"{where}: {key}가 객체가 아닙니다", {})
+    return problems
+
+
 def validate_pattern(doc: dict):
     """저장 전 구조 검사. 숫자 문자열 같은 가벼운 형식 차이는 그 자리에서 고친다(doc을 바꿈).
     오류가 하나라도 있으면 저장하지 않는다."""
     errors = []
     if not isinstance(doc, dict):
         return ["JSON 최상위가 객체가 아닙니다"]
+    errors += normalize_shape(doc)
     pid = doc.get("id") or ""
     if not ID_RE.match(pid):
         errors.append("id가 올바르지 않습니다")
@@ -270,9 +398,13 @@ def validate_pattern(doc: dict):
             errors.append(f"variation id 중복: {vid}")
         seen.add(vid)
         imgs = v.get("images", [])
-        if not isinstance(imgs, list) or any(not isinstance(n, str) or not n or "/" in n or "\\" in n or n.startswith(".")
-                                             for n in imgs):
+        if not isinstance(imgs, list) or not all(isinstance(n, str) for n in imgs):
             errors.append(f"{vid or i}: images는 파일 이름 목록이어야 합니다")
+        else:
+            bad = [n for n in imgs if not IMAGE_NAME_RE.match(n)]
+            if bad:
+                errors.append(f"{vid or i}: 쓸 수 없는 이미지 이름 {', '.join(bad[:3])} "
+                              "(영문·숫자·._- 와 .jpg/.png/.webp — 편집기에서 다시 올려 주세요)")
         mixes = v.get("mixes", [])
         if not isinstance(mixes, list):
             errors.append(f"variations[{i}].mixes가 배열이 아닙니다")
@@ -555,7 +687,8 @@ def merge_mixes(v, db_mixes):
                 if apply_db_mix(cur[pick], dm, registry):
                     updated += 1
 
-    cur.sort(key=lambda m: (m.get("layer") or "", m.get("date") or "", m.get("batch") or "", m.get("plate") or ""))
+    # 글자로 비교 (도수를 숫자 1로 적은 배합이 섞여 있어도 정렬이 TypeError로 멈추지 않게)
+    cur.sort(key=lambda m: tuple(str(m.get(k) or "") for k in ("layer", "date", "batch", "plate")))
     return added, updated
 
 
@@ -613,6 +746,60 @@ def track_layer_code_changes(prev, doc):
                 del hist[layer]
         if hist:
             v["layerPatternsFrom"] = hist
+
+
+def _mplate(m) -> str:
+    return str(m.get("plate") or "").strip()
+
+
+def plate_from(m) -> list:
+    """그 배합이 예전에 있던 동판들, 오래된 것부터 (서버가 저장할 때 기록, plateFrom)."""
+    return [str(p).strip() for p in (m.get("plateFrom") or []) if isinstance(p, (str, int, float)) and str(p).strip()]
+
+
+def track_plate_changes(prev, doc):
+    """배합의 동판이 바뀌면 옛 동판을 plateFrom에 남긴다 — DB에 새 행을 넣지 않고 옛 동판 행을 옮기기 위해
+    (DB 키에 동판이 들어가서, 그냥 넣으면 같은 배합이 옛 동판·새 동판 두 줄로 남는다).
+    클라이언트가 보낸 값은 쓰지 않고 이전 파일에서 이어받는다 (layerPatternsFrom과 같은 방식).
+    짝은 같은 컬러·(도수, 배치)로 찾고, 같은 동판끼리 먼저, 남은 것이 한 쌍일 때만 '동판이 바뀌었다'고 본다."""
+    prev_vs = {pv.get("id"): pv for pv in (prev or {}).get("variations") or [] if isinstance(pv, dict)}
+    for v in doc.get("variations") or []:
+        if not isinstance(v, dict):
+            continue
+        mixes = [m for m in v.get("mixes") or [] if isinstance(m, dict)]
+        for m in mixes:
+            m.pop("plateFrom", None)
+        pv = prev_vs.get(v.get("id"))
+        if not pv:
+            continue
+        key = lambda m: (str(m.get("layer") or ""), str(m.get("batch") or "").strip())   # noqa: E731
+        olds = {}
+        for o in pv.get("mixes") or []:
+            if isinstance(o, dict):
+                olds.setdefault(key(o), []).append(o)
+
+        def inherit(m, o):
+            hist = [x for x in plate_from(o) if x != _mplate(o)]
+            if _mplate(o) and _mplate(o) != _mplate(m):
+                hist.append(_mplate(o))
+            hist = [x for x in dict.fromkeys(hist) if x != _mplate(m)][-10:]   # 최근 10개면 충분
+            if hist:
+                m["plateFrom"] = hist
+
+        news = {}
+        for m in mixes:
+            news.setdefault(key(m), []).append(m)
+        for k, group in news.items():
+            cands, rest = list(olds.get(k, [])), []
+            for m in group:
+                same = next((o for o in cands if _mplate(o) == _mplate(m)), None)
+                if same is None:
+                    rest.append(m)
+                else:
+                    cands.remove(same)
+                    inherit(m, same)
+            if len(rest) == 1 and len(cands) == 1:
+                inherit(rest[0], cands[0])
 
 
 def foreign_claims(doc, others):
@@ -721,6 +908,14 @@ def db_ink_signature(doc):
     return hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def plan_hash(plan, doc) -> str:
+    """미리보기에서 본 계획과 전송할 계획이 같은지 확인하는 지문.
+    계획(이동·수정·신규) + 잉크 연결이 반영된 DB용 문서 + 시편 버전 — 그사이 시편·잉크 연결·DB가 바뀌면 달라진다."""
+    core = {k: plan.get(k) or [] for k in ("updates", "inserts", "moves")}
+    core.update(ink=plan.get("ink_signature"), rev=doc_rev(doc))
+    return hashlib.sha256(json.dumps(core, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:32]
+
+
 def plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
     prepared, issues = db_document(doc)
     if issues:
@@ -750,6 +945,9 @@ def _plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
         return {"updates": [], "inserts": [], "moves": [], "skipped": [{"batch": "-", "reason": "베리에이션 없음"}]}
     main = doc_code(doc)
     taken = taken or {}
+    # 지금 어떤 배합이 정확히 쓰고 있는 키 — 동판 이동은 이 키의 DB 행을 건드리지 않는다
+    mix_keys = {(layer_code(doc, v, m.get("layer")), m.get("layer"), m.get("batch"), _mplate(m))
+                for v, _rows in assigned for m in v.get("mixes") or [] if isinstance(m, dict)}
     updates, inserts, moves, skipped, shared = [], [], [], [], []
     seen_codes = set()
     seen_keys = {}      # (패턴코드, 도수, 배치, 동판) -> 이미 계획한 컬러 (DB UNIQUE 키와 같음)
@@ -801,20 +999,32 @@ def _plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
             seen[key] = (coat, m)
             cur = dbmap.get(key)
             if cur is None:
-                # 예전 코드로 들어간 같은 배합(도수 패턴을 정하기 전의 시편 코드, 또는 바꾸기 전 도수 패턴) → 코드만 옮긴다
-                for src in [main] + layer_codes_from(v, m.get("layer")):
-                    if src == code:
-                        continue
-                    old = dbmap.get((src, m.get("layer"), m.get("batch"), plate))
-                    if old is not None and old.get("_id") not in moved_ids:
+                # 예전 키로 들어간 같은 배합 → 새 행을 넣지 않고 그 행을 옮긴다
+                #  · 코드: 도수 패턴을 정하기 전의 시편 코드, 또는 바꾸기 전 도수 패턴 (layerPatternsFrom)
+                #  · 동판: 저장할 때 남긴 바꾸기 전 동판 (plateFrom, 최근 것부터)
+                codes = [code] + [c for c in dict.fromkeys([main] + layer_codes_from(v, m.get("layer"))) if c != code]
+                plates = [plate] + [x for x in reversed(plate_from(m)) if x != plate]
+                for src_plate in plates:
+                    for src in codes:
+                        if (src, src_plate) == (code, plate):
+                            continue
+                        okey = (src, m.get("layer"), m.get("batch"), src_plate)
+                        old = dbmap.get(okey)
+                        if old is None or old.get("_id") in moved_ids or (src_plate != plate and okey in mix_keys):
+                            continue
                         if key in taken:
                             # 옮길 자리에 이미 같은 키 행이 있다 → 옮기면 UNIQUE 위반
                             cur = False
-                            skipped.append(dict(base, reason=f"옮길 코드 {code}에 같은 키가 이미 있음 ({src} 행과 둘 중 하나 정리 필요)"))
+                            where = f"코드 {code}" if src_plate == plate else f"동판 {plate}"
+                            skipped.append(dict(base, reason=f"옮길 {where}에 같은 키가 이미 있음 "
+                                                             f"({src}·{src_plate} 행과 둘 중 하나 정리 필요)"))
                             break
                         moved_ids.add(old.get("_id"))
-                        moves.append(dict(base, id=old.get("_id"), **{"from": src, "to": code}))
+                        moves.append(dict(base, id=old.get("_id"), fromPlate=src_plate, toPlate=plate,
+                                          **{"from": src, "to": code}))
                         cur = old
+                        break
+                    if cur is not None:
                         break
             if cur is False:
                 continue
@@ -843,6 +1053,9 @@ def _plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
                 fields.append({"name": "result", "from": cur.get("result") or "", "to": RESULT_TO_DB[enum]})
             if m.get("date") and m["date"] != (cur.get("date") or ""):
                 fields.append({"name": "date", "from": cur.get("date") or "", "to": m["date"]})
+            # 기준 배합 표시는 아카이브가 원본 — 처음 넣을 때만 맞고 그 뒤 바꾼 것이 DB에 안 가던 문제
+            if bool(m.get("isReference")) != bool(cur.get("isReference")):
+                fields.append({"name": "is_base", "from": int(bool(cur.get("isReference"))), "to": int(bool(m.get("isReference")))})
             if fields:
                 updates.append(dict(base, id=cur.get("_id"), fields=fields))
     return {"updates": updates, "inserts": inserts, "moves": moves, "skipped": skipped, "shared": shared}
@@ -889,8 +1102,14 @@ def apply_push(project, code, doc, plan):
             # 미리보기 뒤에 누가 같은 키를 넣었어도 전체가 실패하지 않게 행 단위로
             cur.execute("SAVEPOINT mv_row")
             try:
-                cur.execute("UPDATE rdp_mixes SET pattern_code=? WHERE id=? AND project=? AND pattern_code=?",
-                            (mv["to"], mv["id"], project, mv["from"]))
+                from_plate, to_plate = mv.get("fromPlate", mv["plate"]), mv.get("toPlate", mv["plate"])
+                if from_plate != to_plate:
+                    cur.execute("UPDATE rdp_mixes SET pattern_code=?, plate=? WHERE id=? AND project=? AND pattern_code=?"
+                                " AND TRIM(COALESCE(plate, ''))=?",
+                                (mv["to"], to_plate, mv["id"], project, mv["from"], from_plate))
+                else:
+                    cur.execute("UPDATE rdp_mixes SET pattern_code=? WHERE id=? AND project=? AND pattern_code=?",
+                                (mv["to"], mv["id"], project, mv["from"]))
                 n_mov += cur.rowcount
                 cur.execute("RELEASE mv_row")
             except sqlite3.IntegrityError as e:
@@ -898,7 +1117,7 @@ def apply_push(project, code, doc, plan):
                 cur.execute("RELEASE mv_row")
                 bad_ids.add(mv["id"])
                 failed.append({"layer": mv["layer"], "batch": mv["batch"], "plate": mv["plate"], "code": mv["to"],
-                               "reason": "옮길 코드에 같은 키가 이미 있음" if "UNIQUE" in str(e) else str(e)})
+                               "reason": "옮길 자리에 같은 키가 이미 있음" if "UNIQUE" in str(e) else str(e)})
         for u in plan["updates"]:
             m = by_key.get((u["vid"], u["layer"], u["batch"], u["plate"]))
             if not m or u.get("id") is None or u["id"] in bad_ids:
@@ -909,6 +1128,8 @@ def apply_push(project, code, doc, plan):
                     sets.append("result=?"); vals.append(f["to"])
                 elif f["name"] == "date":
                     sets.append("date=?"); vals.append(f["to"])
+                elif f["name"] == "is_base":
+                    sets.append("is_base=?"); vals.append(1 if f["to"] else 0)
                 elif f["name"] in DB_INKS:
                     sets.append(f"{dict(INK_COLS)[f['name']]}=?"); vals.append(f["to"])
                 else:
@@ -1018,6 +1239,8 @@ def _diff_db(doc, assigned):
                 fields.append("result")
             if dm.get("date") and m.get("date") != dm["date"]:
                 fields.append("date")
+            if bool(m.get("isReference")) != bool(dm.get("isReference")):
+                fields.append("is_base")
             if fields:
                 changed.append({"vid": v.get("id"), "batch": m.get("batch"), "plate": m.get("plate"), "fields": fields})
             else:
@@ -1071,9 +1294,20 @@ def load_all():
             with open(path, encoding="utf-8") as f:
                 doc = json.load(f)
             stem = name[:-5]
+            if not isinstance(doc, dict):
+                errors.append(f"{name}: 최상위가 객체가 아님, 건너뜀")
+                continue
             if doc.get("id") != stem:
                 errors.append(f"{name}: 파일명과 id가 다름 (id={doc.get('id')}) — 동기화 충돌 사본일 수 있음, 건너뜀")
                 continue
+            # 화면이 그릴 수 없는 문서 하나가 목차 전체를 멈추게 하면 안 된다:
+            # 뼈대(pattern·variations)가 없으면 빼고, 나머지 틀린 칸은 빈 값으로 읽고 알린다
+            if not isinstance(doc.get("pattern"), dict) or not isinstance(doc.get("variations"), list):
+                errors.append(f"{name}: pattern 또는 variations 형식 오류 — 건너뜀")
+                continue
+            problems = normalize_shape(doc, coerce=True)
+            if problems:
+                errors.append(f"{name}: 형식 오류를 빈 값으로 읽음 — {' / '.join(problems)} (저장하면 그대로 고쳐집니다)")
             doc["_file"] = name
             doc["_mtime"] = os.path.getmtime(path)
             out.append(doc)
@@ -1082,8 +1316,9 @@ def load_all():
     return out, errors
 
 
-def gc_images(pid: str, doc: dict) -> list:
-    """JSON에서 참조하지 않는 이미지 파일을 _trash로 이동."""
+def gc_images(pid: str, doc: dict, min_age: float = 600) -> list:
+    """JSON에서 참조하지 않는 이미지 파일을 _trash로 이동. min_age초보다 최근 파일은 남긴다
+    (저장 때는 10분 — 막 올린 사진, 서버 시작 때는 하루 — 다른 PC에서 JSON보다 먼저 동기화된 사진)."""
     ref = set()
     for v in doc.get("variations", []):
         for name in (v.get("images") or []):
@@ -1099,13 +1334,56 @@ def gc_images(pid: str, doc: dict) -> list:
             continue
         fp = os.path.join(pdir, f)
         try:
-            if now - os.path.getmtime(fp) < 600:   # 10분 이내 업로드는 보존
+            if now - os.path.getmtime(fp) < min_age:
                 continue
         except OSError:
             continue
         if f not in ref:
             move_to_trash(os.path.join(pdir, f), f"{pid}_{f}")
             moved.append(f)
+    return moved
+
+
+def prune_old(folder: str, days) -> int:
+    """folder 안에서 days일보다 오래된 항목을 아주 지운다. days를 정하지 않으면(기본) 아무것도 지우지 않는다.
+    _backup·_trash가 드라이브 용량을 끝없이 차지하지 않게 — config.json의 backupKeepDays·trashKeepDays."""
+    try:
+        days = float(days)
+    except (TypeError, ValueError):
+        return 0
+    if days < 1 or not os.path.isdir(folder):
+        return 0
+    cutoff, n = time.time() - days * 86400, 0
+    for name in os.listdir(folder):
+        path = os.path.join(folder, name)
+        try:
+            if os.path.getmtime(path) >= cutoff:
+                continue
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            n += 1
+        except OSError as e:
+            print(f"[warn] 오래된 항목을 지우지 못했습니다 {path}: {e}")
+    return n
+
+
+def gc_unsaved_uploads(min_age: float = 7 * 86400) -> list:
+    """새 시편을 저장하지 않고 그만둔 업로드(시편 JSON 없는 images·_orig 폴더)를 일주일 지나면 휴지통으로.
+    새 시편은 저장 전에 사진부터 올리므로 업로드 때는 막지 않고, 오래 버려진 것만 치운다 (휴지통에서 복구 가능)."""
+    moved, now = [], time.time()
+    for base, label in ((IMAGES, "images"), (ORIG, "orig")):
+        if not os.path.isdir(base):
+            continue
+        for pid in sorted(os.listdir(base)):
+            d = os.path.join(base, pid)
+            if not os.path.isdir(d) or not ID_RE.match(pid) or os.path.exists(os.path.join(PATTERNS, pid + ".json")):
+                continue
+            newest = max((os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d)), default=os.path.getmtime(d))
+            if now - newest >= min_age:
+                move_to_trash(d, f"{pid}_unsaved-{label}")
+                moved.append(f"{label}/{pid}")
     return moved
 
 
@@ -1240,19 +1518,48 @@ PROPOSAL_LOCK = threading.Lock()
 SLUG_RE = re.compile(r"^[0-9A-Za-z가-힣_-][0-9A-Za-z가-힣._-]{0,79}$")
 
 
+def nfc(name: str) -> str:
+    return unicodedata.normalize("NFC", name or "")
+
+
 def proposal_dir(slug: str) -> str:
-    if not SLUG_RE.match(slug or ""):
+    """확정본 폴더. 맥(NFD)·윈도우(NFC) 어느 쪽 한글 이름으로 만들어진 폴더도 찾는다."""
+    slug = nfc(slug)
+    if not SLUG_RE.match(slug):
         raise ValueError("제안서 이름 형식 오류")
-    return safe_join(PROPOSALS, slug)
+    path = safe_join(PROPOSALS, slug)
+    if not os.path.exists(path):
+        nfd = safe_join(PROPOSALS, unicodedata.normalize("NFD", slug))
+        if os.path.exists(nfd):
+            return nfd
+    return path
+
+
+def _snap(doc) -> dict:
+    return doc.get("_snapshot") if isinstance(doc.get("_snapshot"), dict) else {}
+
+
+def _proposal_vars(doc):
+    """(시편 id, 컬러) 목록 — 모양이 틀린 칸은 건너뛴다 (손으로 고친 확정본 하나가 목록 전체를 멈추지 않게)."""
+    out = []
+    for it in doc.get("items") if isinstance(doc.get("items"), list) else []:
+        if not isinstance(it, dict):
+            continue
+        pid = (it.get("pattern") if isinstance(it.get("pattern"), dict) else {}).get("id")
+        for v in it.get("variations") if isinstance(it.get("variations"), list) else []:
+            if isinstance(v, dict):
+                out.append((pid, v))
+    return out
 
 
 def load_proposals():
-    """확정본 목록 (최신 확정 먼저). 깨진 파일은 건너뛴다."""
+    """확정본 목록 (최신 확정 먼저). 깨진 파일은 건너뛴다. 이름은 NFC로 돌려준다 (맥에서 만든 폴더도 보이게)."""
     out = []
     if not os.path.isdir(PROPOSALS):
         return out
-    for slug in os.listdir(PROPOSALS):
-        path = os.path.join(PROPOSALS, slug, "proposal.json")
+    for name in os.listdir(PROPOSALS):
+        slug = nfc(name)
+        path = os.path.join(PROPOSALS, name, "proposal.json")
         if not SLUG_RE.match(slug) or not os.path.isfile(path):
             continue
         try:
@@ -1263,27 +1570,44 @@ def load_proposals():
             continue
         if isinstance(doc, dict):
             out.append((slug, doc))
-    out.sort(key=lambda x: str((x[1].get("_snapshot") or {}).get("createdAt") or x[1].get("createdAt") or ""), reverse=True)
+    out.sort(key=lambda x: str(_snap(x[1]).get("createdAt") or x[1].get("createdAt") or ""), reverse=True)
     return out
 
 
 def proposal_summary(slug, doc):
-    items = doc.get("items") or []
-    vars_ = [v for it in items for v in (it.get("variations") or [])]
-    thumb = None
-    for it in items:
-        for v in it.get("variations") or []:
-            if v.get("images"):
-                thumb = {"pid": (it.get("pattern") or {}).get("id"), "name": v["images"][0]}
-                break
-        if thumb:
-            break
-    snap = doc.get("_snapshot") or {}
+    items = doc.get("items") if isinstance(doc.get("items"), list) else []
+    vars_ = _proposal_vars(doc)
+    thumb = next(({"pid": pid, "name": v["images"][0]} for pid, v in vars_
+                  if isinstance(v.get("images"), list) and v["images"] and isinstance(v["images"][0], str) and pid), None)
+    snap = _snap(doc)
     return {"slug": slug, "docNo": doc.get("docNo") or "", "rev": str(doc.get("rev") or "0"),
             "title": doc.get("title") or "", "client": doc.get("client") or "", "by": doc.get("by") or "",
             "date": doc.get("date") or "", "createdAt": snap.get("createdAt") or doc.get("createdAt") or "",
-            "patterns": len(items), "variations": len(vars_), "missing": len(snap.get("missing") or []),
+            "patterns": len(items), "variations": len(vars_),
+            "missing": len(snap.get("missing")) if isinstance(snap.get("missing"), list) else 0,
             "thumb": thumb}
+
+
+def proposal_shape_error(doc) -> str:
+    """확정 저장 요청의 모양 검사 — 틀리면 쓰기 전에 400 (전에는 중간에 500이 나거나 깨진 확정본이 남았다)."""
+    items = doc.get("items")
+    if not isinstance(items, list) or not items:
+        return "담긴 시편이 없습니다"
+    for i, it in enumerate(items):
+        pat = it.get("pattern") if isinstance(it, dict) else None
+        if not isinstance(pat, dict) or not isinstance(pat.get("id"), str) or not ID_RE.match(pat["id"]):
+            return f"items[{i}]: 시편(pattern.id) 형식 오류"
+        vs = it.get("variations", [])
+        if not isinstance(vs, list) or not all(isinstance(v, dict) for v in vs):
+            return f"items[{i}]: variations 형식 오류"
+        for v in vs:
+            imgs = v.get("images", [])
+            if not isinstance(imgs, list) or not all(isinstance(n, str) and n for n in imgs):
+                return f"items[{i}]: 이미지 목록 형식 오류"
+    for k in ("docNo", "rev", "title", "client", "by", "date", "slug"):
+        if doc.get(k) is not None and (isinstance(doc[k], bool) or not isinstance(doc[k], (str, int, float))):
+            return f"{k} 형식 오류"
+    return ""
 
 
 def next_doc_no(prefix: str, taken) -> str:
@@ -1292,6 +1616,125 @@ def next_doc_no(prefix: str, taken) -> str:
     while f"{prefix}{n:02d}" in taken:
         n += 1
     return f"{prefix}{n:02d}"
+
+
+THUMB_WIDTHS = (120, 240, 480, 960, 1440, 2000)
+
+
+def thumb_width(w) -> int:
+    """요청 폭을 정해진 단계로 올림 — 아무 폭이나 캐시하면 이미지마다 축소본이 끝없이 쌓일 수 있었다."""
+    w = int(w)
+    return next((x for x in THUMB_WIDTHS if x >= w), THUMB_WIDTHS[-1])
+
+
+# ---------------------------------------------------------------- 여러 PC 감지
+# 같은 드라이브 폴더를 두 PC의 서버가 함께 쓰면 잠금이 PC마다 따로라 저장이 엇갈릴 수 있다.
+# 서버마다 1분에 한 번 _ui/servers/<PC>-<포트>.json에 '살아 있음'을 남기고, 다른 PC 것이 최근이면 알린다.
+HEARTBEAT_EVERY = 60
+HEARTBEAT_FRESH = 600          # 드라이브 동기화가 늦어도 잡히게 10분
+
+
+def heartbeat_dir() -> str:
+    return os.path.join(DATA, "_ui", "servers")
+
+
+def my_server_id() -> str:
+    host = re.sub(r"[^A-Za-z0-9._-]+", "-", socket.gethostname() or "pc").strip("-.")[:60] or "pc"
+    return f"{host}-{PORT}"
+
+
+def write_heartbeat(started: str):
+    os.makedirs(heartbeat_dir(), exist_ok=True)
+    atomic_write(os.path.join(heartbeat_dir(), my_server_id() + ".json"), json.dumps(
+        {"host": socket.gethostname(), "port": PORT, "pid": os.getpid(), "startedAt": started, "beat": time.time()},
+        ensure_ascii=False).encode("utf-8"))
+
+
+def other_servers(now=None) -> list:
+    """최근에 살아 있다고 남긴 다른 PC(또는 다른 포트)의 서버들."""
+    now, out, d = now or time.time(), [], heartbeat_dir()
+    if not os.path.isdir(d):
+        return out
+    for name in sorted(os.listdir(d)):
+        if not name.endswith(".json") or name == my_server_id() + ".json":
+            continue
+        try:
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                hb = json.load(f)
+            beat = float(hb.get("beat") or 0)
+        except Exception:
+            continue
+        if 0 <= now - beat < HEARTBEAT_FRESH:
+            out.append({"host": str(hb.get("host") or name[:-5]), "port": hb.get("port"), "secondsAgo": int(now - beat)})
+    return out
+
+
+def start_heartbeat():
+    started = datetime.now().isoformat(timespec="seconds")
+
+    def loop():
+        while True:
+            try:
+                write_heartbeat(started)
+            except Exception as e:   # noqa: BLE001 — 드라이브가 잠깐 안 돼도 서버는 계속
+                print(f"[warn] 서버 표시를 쓰지 못했습니다: {e}")
+            time.sleep(HEARTBEAT_EVERY)
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def stop_heartbeat():
+    try:
+        os.remove(os.path.join(heartbeat_dir(), my_server_id() + ".json"))
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------- LAN PIN (선택)
+# LAN 모드에서 config.json에 lanPin을 넣으면, 이 맥·터널이 아니라 같은 네트워크의 다른 기기는
+# PIN을 한 번 입력해야 한다 (서명한 쿠키, 30일). 넣지 않으면 예전과 똑같다.
+LAN_COOKIE = "rdp_lan"
+_LAN_KEY = None
+_LAN_FAILS = {}            # ip -> (틀린 횟수, 잠금 풀리는 시각)
+_LAN_GUARD = threading.Lock()
+LAN_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>RDP 아카이브 PIN</title>
+<style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f4f0;
+font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;color:#141517}}
+form{{background:#fff;padding:28px;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.08);display:grid;gap:12px;width:min(300px,86vw)}}
+input{{font-size:20px;padding:10px 12px;border:1px solid #d6d3cc;border-radius:8px;letter-spacing:.2em}}
+button{{font-size:15px;padding:11px;border:0;border-radius:8px;background:#141517;color:#fff;cursor:pointer}}
+small{{color:#8d9198}}.err{{color:#b4442b;font-size:13px;margin:0}}</style></head><body>
+<form method="post" action="/lan-login"><b>RDP 시편 아카이브</b><small>같은 네트워크 접속 PIN을 입력하세요</small>
+<input name="pin" type="password" inputmode="numeric" autocomplete="current-password" autofocus required aria-label="PIN">
+<input type="hidden" name="next" value="{next}">{err}<button>들어가기</button></form></body></html>"""
+
+
+def lan_pin() -> str:
+    return str(CFG.get("lanPin") or "").strip()
+
+
+def is_loopback(ip: str) -> bool:
+    return ip.startswith("127.") or ip in ("::1", "::ffff:127.0.0.1")
+
+
+def lan_token() -> str:
+    """PIN 쿠키 값. 서명 키는 앱 폴더에 한 번 만들어 둔다 (드라이브로 동기화되지 않고 저장소에도 안 올라감).
+    PIN을 바꾸면 예전 쿠키는 더 이상 맞지 않는다."""
+    global _LAN_KEY
+    if _LAN_KEY is None:
+        path = os.path.join(HERE, ".lan-secret")
+        try:
+            with open(path, "rb") as f:
+                _LAN_KEY = f.read()
+        except OSError:
+            _LAN_KEY = b""
+        if len(_LAN_KEY) < 32:
+            _LAN_KEY = os.urandom(32)
+            try:
+                atomic_write(path, _LAN_KEY)
+            except OSError:
+                pass   # 못 쓰면 이번 실행 동안만 (다시 켜면 PIN을 한 번 더 입력)
+    return hmac.new(_LAN_KEY, ("rdp-lan:" + lan_pin()).encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 # ---------------------------------------------------------------- handler
@@ -1328,6 +1771,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             new = {"dataRoot": CFG.get("dataRoot"), "port": CFG.get("port", 8791)}
             new.update(fresh)
+            new.update(CFG_OVERRIDES)   # 데모 모드의 임시 rdp.db·작업일지가 실제 경로로 돌아가지 않게
             # clear() 후 update()하면 다른 스레드가 잠깐 빈 CFG(=인증 꺼짐)를 볼 수 있다
             CFG.update(new)
             for k in [k for k in CFG if k not in new]:
@@ -1340,6 +1784,8 @@ class Handler(BaseHTTPRequestHandler):
     def _access_ok(self) -> bool:
         """Cloudflare Access 뒤에 있을 때, 인증된 요청만 통과시킨다.
         (Access를 꺼먹거나 잘못 설정해도 앱이 인터넷에 그냥 열리지 않게 하는 안전장치)"""
+        if self._lan_client() and lan_pin():
+            return self._lan_cookie_ok()   # 같은 네트워크의 다른 기기: PIN 쿠키 (PIN이 없으면 아래 예전 규칙)
         if not CFG.get("requireCfAccess"):
             return True
         if self._is_local_direct():
@@ -1364,6 +1810,55 @@ class Handler(BaseHTTPRequestHandler):
         if want_mail and (payload.get("email") or "").strip().lower() != want_mail:
             return False
         return True
+
+    def _lan_client(self) -> bool:
+        """LAN 모드에서 이 맥(루프백)이나 터널이 아니라 같은 네트워크의 다른 기기가 바로 들어온 요청."""
+        return LAN_MODE and not is_loopback((self.client_address or ("",))[0])
+
+    def _lan_cookie_ok(self) -> bool:
+        want = lan_token()
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == LAN_COOKIE and hmac.compare_digest(v.encode(), want.encode()):
+                return True
+        return False
+
+    def _lan_page(self, err="", code=200):
+        nxt = urlparse(self.path).path if self.command == "GET" else "/"
+        body = LAN_PAGE.format(next=html_escape(nxt, quote=True),
+                               err=f'<p class="err">{html_escape(err)}</p>' if err else "")
+        self._send(code, body.encode("utf-8"), "text/html; charset=utf-8")
+
+    def _deny(self):
+        """접근 거절. LAN PIN을 쓰는 같은 네트워크 기기면 화면 요청에는 PIN 입력 페이지를 보여 준다."""
+        if self._lan_client() and lan_pin():
+            p = urlparse(self.path).path
+            if self.command == "GET" and not p.startswith(("/api/", "/img/", "/proposal-img/")):
+                return self._lan_page()
+            return self.error(401, "같은 네트워크 접속 PIN이 필요합니다 — 주소창에서 페이지를 열어 PIN을 입력하세요")
+        return self.error(403, "Cloudflare Access 인증이 필요합니다")
+
+    def _lan_login(self):
+        if not (self._lan_client() and lan_pin()):
+            return self._send(303, b"", extra={"Location": "/"})
+        ip, now = self.client_address[0], time.time()
+        with _LAN_GUARD:
+            fails, until = _LAN_FAILS.get(ip, (0, 0))
+        if until > now:
+            return self._lan_page("여러 번 틀려서 잠시 막혔어요 — 1분 뒤 다시 시도하세요", 429)
+        form = parse_qs(self.read_body().decode("utf-8", "replace"))
+        pin, nxt = (form.get("pin") or [""])[0], (form.get("next") or ["/"])[0]
+        if not nxt.startswith("/") or nxt.startswith("//"):
+            nxt = "/"
+        if hmac.compare_digest(pin.encode("utf-8"), lan_pin().encode("utf-8")):
+            with _LAN_GUARD:
+                _LAN_FAILS.pop(ip, None)
+            return self._send(303, b"", extra={"Location": nxt, "Set-Cookie":
+                              f"{LAN_COOKIE}={lan_token()}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict"})
+        with _LAN_GUARD:
+            fails += 1
+            _LAN_FAILS[ip] = (fails, now + 60 if fails >= 5 else 0)
+        return self._lan_page("PIN이 맞지 않습니다", 401)
 
     def _is_local_direct(self) -> bool:
         """Host가 localhost이고, 실제로 루프백에서 왔고, Cloudflare를 거치지 않은 요청."""
@@ -1417,7 +1912,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -1456,7 +1951,8 @@ class Handler(BaseHTTPRequestHandler):
                                   "brandSub": CFG.get("brandSub", "SPECIMEN ARCHIVE"),
                                   "company": CFG.get("company", ""),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
-                                  "pageMax": CFG.get("pageMax", 2)})
+                                  "pageMax": CFG.get("pageMax", 2),
+                                  "otherServers": other_servers()})
             if p.startswith("/api/rdp/push-preview/"):
                 pid = p[len("/api/rdp/push-preview/"):].strip("/")
                 try:
@@ -1466,7 +1962,8 @@ class Handler(BaseHTTPRequestHandler):
                         doc = json.load(f)
                     old_rows, old_key = renamed_from_rows(doc)
                     plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key, db_taken_keys(doc))
-                    return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
+                    return self.json({"ok": True, "dbPath": rdp_db_path(), **plan, "planHash": plan_hash(plan, doc),
+                                      "rev": doc_rev(doc)})
                 except Exception as e:
                     return self.error(400, str(e))
             if p.startswith("/api/rdp/diff/"):
@@ -1525,10 +2022,16 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/img/"):
                 return self.serve_image(p[len("/img/"):])
             if p == "/api/proposals":
-                return self.json({"ok": True, "proposals": [proposal_summary(s_, d_) for s_, d_ in load_proposals()]})
+                rows = []
+                for s_, d_ in load_proposals():
+                    try:
+                        rows.append(proposal_summary(s_, d_))
+                    except Exception as e:   # noqa: BLE001 — 깨진 확정본 하나가 목록 전체를 멈추지 않게
+                        print(f"[warn] 제안서 요약 실패 {s_}: {e}")
+                return self.json({"ok": True, "proposals": rows})
             if p == "/api/proposals/next-no":
                 prefix = (parse_qs(u.query).get("prefix") or [""])[0]
-                if not re.match(r"^[0-9A-Za-z_-]{1,40}$", prefix):
+                if not re.match(r"^[0-9A-Za-z._-]{1,40}$", prefix):   # 날짜를 2026.10.28처럼 써도
                     return self.error(400, "prefix 형식 오류")
                 taken = {str(d_.get("docNo") or "") for _, d_ in load_proposals()}
                 return self.json({"ok": True, "docNo": next_doc_no(prefix, taken)})
@@ -1541,17 +2044,23 @@ class Handler(BaseHTTPRequestHandler):
                 if not os.path.isfile(path):
                     return self.error(404, "확정본이 없습니다")
                 with open(path, encoding="utf-8") as f:
-                    return self.json({"ok": True, "slug": os.path.basename(d), "proposal": json.load(f)})
+                    return self.json({"ok": True, "slug": nfc(os.path.basename(d)), "proposal": json.load(f)})
             if p.startswith("/proposal-img/"):
                 # 확정본에 복사해 둔 이미지 (원본 시편 이미지가 바뀌거나 지워져도 그대로)
                 parts = [x for x in p[len("/proposal-img/"):].split("/") if x]
                 if len(parts) != 3:
                     return self.error(400, "경로 형식 오류")
                 try:
-                    base = os.path.join(proposal_dir(parts[0]), "images")
+                    pdir = proposal_dir(parts[0])
                 except ValueError as e:
                     return self.error(400, str(e))
-                return self.serve_image(f"{parts[1]}/{parts[2]}", base)
+                w = (parse_qs(u.query).get("w") or [""])[0]
+                if w:   # 보관함 목록용 축소본 — 확정본 이미지는 바뀌지 않으므로 오래 캐시
+                    return self.serve_thumb(parts[1], parts[2], w, base=os.path.join(pdir, "images"),
+                                            cache_dir=os.path.join(THUMBS, "_proposals", nfc(os.path.basename(pdir))),
+                                            cache="max-age=31536000, immutable")
+                return self.serve_image(f"{parts[1]}/{parts[2]}", os.path.join(pdir, "images"),
+                                        cache="max-age=31536000, immutable")
             return self.serve_static(p)
         except BrokenPipeError:
             pass
@@ -1563,7 +2072,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
@@ -1591,10 +2100,27 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.error(400, str(e))
                 q = parse_qs(u.query)
-                slot = int(q.get("slot", ["1"])[0])
-                crop = {k: q.get(k, [None])[0] for k in ("x", "y", "w", "h")}
+                try:
+                    slot = int(q.get("slot", ["1"])[0])
+                    if not 1 <= slot <= 50:
+                        raise ValueError
+                    crop = {}
+                    for k in ("x", "y", "w", "h"):
+                        v = q.get(k, [None])[0]
+                        if v in (None, "", "None"):
+                            continue
+                        crop[k] = float(v)
+                        if not math.isfinite(crop[k]) or crop[k] < 0:
+                            raise ValueError
+                except ValueError:
+                    return self.error(400, "slot(1~50)·자르기 값은 0 이상의 숫자여야 합니다")
                 raw = self.read_body()
-                res = process_upload(parts[0], parts[1], slot, raw, crop)
+                if not raw:
+                    return self.error(400, "이미지 내용이 비어 있습니다")
+                try:
+                    res = process_upload(parts[0], parts[1], slot, raw, crop)
+                except ValueError as e:   # 읽을 수 없는 그림 (지원하지 않는 형식·깨진 파일)
+                    return self.error(400, str(e))
                 return self.json({"ok": True, **res})
             return self.error(404, "not found")
         except Exception as e:
@@ -1652,8 +2178,12 @@ class Handler(BaseHTTPRequestHandler):
         self._maybe_reload_cfg()
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if urlparse(self.path).path == "/lan-login":   # PIN 입력 (아직 인증 전이라 접근 검사보다 먼저)
+            if not self._write_ok():
+                return self.error(403, "cross-site request blocked")
+            return self._lan_login()
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
@@ -1662,11 +2192,21 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/api/lab/"):
                 return self._lab("POST", p, {}, self._lab_body())
             if p == "/api/open-folder":
-                subprocess.Popen(["open", DATA])
+                # 이 맥 앞에서 누른 것만 (터널·LAN으로 누르면 집 맥에 Finder 창이 뜬다)
+                if not self._is_local_direct():
+                    return self.error(403, "데이터 폴더는 서버가 켜진 컴퓨터에서만 열 수 있어요")
+                try:
+                    if sys.platform == "darwin":
+                        subprocess.Popen(["open", DATA])
+                    elif os.name == "nt":
+                        os.startfile(DATA)   # noqa: S606 — 윈도우 탐색기
+                    else:
+                        subprocess.Popen(["xdg-open", DATA])
+                except OSError as e:
+                    return self.error(500, f"폴더를 열지 못했습니다: {e} — 경로: {DATA}")
                 return self.json({"ok": True})
             if p == "/api/rdp/sync-all":
-                if not self._db_write_allowed():
-                    return self.error(403, "LAN 모드에서는 DB 동기화가 꺼져 있습니다 (config.allowLanWrite)")
+                # DB는 읽기만 하고 아카이브 JSON을 고친다 → 한 건씩 가져오기(/api/rdp/sync/)와 같이 LAN 모드에서도 허용
                 total = {"added": 0, "updated": 0, "patterns": 0, "skipped": []}
                 docs = load_all()[0]
                 for doc in docs:
@@ -1689,8 +2229,10 @@ class Handler(BaseHTTPRequestHandler):
                 pid = p[len("/api/rdp/push/"):].strip("/")
                 try:
                     safe_id(pid)
+                    body = json.loads(self.read_body() or b"{}")
                 except ValueError:
-                    return self.error(400, "id 형식 오류")
+                    return self.error(400, "id 또는 요청 형식 오류")
+                seen_hash = str(body.get("planHash") or "") if isinstance(body, dict) else ""
                 try:
                     with pid_lock(pid):
                         path = safe_join(PATTERNS, pid + ".json")
@@ -1705,6 +2247,11 @@ class Handler(BaseHTTPRequestHandler):
                                               "error": plan["blocked"]}, 409)
                         if not plan["updates"] and not plan["inserts"] and not plan.get("moves"):
                             return self.json({"ok": True, "updated": 0, "inserted": 0, "message": "반영할 변경이 없습니다"})
+                        # 사용자가 미리보기에서 본 것과 같은 계획일 때만 쓴다 (그사이 시편·잉크 연결·DB가 바뀌면 다시 보게)
+                        if seen_hash != plan_hash(plan, doc):
+                            return self.json({"ok": False, "stale": True,
+                                              "error": "미리보기 이후 시편·잉크 연결·DB가 바뀌었습니다 — 다시 미리보기 하세요"
+                                              if seen_hash else "DB 반영 전에 미리보기를 먼저 확인하세요"}, 409)
                         res = apply_push(project, code, doc, plan)
                         return self.json({"ok": True, **res, "skipped": len(plan["skipped"])})
                 except Exception as e:
@@ -1753,10 +2300,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(400, str(e))
 
             if p == "/api/proposals":
-                doc = json.loads(self.read_body().decode("utf-8"))
-                if not isinstance(doc, dict) or not isinstance(doc.get("items"), list) or not doc["items"]:
+                try:
+                    doc = json.loads(self.read_body().decode("utf-8"))
+                except ValueError:
+                    return self.error(400, "JSON 형식 오류")
+                if not isinstance(doc, dict):
                     return self.error(400, "담긴 시편이 없습니다")
+                why = proposal_shape_error(doc)
+                if why:
+                    return self.error(400, why)
                 allow_missing = bool(doc.pop("allowMissing", False))
+                doc.pop("_snapshot", None)          # 서버가 기록하는 값
                 with PROPOSAL_LOCK:
                     # 1) 같은 문서번호·Rev가 이미 확정돼 있으면 쓰지 않는다 (다른 PC에서 같은 번호를 쓴 경우 등)
                     docs = load_proposals()
@@ -1766,8 +2320,12 @@ class Handler(BaseHTTPRequestHandler):
                         if dup:
                             m = re.match(r"^(.*-)(\d+)$", key[0])
                             taken = {str(d_.get("docNo") or "") for _, d_ in docs}
+                            # 개정본을 만들다 그 Rev가 이미 있으면 다음 Rev도 제안한다 (전에는 새 번호만 → 개정이 막다른 길)
+                            revs = [int(r) for d_ in (d_ for _, d_ in docs) if str(d_.get("docNo") or "") == key[0]
+                                    for r in [str(d_.get("rev") or "0")] if r.isdigit()]
                             return self.json({"ok": False, "duplicate": True, "existing": dup,
-                                              "suggest": next_doc_no(m.group(1), taken) if m else ""}, 409)
+                                              "suggest": next_doc_no(m.group(1), taken) if m else "",
+                                              "nextRev": str(max(revs) + 1) if revs else "1"}, 409)
                     # 2) 참조 이미지가 모두 있는지 먼저 확인
                     sources, missing = [], []
                     for item in doc["items"]:
@@ -1784,6 +2342,12 @@ class Handler(BaseHTTPRequestHandler):
                                     missing.append(f"{pid}/{name}")
                     if missing and not allow_missing:
                         return self.json({"ok": False, "missing": missing}, 409)
+                    if missing:   # 없는 이미지는 확정본에서 뺀다 (깨진 그림 대신 '이미지 없음'으로 보이게)
+                        gone = set(missing)
+                        for item in doc["items"]:
+                            pid = item["pattern"]["id"]
+                            for v in item.get("variations", []):
+                                v["images"] = [n for n in v.get("images") or [] if f"{pid}/{n}" not in gone]
 
                     slug = doc.get("slug") or ("proposal-" + now_stamp())
                     slug = re.sub(r"[^0-9A-Za-z가-힣._-]", "-", slug)[:60].lstrip(".") or "proposal"
@@ -1814,7 +2378,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         p = unquote(urlparse(self.path).path)
@@ -1838,13 +2402,15 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     move_to_trash(src, pid + ".json")
                     move_to_trash(os.path.join(IMAGES, pid), pid + "_images")
+                    move_to_trash(os.path.join(ORIG, pid), pid + "_orig")      # 업로드 원본도 함께 (남으면 그 이름을 다시 못 씀)
+                    shutil.rmtree(os.path.join(THUMBS, pid), ignore_errors=True)   # 다시 만들 수 있는 캐시
                 return self.json({"ok": True})
             if p.startswith("/api/image/"):
                 parts = p[len("/api/image/"):].strip("/").split("/")
                 if len(parts) == 3:
                     try:
                         safe_id(parts[0])
-                        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", parts[2], re.I):
+                        if not IMAGE_NAME_RE.match(parts[2]):
                             raise ValueError("bad image name")
                     except ValueError as e:
                         return self.error(400, str(e))
@@ -1939,13 +2505,16 @@ class Handler(BaseHTTPRequestHandler):
         if rename_from:
             if not os.path.isfile(src_path):
                 return self.error(404, f"원본 시편({rename_from})이 없습니다")
+            clear_leftovers(pid)
             taken = [x for x in (path, os.path.join(IMAGES, pid), os.path.join(ORIG, pid)) if os.path.exists(x)]
             if taken:
                 return self.json({"ok": False, "exists": True,
                                   "message": f"'{pid}' 이름이 이미 쓰이고 있습니다 ({', '.join(os.path.relpath(x, DATA) for x in taken)})"}, 409)
-        elif (self.headers.get("X-Create") or "").strip() == "1" and os.path.exists(path):
-            return self.json({"ok": False, "exists": True,
-                              "message": f"'{pid}' 시편이 이미 있습니다"}, 409)
+        elif (self.headers.get("X-Create") or "").strip() == "1":
+            if os.path.exists(path):
+                return self.json({"ok": False, "exists": True,
+                                  "message": f"'{pid}' 시편이 이미 있습니다"}, 409)
+            clear_leftovers(pid)
 
         prev = None
         if os.path.exists(src_path):
@@ -1961,6 +2530,7 @@ class Handler(BaseHTTPRequestHandler):
         # (서버가 관리하는 값: 클라이언트가 보낸 renamedFrom은 무시)
         doc.pop("renamedFrom", None)
         track_layer_code_changes(prev if isinstance(prev, dict) else None, doc)
+        track_plate_changes(prev if isinstance(prev, dict) else None, doc)
         if isinstance(prev, dict):
             prev_key = (prev.get("project") or "", (prev.get("pattern") or {}).get("code") or "")
             new_key = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")
@@ -1985,6 +2555,7 @@ class Handler(BaseHTTPRequestHandler):
                 rename_pattern(rename_from, pid, data)
             except Exception as e:
                 return self.error(500, f"이름 변경 실패 — 원래 상태로 되돌렸습니다: {e}")
+            shutil.rmtree(os.path.join(THUMBS, rename_from), ignore_errors=True)   # 옛 이름의 썸네일 캐시
         else:
             atomic_write(path, data)
         try:
@@ -1995,15 +2566,16 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True, "id": pid, "savedAt": doc["updatedAt"], "rev": doc["rev"], "warnings": warns,
                           "removedImages": removed, "renamedFrom": doc.get("renamedFrom")})
 
-    def serve_thumb(self, pid, name, w):
-        """카드용 축소본. 큰 원본을 브라우저가 급하게 줄이면 무아레가 생겨서 미리 Lanczos로 줄여 캐시한다."""
+    def serve_thumb(self, pid, name, w, base=None, cache_dir=None, cache="max-age=604800"):
+        """카드용 축소본. 큰 원본을 브라우저가 급하게 줄이면 무아레가 생겨서 미리 Lanczos로 줄여 캐시한다.
+        base: 원본 폴더 (기본 images, 확정본은 그 제안서의 images) · cache_dir: 축소본 캐시 폴더."""
         try:
             safe_id(pid)
-            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", name, re.I):
+            if not IMAGE_NAME_RE.match(name):
                 raise ValueError("bad image name")
-            w = max(120, min(2000, int(w)))
-            src = safe_join(IMAGES, pid, name)
-            dst_dir = safe_join(THUMBS, pid)
+            w = thumb_width(w)
+            src = safe_join(base or IMAGES, pid, name)
+            dst_dir = safe_join(cache_dir or THUMBS, pid)
             dst = os.path.join(dst_dir, f"{w}-{name}")
         except ValueError as e:
             return self.error(400, str(e))
@@ -2016,28 +2588,28 @@ class Handler(BaseHTTPRequestHandler):
                 im = Image.open(src).convert("RGB")
                 h = max(1, round(w * im.height / im.width))
                 im = im.resize((w, h), Image.LANCZOS)
-                tmp = dst + ".tmp"
+                tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"   # 같은 축소본을 동시에 만들어도 서로의 반쯤 쓴 파일을 옮기지 않게
                 im.save(tmp, "JPEG", quality=82, optimize=True)
                 os.replace(tmp, dst)
             except Exception:
-                return self.serve_image(f"{pid}/{name}")
+                return self.serve_image(f"{pid}/{name}", base, cache)
         with open(dst, "rb") as f:
             body = f.read()
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "max-age=604800")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def serve_image(self, rel, base=None):
+    def serve_image(self, rel, base=None, cache="no-cache, must-revalidate"):
         try:
             parts = [p for p in rel.split("/") if p]
             if len(parts) != 2:
                 raise ValueError("bad image path")
             safe_id(parts[0])
-            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", parts[1], re.I):
+            if not IMAGE_NAME_RE.match(parts[1]):
                 raise ValueError("bad image name")
             path = safe_join(base or IMAGES, parts[0], parts[1])
         except ValueError as e:
@@ -2050,7 +2622,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(body)
 
@@ -2098,14 +2670,26 @@ def local_ips() -> set:
 
 
 def port_free(port, host="127.0.0.1"):
+    """포트를 새로 쓸 수 있는지. 방금 끈 서버의 연결 흔적(TIME_WAIT)만 남은 포트는 '비어 있음'으로 본다
+    — 전에는 쓰던 서버를 끄고 바로 다시 켜면(.command) '다른 프로그램이 쓰고 있다'며 멈췄다.
+    (서버는 SO_REUSEADDR로 바인드하므로 TIME_WAIT는 막지 않는다. 실제로 듣고 있는 프로그램이 있으면 False)"""
     s = socket.socket()
     try:
         s.bind((host, port))
         return True
     except OSError:
-        return False
+        pass
     finally:
         s.close()
+    c = socket.socket()
+    c.settimeout(1)
+    try:
+        c.connect((host, port))
+        return False          # 누군가 이 포트에서 듣고 있다
+    except OSError:
+        return True           # 연결 거부 = 듣는 프로그램 없음, TIME_WAIT 흔적뿐
+    finally:
+        c.close()
 
 
 PORT = CFG.get("port", 8791)
@@ -2125,22 +2709,7 @@ if __name__ == "__main__":
     PORT = args.port
 
     if args.demo:
-        src = os.path.join(HERE, "sample-data")
-        tmp = tempfile.mkdtemp(prefix="rdp-demo-")
-        if os.path.isdir(src):
-            shutil.copytree(src, tmp, dirs_exist_ok=True)
-        DATA = tmp
-        PATTERNS = os.path.join(DATA, "patterns")
-        IMAGES = os.path.join(DATA, "images")
-        ORIG = os.path.join(DATA, "_orig")
-        BACKUP = os.path.join(DATA, "_backup")
-        TRASH = os.path.join(DATA, "_trash")
-        PROPOSALS = os.path.join(DATA, "proposals")
-        UI_STATE = os.path.join(DATA, "_ui", "state.json")
-        CFG["worklogDir"] = os.path.join(HERE, "pccs", "sample-worklogs")   # 익명 예시 일지
-        from colorlab import synth   # 컬러연구소 합성 데모 라이브러리 (실측값 아님)
-        lab_api.save_library(DATA, BACKUP, synth.library(), "")
-        print(f"[demo] {tmp}")
+        print(f"[demo] {enter_demo_mode()}  (데모용 빈 rdp.db · 예시 작업일지 — 실제 데이터는 건드리지 않음)")
 
     ensure_dirs()
 
@@ -2161,13 +2730,31 @@ if __name__ == "__main__":
         print(f"    정리:  kill <PID>     (또는 --port 로 다른 번호 지정)")
         sys.exit(1)
 
-    try:
-        for doc in load_all()[0]:
-            moved = gc_images(doc["id"], doc)
-            if moved:
-                print(f"[gc] {doc['id']}: {len(moved)}개 정리")
-    except Exception as e:
-        print(f"[gc] 건너뜀: {e}")
+    others = other_servers()
+    if others:
+        print("[!] 같은 데이터 폴더를 쓰는 서버가 다른 곳에서도 켜져 있습니다: "
+              + ", ".join(f"{o['host']}:{o['port']} ({o['secondsAgo']}초 전)" for o in others))
+        print("    두 PC에서 같은 시편을 동시에 고치면 저장이 엇갈릴 수 있어요. 한 대에서만 켜 두기를 권합니다.")
+        print("[gc] 다른 서버가 켜져 있어 시작 시 이미지 정리를 건너뜁니다")
+    else:
+        try:
+            for doc in load_all()[0]:
+                moved = gc_images(doc["id"], doc, min_age=86400)   # 하루 지난, JSON에 없는 이미지만
+                if moved:
+                    print(f"[gc] {doc['id']}: {len(moved)}개 정리")
+            for x in gc_unsaved_uploads():
+                print(f"[gc] 저장하지 않은 업로드 정리: {x}")
+        except Exception as e:
+            print(f"[gc] 건너뜀: {e}")
+        for folder, key in ((BACKUP, "backupKeepDays"), (TRASH, "trashKeepDays")):
+            if CFG.get(key):
+                n = prune_old(folder, CFG.get(key))
+                if n:
+                    print(f"[gc] {os.path.basename(folder)}: {CFG.get(key)}일 지난 {n}개를 지웠습니다 ({key})")
+            elif os.path.isdir(folder):
+                print(f"[i] {os.path.basename(folder)} {len(os.listdir(folder))}개 보관 중"
+                      f" (오래된 것을 자동으로 지우려면 config.json에 {key})")
+    start_heartbeat()
 
     bind_addr = "127.0.0.1"
     lan_ips = set()
@@ -2189,8 +2776,11 @@ if __name__ == "__main__":
         mode = "Cloudflare Access 인증 필수" if CFG.get("requireCfAccess") else "인증 없음 (위험)"
         print(f"  터널    https://{tunnel_hosts[0]}   ({mode})")
     if bind_addr == "0.0.0.0":
+        how = ("PIN 필요" if lan_pin() else
+               "막힘 — Access가 켜져 있음 · config.json의 lanPin으로 PIN 접속 허용" if CFG.get("requireCfAccess") else
+               "인증 없음 (위험) — 같은 네트워크 누구나 읽고 고칠 수 있음 · config.json에 lanPin을 넣으세요")
         for ip in sorted(lan_ips):
-            print(f"  외부    http://{ip}:{PORT}   (같은 네트워크에서 접속)")
+            print(f"  외부    http://{ip}:{PORT}   (같은 네트워크 · {how})")
     else:
         print("  외부    꺼짐  (다른 기기에서 열려면 --lan)")
     print("  종료    Ctrl+C  (또는 이 창을 닫기)")
@@ -2203,3 +2793,5 @@ if __name__ == "__main__":
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\n종료합니다.")
+    finally:
+        stop_heartbeat()
