@@ -15,6 +15,7 @@ import copy
 import hashlib
 import io
 import json
+import math
 import mimetypes
 import os
 import re
@@ -27,6 +28,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import uuid
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -128,6 +130,23 @@ def now_stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
 
 
+def new_rev() -> str:
+    """저장할 때마다 새로 발급하는 버전 토큰. updatedAt(초 단위, 표시용)과 달리 같은 초에도 겹치지 않는다."""
+    return uuid.uuid4().hex[:16]
+
+
+def doc_rev(doc) -> str:
+    """충돌 검사용 버전. rev가 없는 예전 파일은 updatedAt으로 비교한다."""
+    if not isinstance(doc, dict):
+        return ""
+    return str(doc.get("rev") or doc.get("updatedAt") or "")
+
+
+def stamp_doc(doc):
+    doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    doc["rev"] = new_rev()
+
+
 def safe_id(seg: str) -> str:
     if not ID_RE.match(seg or ""):
         raise ValueError(f"invalid id: {seg!r}")
@@ -197,7 +216,36 @@ def rename_pattern(old_id: str, new_id: str, data: bytes):
                 print(f"[warn] 되돌리기 실패 ({old_id} → {new_id}): {e2}")
         raise
 
+MIX_NUM_FIELDS = ("mattingPct", "mattingG", "thinnerPct", "thinnerG", "hardenerPct", "hardenerG")
+
+
+def _num(val, where, errors, allow_negative=False):
+    """숫자 칸 정규화: 숫자 문자열은 숫자로, 빈 값은 None. 유한한 수가 아니거나 음수면 오류."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        errors.append(f"{where}: 숫자가 아닙니다 ({val})")
+        return val
+    if isinstance(val, str):
+        t = val.strip()
+        if t == "":
+            return None
+        try:
+            val = float(t)
+        except ValueError:
+            errors.append(f"{where}: 숫자가 아닙니다 ({t})")
+            return val
+    if not isinstance(val, (int, float)) or not math.isfinite(val):
+        errors.append(f"{where}: 숫자가 아닙니다 ({val})")
+        return val
+    if val < 0 and not allow_negative:
+        errors.append(f"{where}: 0 이상이어야 합니다 ({val})")
+    return val
+
+
 def validate_pattern(doc: dict):
+    """저장 전 구조 검사. 숫자 문자열 같은 가벼운 형식 차이는 그 자리에서 고친다(doc을 바꿈).
+    오류가 하나라도 있으면 저장하지 않는다."""
     errors = []
     if not isinstance(doc, dict):
         return ["JSON 최상위가 객체가 아닙니다"]
@@ -212,15 +260,74 @@ def validate_pattern(doc: dict):
         return errors
     seen = set()
     for i, v in enumerate(vars_):
+        if not isinstance(v, dict):
+            errors.append(f"variations[{i}]가 객체가 아닙니다")
+            continue
         vid = v.get("id") or ""
         if not ID_RE.match(vid):
             errors.append(f"variations[{i}].id가 올바르지 않습니다")
         if vid in seen:
             errors.append(f"variation id 중복: {vid}")
         seen.add(vid)
-        if not isinstance(v.get("mixes", []), list):
+        imgs = v.get("images", [])
+        if not isinstance(imgs, list) or any(not isinstance(n, str) or not n or "/" in n or "\\" in n or n.startswith(".")
+                                             for n in imgs):
+            errors.append(f"{vid or i}: images는 파일 이름 목록이어야 합니다")
+        mixes = v.get("mixes", [])
+        if not isinstance(mixes, list):
             errors.append(f"variations[{i}].mixes가 배열이 아닙니다")
+            continue
+        for j, m in enumerate(mixes):
+            where = f"{vid or i} 배합 {j + 1}"
+            if not isinstance(m, dict):
+                errors.append(f"{where}: 객체가 아닙니다")
+                continue
+            inks = m.get("inks")
+            if inks is None:
+                m["inks"] = {}
+            elif not isinstance(inks, dict):
+                errors.append(f"{where}: inks가 객체가 아닙니다")
+            else:
+                for k in list(inks):
+                    val = _num(inks[k], f"{where} 잉크 {k}", errors)
+                    if val is None:
+                        del inks[k]
+                    else:
+                        inks[k] = val
+            for k in MIX_NUM_FIELDS:
+                if k in m:
+                    m[k] = _num(m[k], f"{where} {k}", errors)
+            for k in ("labSce", "labSci"):
+                lab = m.get(k)
+                if lab is None:
+                    continue
+                if not isinstance(lab, dict):
+                    errors.append(f"{where} {k}: 객체가 아닙니다")
+                    continue
+                for c in ("L", "a", "b"):
+                    if c in lab:
+                        lab[c] = _num(lab[c], f"{where} {k}.{c}", errors, allow_negative=True)
+            for k in ("layer", "batch", "plate"):
+                if m.get(k) is not None and not isinstance(m[k], (str, int, float)):
+                    errors.append(f"{where}: {k} 형식이 올바르지 않습니다")
+    for v in vars_:
+        if isinstance(v, dict) and v.get("sameAs"):
+            if v["sameAs"] == v.get("id") or v["sameAs"] not in seen:
+                errors.append(f"{v.get('id')}: '같은 배합' 대상({v['sameAs']}) 컬러가 없습니다")
     return errors
+
+
+def reference_warnings(doc) -> list:
+    warns = []
+    for v in doc.get("variations", []):
+        per = {}
+        for m in v.get("mixes", []):
+            if m.get("isReference"):
+                per[m.get("layer")] = per.get(m.get("layer"), 0) + 1
+        for layer, cnt in per.items():
+            if cnt > 1:
+                warns.append(f"{v.get('id')} {layer}에 기준 배합이 {cnt}개")
+    return warns
 
 
 # ---------------------------------------------------------------- Cloudflare Access JWT
@@ -1100,14 +1207,15 @@ def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
     low_res = src_w < 1700
     im = im.resize((TARGET_W, TARGET_H), Image.LANCZOS)
 
-    name = f"{vid}-{slot}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jpg"
+    # 같은 초에 같은 슬롯으로 올려도 겹치지 않게 고유 꼬리표를 붙인다 (예전 이름은 덮어쓰기 대상이었음)
+    name = f"{vid[:40]}-{slot}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}.jpg"
     out_dir = os.path.join(IMAGES, pid)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, name)
 
     buf = io.BytesIO()
     im.save(buf, format="JPEG", quality=85, optimize=True)
-    tmp_path = out_path + ".part"
+    tmp_path = f"{out_path}.{uuid.uuid4().hex[:8]}.part"
     with open(tmp_path, "wb") as f:
         f.write(buf.getvalue())
         f.flush()
@@ -1430,12 +1538,12 @@ class Handler(BaseHTTPRequestHandler):
                     touched.append(v.get("id"))
             v = vs[0]
             if added or updated:
-                doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                stamp_doc(doc)
                 with open(path, encoding="utf-8") as f:
                     old = f.read()
                 atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
                 atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
-            return {"ok": True, "added": added, "updated": updated,
+            return {"ok": True, "added": added, "updated": updated, "rev": doc_rev(doc),
                     "variation": (touched[0] if touched else v.get("id")),
                     "variations": touched,
                     "total": sum(len(x.get("mixes", [])) for x in vs)}
@@ -1537,10 +1645,8 @@ class Handler(BaseHTTPRequestHandler):
                             return self.error(404, "패턴이 없습니다")
                         with open(path, encoding="utf-8") as f:
                             doc = json.load(f)
-                        base_rev = (self.headers.get("X-Base-Rev") or "").strip()
-                        if base_rev and base_rev != (doc.get("updatedAt") or ""):
-                            return self.json({"ok": False, "conflict": True,
-                                              "message": "다른 곳에서 먼저 저장되었습니다", "current": doc}, 409)
+                        if self._reject_stale(doc):
+                            return
                         rf = doc.get("renamedFrom") or {}
                         if not rf.get("code"):
                             return self.error(400, "코드 변경 기록이 없습니다")
@@ -1550,12 +1656,12 @@ class Handler(BaseHTTPRequestHandler):
                             new_key = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")
                             res = rename_db_rows(old_key, new_key)
                         doc.pop("renamedFrom", None)
-                        doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                        stamp_doc(doc)
                         with open(path, encoding="utf-8") as f:
                             old = f.read()
                         atomic_write(os.path.join(BACKUP, f"{pid}.{now_stamp()}.json"), old.encode("utf-8"))
                         atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
-                        return self.json({"ok": True, "savedAt": doc["updatedAt"], **res})
+                        return self.json({"ok": True, "savedAt": doc["updatedAt"], "rev": doc["rev"], **res})
                 except ValueError as e:
                     return self.error(400, str(e))
 
@@ -1612,9 +1718,19 @@ class Handler(BaseHTTPRequestHandler):
                     safe_id(pid)
                 except ValueError as e:
                     return self.error(400, str(e))
-                src = safe_join(PATTERNS, pid + ".json")
-                move_to_trash(src, pid + ".json")
-                move_to_trash(os.path.join(IMAGES, pid), pid + "_images")
+                with pid_lock(pid):
+                    src = safe_join(PATTERNS, pid + ".json")
+                    if not os.path.isfile(src):
+                        return self.error(404, "시편이 없습니다")
+                    try:
+                        with open(src, encoding="utf-8") as f:
+                            cur = json.load(f)
+                    except Exception:
+                        cur = None   # 깨진 파일은 버전을 알 수 없으니 휴지통으로만 옮긴다
+                    if cur is not None and self._reject_stale(cur):
+                        return
+                    move_to_trash(src, pid + ".json")
+                    move_to_trash(os.path.join(IMAGES, pid), pid + "_images")
                 return self.json({"ok": True})
             if p.startswith("/api/image/"):
                 parts = p[len("/api/image/"):].strip("/").split("/")
@@ -1657,6 +1773,20 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- handlers
     MAX_BODY = 40 * 1024 * 1024  # 이미지 1장 상한
+
+    def _reject_stale(self, cur) -> bool:
+        """기존 시편을 바꾸거나 지울 때는 화면이 본 버전(X-Base-Rev)이 지금 파일과 같아야 한다.
+        다르거나 빠졌으면 409를 보내고 True."""
+        cur_rev = doc_rev(cur)
+        if not cur_rev:
+            return False   # 버전 정보가 전혀 없는 예전/데모 파일
+        base_rev = (self.headers.get("X-Base-Rev") or "").strip()
+        if base_rev == cur_rev:
+            return False
+        msg = ("다른 곳에서 먼저 저장되었습니다" if base_rev
+               else "버전 정보 없이 기존 시편을 바꿀 수 없습니다 — 새로고침 후 다시 시도하세요")
+        self.json({"ok": False, "conflict": True, "message": msg, "current": cur}, 409)
+        return True
 
     def read_body(self) -> bytes:
         n = int(self.headers.get("Content-Length") or 0)
@@ -1717,13 +1847,8 @@ class Handler(BaseHTTPRequestHandler):
                     prev = json.load(f)
             except Exception as e:
                 print(f"[warn] 기존 파일을 읽지 못했습니다 {rename_from or pid}: {e}")
-        base_rev = (self.headers.get("X-Base-Rev") or "").strip()
-        if prev is not None and (base_rev or rename_from):
-            prev_rev = prev.get("updatedAt") or ""
-            if prev_rev and base_rev != prev_rev:
-                return self.json({"ok": False, "conflict": True,
-                                  "message": "다른 곳에서 먼저 저장되었습니다",
-                                  "current": prev}, 409)
+        if prev is not None and self._reject_stale(prev):
+            return
 
         # DB(rdp_mixes)는 project+pattern_code로 행을 찾는다 → 키가 바뀌면 옛 키를 기록해 둔다
         # (서버가 관리하는 값: 클라이언트가 보낸 renamedFrom은 무시)
@@ -1738,7 +1863,8 @@ class Handler(BaseHTTPRequestHandler):
             if rf and (rf.get("project") or "", rf.get("code") or "") != new_key:
                 doc["renamedFrom"] = rf
 
-        doc["updatedAt"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        warns = reference_warnings(doc)   # 디스크를 건드리기 전에 계산 (여기서 실패하면 파일은 그대로)
+        stamp_doc(doc)
         if prev is not None or os.path.exists(src_path):
             try:
                 with open(src_path, encoding="utf-8") as f:
@@ -1754,21 +1880,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.error(500, f"이름 변경 실패 — 원래 상태로 되돌렸습니다: {e}")
         else:
             atomic_write(path, data)
-        warns = []
-        for v in doc.get("variations", []):
-            per = {}
-            for m in v.get("mixes", []):
-                if m.get("isReference"):
-                    per[m.get("layer")] = per.get(m.get("layer"), 0) + 1
-            for layer, cnt in per.items():
-                if cnt > 1:
-                    warns.append(f"{v.get('id')} {layer}에 기준 배합이 {cnt}개")
         try:
             removed = gc_images(pid, doc)
         except Exception as e:
             removed = []
             print(f"[warn] gc 실패 {pid}: {e}")
-        return self.json({"ok": True, "id": pid, "savedAt": doc["updatedAt"], "warnings": warns,
+        return self.json({"ok": True, "id": pid, "savedAt": doc["updatedAt"], "rev": doc["rev"], "warnings": warns,
                           "removedImages": removed, "renamedFrom": doc.get("renamedFrom")})
 
     def serve_thumb(self, pid, name, w):

@@ -73,8 +73,10 @@
     return x.slice(0, 80);
   }
 
-  async function apiPost(path, body) {
-    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  async function apiPost(path, body, rev) {
+    const headers = { "Content-Type": "application/json" };
+    if (rev) headers["X-Base-Rev"] = rev;
+    const r = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) {
       const err = new Error(j.error || "요청 실패");
@@ -97,10 +99,10 @@
     if (!r.ok || j.ok === false) throw new Error((j.errors || [j.error || "저장 실패"]).join(", "));
     return j;
   }
-  async function apiDelete(path) {
-    const r = await fetch(path, { method: "DELETE" });
+  async function apiDelete(path, rev) {
+    const r = await fetch(path, { method: "DELETE", headers: rev ? { "X-Base-Rev": rev } : {} });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || "삭제 실패");
+    if (!r.ok) throw new Error(j.message || j.error || "삭제 실패");
     return j;
   }
   async function apiUpload(pid, vid, slot, blob, crop) {
@@ -115,6 +117,9 @@
 
   /* ---------------- helpers ---------------- */
   const byId = (pid) => App.patterns.find((p) => p.id === pid);
+  // 서버 충돌 검사용 버전 (rev가 없는 예전 파일은 updatedAt)
+  const revOf = (p) => (p && (p.rev || p.updatedAt)) || "";
+  const markSaved = (doc, r) => { if (r.savedAt) doc.updatedAt = r.savedAt; if (r.rev) doc.rev = r.rev; return doc; };
   const varOf = (p, vid) => (p ? (p.variations || []).find((v) => v.id === vid) || (p.variations || [])[0] : null);
   const imgUrl = (pid, name) => `/img/${encodeURIComponent(pid)}/${encodeURIComponent(name)}`;
   const thumbUrl = (pid, name, w) => `/api/thumb/${encodeURIComponent(pid)}/${encodeURIComponent(name)}?w=${w}`;
@@ -188,9 +193,8 @@
     const payload = {};
     Object.keys(draft).forEach((k) => { if (!k.startsWith("_")) payload[k] = draft[k]; });
     try {
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(pid)}`, payload, p.updatedAt);
-      const saved = draft;
-      saved.updatedAt = r.savedAt || saved.updatedAt;
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(pid)}`, payload, revOf(p));
+      const saved = markSaved(draft, r);
       saved._mtime = Date.now();
       const i = App.patterns.findIndex((x) => x.id === pid);
       if (i >= 0) App.patterns[i] = saved;
@@ -303,7 +307,10 @@
       if (!q) return true;
       const hay = [p.pattern.code, p.pattern.name, p.pattern.nameKo, p.projectName, p.client, p.label.type,
         (p.pattern.tags || []).join(" "), (p.work.plate || []).join(" "),
-        (p.variations || []).map((v) => [v.colorName, v.colorCode, (v.coating || []).map((c) => c.code).join(" ")].join(" ")).join(" ")]
+        (p.variations || []).map((v) => [v.colorName, v.colorCode, (v.coating || []).map((c) => c.code).join(" "),
+          // 도수별 동판·패턴 코드와 배합에 적힌 동판도 찾는다
+          Object.values(v.layerPlates || {}).join(" "), Object.values(v.layerPatterns || {}).join(" "),
+          (v.mixes || []).map((m) => m.plate || "").join(" ")].join(" ")).join(" ")]
         .join(" ").toLowerCase();
       return hay.indexOf(q) >= 0;
     }).sort((a, b) => {
@@ -510,9 +517,8 @@
     }
     const payload = { ...JSON.parse(JSON.stringify(d)), id };
     try {
-      const r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, exists ? (exists.updatedAt || "") : "", !exists);
-      const saved = JSON.parse(JSON.stringify(payload));
-      saved.updatedAt = r.savedAt || "";
+      const r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, exists ? revOf(exists) : "", !exists);
+      const saved = markSaved(JSON.parse(JSON.stringify(payload)), r);
       saved._mtime = Date.now();
       const i = App.patterns.findIndex((x) => x.id === id);
       if (i >= 0) App.patterns[i] = saved; else App.patterns.push(saved);
@@ -1231,6 +1237,12 @@
   }
 
   async function saveSnapshot() {
+    // 이미 확정한 번호면 다음 번호로 넘긴 뒤 저장한다. 확정 직후에는 번호를 그대로 두어
+    // [확정 저장] → [인쇄/PDF] 순서로 써도 보관본과 인쇄본 번호가 같다.
+    if (App.prop.docNo && App.prop.confirmedDocNo === App.prop.docNo) {
+      const m = /^(.*-)(\d+)$/.exec(App.prop.docNo);
+      if (m) { App.prop.docNo = m[1] + String(Number(m[2]) + 1).padStart(2, "0"); saveLS(); renderProposal(); }
+    }
     const groups = grouped();
     const doc = {
       slug: `${App.prop.date || todayLocal()}_${(App.prop.client || "proposal").replace(/[^\w가-힣-]/g, "")}`,
@@ -1250,9 +1262,9 @@
       const r = await fetch("/api/proposals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(doc) });
       const j = await r.json();
       if (j.ok) {
-        const m = /^(.*-)(\d+)$/.exec(App.prop.docNo || "");
-        if (m) { App.prop.docNo = m[1] + String(Number(m[2]) + 1).padStart(2, "0"); saveLS(); renderProposal(); }
-        toast("제안서 스냅샷 저장됨 · 이미지 " + (j.images || 0) + "장");
+        App.prop.confirmedDocNo = doc.docNo; saveLS();
+        const miss = (j.missing || []).length;
+        toast(`${doc.docNo || "제안서"} 확정 저장됨 · 이미지 ${j.images || 0}장` + (miss ? ` · ⚠ 이미지 ${miss}장 없음` : ""));
       } else {
         toast("저장 실패");
       }
@@ -1294,7 +1306,7 @@
   function openEditor(pid, vid) {
     E.isNew = !pid;
     E.pid = pid;
-    E.baseRev = pid ? (byId(pid) || {}).updatedAt || "" : "";
+    E.baseRev = pid ? revOf(byId(pid)) : "";
     E.draft = pid ? clone(byId(pid)) : newDoc();
     if (pid) { delete E.draft._file; delete E.draft._mtime; }
     E.vIdx = Math.max(0, E.draft.variations.findIndex((v) => v.id === vid));
@@ -1920,11 +1932,11 @@
           : `DB의 ${rf.project}-${rf.code} 행은 그대로 두고, 이 시편은 ${d.project}-${d.pattern.code}로 따로 보냅니다.\n(다음 보내기부터 같은 배합이 새 코드로 추가됩니다) 진행할까요?`;
         if (!confirm(q)) return;
         try {
-          const r = await apiPost(`/api/rdp/rename-db/${encodeURIComponent(d.id)}`, { mode });
+          const r = await apiPost(`/api/rdp/rename-db/${encodeURIComponent(d.id)}`, { mode }, E.baseRev);
           const p0 = byId(d.id);
-          if (p0) { delete p0.renamedFrom; p0.updatedAt = r.savedAt; }
-          delete d.renamedFrom; d.updatedAt = r.savedAt;
-          E.baseRev = r.savedAt; E.origJson = JSON.stringify(d);
+          if (p0) { delete p0.renamedFrom; markSaved(p0, r); }
+          delete d.renamedFrom; markSaved(d, r);
+          E.baseRev = revOf(d); E.origJson = JSON.stringify(d);
           E.push = await apiGet(`/api/rdp/push-preview/${encodeURIComponent(d.id)}`);
           renderDrawer();
           toast(mode === "rename" ? `DB 코드 변경 ${r.renamed || 0}행` + (r.backup ? ` (백업 ${r.backup})` : "") : "옛 코드 표시를 지웠습니다");
@@ -1986,7 +1998,7 @@
             if (idx >= 0) App.patterns[idx] = p2; else App.patterns.push(p2);
             E.draft = clone(p2);
             delete E.draft._file; delete E.draft._mtime;
-            E.baseRev = p2.updatedAt || "";
+            E.baseRev = revOf(p2);
             E.vIdx = Math.max(0, (p2.variations || []).findIndex((x) => x.id === r.variation));
             E.origJson = JSON.stringify(E.draft);
           }
@@ -2089,7 +2101,7 @@
     if (del) del.onclick = async () => {
       if (!confirm("이 시편을 삭제할까요? JSON과 이미지가 _trash로 이동합니다.")) return;
       try {
-        await apiDelete(`/api/patterns/${encodeURIComponent(E.draft.id)}`);
+        await apiDelete(`/api/patterns/${encodeURIComponent(E.draft.id)}`, revOf(byId(E.draft.id)));
         App.patterns = App.patterns.filter((x) => x.id !== E.draft.id);
         closeEditor(); location.hash = ""; renderCatalog(); renderCart();
         toast("삭제됨");
@@ -2149,15 +2161,15 @@
       if (prevId && prevId !== d.id) App.patterns = App.patterns.filter((x) => x.id !== prevId);
       if (r.renamedFrom) d.renamedFrom = r.renamedFrom; else delete d.renamedFrom;
       const idx = App.patterns.findIndex((x) => x.id === d.id);
-      const saved = clone(d); saved._mtime = Date.now();
-      if (r.savedAt) { saved.updatedAt = r.savedAt; E.baseRev = r.savedAt; }
+      const saved = markSaved(clone(d), r); saved._mtime = Date.now();
+      E.baseRev = revOf(saved);
       if (idx >= 0) App.patterns[idx] = saved; else App.patterns.push(saved);
       const vids = new Set((d.variations || []).map((v) => v.id));
       App.cart = App.cart.filter((c) => c.pid !== d.id || vids.has(c.vid));
       if (App.prop.comments) {
         Object.keys(App.prop.comments).forEach((k) => {
           const [pid, vid] = k.split("::");
-          if (pid === d.id && !vids.has(vid)) delete App.prop.comments[k];
+          if (pid === d.id && vid !== "all" && !vids.has(vid)) delete App.prop.comments[k];
         });
       }
       saveLS();
@@ -2218,8 +2230,9 @@
     const s = baseScale(W, H) * C.z;
     const visW = W / s / C.img.naturalWidth;
     const visH = H / s / C.img.naturalHeight;
-    const mx = Math.max(0, (1 - visW) / 2);
-    const my = Math.max(0, (1 - visH) / 2);
+    // 중심이 움직일 수 있는 범위 = [보이는 비율/2, 1 − 보이는 비율/2] (저장 단계 cropRect와 같은 범위)
+    const mx = Math.min(0.5, visW / 2);
+    const my = Math.min(0.5, visH / 2);
     C.cx = Math.min(1 - mx, Math.max(mx, C.cx));
     C.cy = Math.min(1 - my, Math.max(my, C.cy));
   }
