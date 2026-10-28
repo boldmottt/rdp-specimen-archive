@@ -1,4 +1,5 @@
 config.json
+.lan-secret
 data/
 *.db
 *.sqlite

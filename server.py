@@ -13,6 +13,7 @@ import base64
 import contextlib
 import copy
 import hashlib
+import hmac
 import io
 import json
 import math
@@ -32,6 +33,7 @@ import urllib.request
 import uuid
 import webbrowser
 from datetime import datetime
+from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -1564,6 +1566,54 @@ def next_doc_no(prefix: str, taken) -> str:
     return f"{prefix}{n:02d}"
 
 
+# ---------------------------------------------------------------- LAN PIN (선택)
+# LAN 모드에서 config.json에 lanPin을 넣으면, 이 맥·터널이 아니라 같은 네트워크의 다른 기기는
+# PIN을 한 번 입력해야 한다 (서명한 쿠키, 30일). 넣지 않으면 예전과 똑같다.
+LAN_COOKIE = "rdp_lan"
+_LAN_KEY = None
+_LAN_FAILS = {}            # ip -> (틀린 횟수, 잠금 풀리는 시각)
+_LAN_GUARD = threading.Lock()
+LAN_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>RDP 아카이브 PIN</title>
+<style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f4f0;
+font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;color:#141517}}
+form{{background:#fff;padding:28px;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.08);display:grid;gap:12px;width:min(300px,86vw)}}
+input{{font-size:20px;padding:10px 12px;border:1px solid #d6d3cc;border-radius:8px;letter-spacing:.2em}}
+button{{font-size:15px;padding:11px;border:0;border-radius:8px;background:#141517;color:#fff;cursor:pointer}}
+small{{color:#8d9198}}.err{{color:#b4442b;font-size:13px;margin:0}}</style></head><body>
+<form method="post" action="/lan-login"><b>RDP 시편 아카이브</b><small>같은 네트워크 접속 PIN을 입력하세요</small>
+<input name="pin" type="password" inputmode="numeric" autocomplete="current-password" autofocus required aria-label="PIN">
+<input type="hidden" name="next" value="{next}">{err}<button>들어가기</button></form></body></html>"""
+
+
+def lan_pin() -> str:
+    return str(CFG.get("lanPin") or "").strip()
+
+
+def is_loopback(ip: str) -> bool:
+    return ip.startswith("127.") or ip in ("::1", "::ffff:127.0.0.1")
+
+
+def lan_token() -> str:
+    """PIN 쿠키 값. 서명 키는 앱 폴더에 한 번 만들어 둔다 (드라이브로 동기화되지 않고 저장소에도 안 올라감).
+    PIN을 바꾸면 예전 쿠키는 더 이상 맞지 않는다."""
+    global _LAN_KEY
+    if _LAN_KEY is None:
+        path = os.path.join(HERE, ".lan-secret")
+        try:
+            with open(path, "rb") as f:
+                _LAN_KEY = f.read()
+        except OSError:
+            _LAN_KEY = b""
+        if len(_LAN_KEY) < 32:
+            _LAN_KEY = os.urandom(32)
+            try:
+                atomic_write(path, _LAN_KEY)
+            except OSError:
+                pass   # 못 쓰면 이번 실행 동안만 (다시 켜면 PIN을 한 번 더 입력)
+    return hmac.new(_LAN_KEY, ("rdp-lan:" + lan_pin()).encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 # ---------------------------------------------------------------- handler
 class Handler(BaseHTTPRequestHandler):
     server_version = "RDPArchive/2.0"
@@ -1611,6 +1661,8 @@ class Handler(BaseHTTPRequestHandler):
     def _access_ok(self) -> bool:
         """Cloudflare Access 뒤에 있을 때, 인증된 요청만 통과시킨다.
         (Access를 꺼먹거나 잘못 설정해도 앱이 인터넷에 그냥 열리지 않게 하는 안전장치)"""
+        if self._lan_client() and lan_pin():
+            return self._lan_cookie_ok()   # 같은 네트워크의 다른 기기: PIN 쿠키 (PIN이 없으면 아래 예전 규칙)
         if not CFG.get("requireCfAccess"):
             return True
         if self._is_local_direct():
@@ -1635,6 +1687,55 @@ class Handler(BaseHTTPRequestHandler):
         if want_mail and (payload.get("email") or "").strip().lower() != want_mail:
             return False
         return True
+
+    def _lan_client(self) -> bool:
+        """LAN 모드에서 이 맥(루프백)이나 터널이 아니라 같은 네트워크의 다른 기기가 바로 들어온 요청."""
+        return LAN_MODE and not is_loopback((self.client_address or ("",))[0])
+
+    def _lan_cookie_ok(self) -> bool:
+        want = lan_token()
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == LAN_COOKIE and hmac.compare_digest(v.encode(), want.encode()):
+                return True
+        return False
+
+    def _lan_page(self, err="", code=200):
+        nxt = urlparse(self.path).path if self.command == "GET" else "/"
+        body = LAN_PAGE.format(next=html_escape(nxt, quote=True),
+                               err=f'<p class="err">{html_escape(err)}</p>' if err else "")
+        self._send(code, body.encode("utf-8"), "text/html; charset=utf-8")
+
+    def _deny(self):
+        """접근 거절. LAN PIN을 쓰는 같은 네트워크 기기면 화면 요청에는 PIN 입력 페이지를 보여 준다."""
+        if self._lan_client() and lan_pin():
+            p = urlparse(self.path).path
+            if self.command == "GET" and not p.startswith(("/api/", "/img/", "/proposal-img/")):
+                return self._lan_page()
+            return self.error(401, "같은 네트워크 접속 PIN이 필요합니다 — 주소창에서 페이지를 열어 PIN을 입력하세요")
+        return self.error(403, "Cloudflare Access 인증이 필요합니다")
+
+    def _lan_login(self):
+        if not (self._lan_client() and lan_pin()):
+            return self._send(303, b"", extra={"Location": "/"})
+        ip, now = self.client_address[0], time.time()
+        with _LAN_GUARD:
+            fails, until = _LAN_FAILS.get(ip, (0, 0))
+        if until > now:
+            return self._lan_page("여러 번 틀려서 잠시 막혔어요 — 1분 뒤 다시 시도하세요", 429)
+        form = parse_qs(self.read_body().decode("utf-8", "replace"))
+        pin, nxt = (form.get("pin") or [""])[0], (form.get("next") or ["/"])[0]
+        if not nxt.startswith("/") or nxt.startswith("//"):
+            nxt = "/"
+        if hmac.compare_digest(pin.encode("utf-8"), lan_pin().encode("utf-8")):
+            with _LAN_GUARD:
+                _LAN_FAILS.pop(ip, None)
+            return self._send(303, b"", extra={"Location": nxt, "Set-Cookie":
+                              f"{LAN_COOKIE}={lan_token()}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict"})
+        with _LAN_GUARD:
+            fails += 1
+            _LAN_FAILS[ip] = (fails, now + 60 if fails >= 5 else 0)
+        return self._lan_page("PIN이 맞지 않습니다", 401)
 
     def _is_local_direct(self) -> bool:
         """Host가 localhost이고, 실제로 루프백에서 왔고, Cloudflare를 거치지 않은 요청."""
@@ -1688,7 +1789,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         u = urlparse(self.path)
         p = unquote(u.path)
         try:
@@ -1847,7 +1948,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
@@ -1936,8 +2037,12 @@ class Handler(BaseHTTPRequestHandler):
         self._maybe_reload_cfg()
         if not self._host_ok():
             return self.error(403, "forbidden host")
+        if urlparse(self.path).path == "/lan-login":   # PIN 입력 (아직 인증 전이라 접근 검사보다 먼저)
+            if not self._write_ok():
+                return self.error(403, "cross-site request blocked")
+            return self._lan_login()
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         u = urlparse(self.path)
@@ -2122,7 +2227,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self.error(403, "forbidden host")
         if not self._access_ok():
-            return self.error(403, "Cloudflare Access 인증이 필요합니다")
+            return self._deny()
         if not self._write_ok():
             return self.error(403, "cross-site request blocked")
         p = unquote(urlparse(self.path).path)
@@ -2502,8 +2607,11 @@ if __name__ == "__main__":
         mode = "Cloudflare Access 인증 필수" if CFG.get("requireCfAccess") else "인증 없음 (위험)"
         print(f"  터널    https://{tunnel_hosts[0]}   ({mode})")
     if bind_addr == "0.0.0.0":
+        how = ("PIN 필요" if lan_pin() else
+               "막힘 — Access가 켜져 있음 · config.json의 lanPin으로 PIN 접속 허용" if CFG.get("requireCfAccess") else
+               "인증 없음 (위험) — 같은 네트워크 누구나 읽고 고칠 수 있음 · config.json에 lanPin을 넣으세요")
         for ip in sorted(lan_ips):
-            print(f"  외부    http://{ip}:{PORT}   (같은 네트워크에서 접속)")
+            print(f"  외부    http://{ip}:{PORT}   (같은 네트워크 · {how})")
     else:
         print("  외부    꺼짐  (다른 기기에서 열려면 --lan)")
     print("  종료    Ctrl+C  (또는 이 창을 닫기)")

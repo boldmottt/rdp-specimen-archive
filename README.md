@@ -77,5 +77,9 @@ python3 setup_tunnel.py rdp.내도메인.com    # 터널 주소 등록
 ./install_launchagent.sh                   # (선택) 로그인 시 자동 시작
 ```
 
+같은 네트워크(LAN)의 다른 기기에서 열려면 `RDP Archive (LAN).command`.
+`config.json`에 `"lanPin": "4자리 이상"`을 넣으면 다른 기기는 처음 한 번 PIN을 입력해야 합니다(30일 유지, 5번 틀리면 1분 막힘).
+넣지 않으면 같은 네트워크 누구나 읽고 고칠 수 있으니(배너에 '위험' 표시) PIN을 권장합니다. 이 맥에서의 접속과 터널은 PIN과 상관없습니다.
+
 `config.json`의 `requireCfAccess`가 켜져 있으면 **Cloudflare Access를 통과한 요청(`Cf-Access-Jwt-Assertion`, 서명 검증 · `cfAccessTeamDomain` 필요)만** 허용합니다.
 로컬(localhost) 접속은 그대로 됩니다.

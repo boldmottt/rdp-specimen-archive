@@ -1175,6 +1175,63 @@ class ProposalTests(Base):
         self.assertEqual(self.req("GET", "/api/proposals/nope")[0], 404)
 
 
+class LanPinTests(Base):
+    """LAN 모드 PIN(선택): 같은 네트워크의 다른 기기는 PIN 쿠키가 있어야 하고, PIN을 안 정하면 예전과 같다."""
+
+    def setUp(self):
+        super().setUp()
+        self.lan = [mock.patch.object(server, "LAN_MODE", True), mock.patch.object(server, "is_loopback", lambda ip: False),
+                    mock.patch.object(server, "_LAN_KEY", b"k" * 32)]   # 테스트가 앱 폴더에 .lan-secret을 만들지 않게
+        for x in self.lan:
+            x.start()
+        server._LAN_FAILS.clear()
+
+    def tearDown(self):
+        for x in self.lan:
+            x.stop()
+        super().tearDown()
+
+    def login(self, pin, next_="/"):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("POST", "/lan-login", body=urllib.parse.urlencode({"pin": pin, "next": next_}),
+                  headers={"Host": "localhost", "Content-Type": "application/x-www-form-urlencoded"})
+        r = c.getresponse()
+        r.read()
+        c.close()
+        return r.status, (r.getheader("Set-Cookie") or "").split(";")[0], r.getheader("Location")
+
+    def test_without_pin_nothing_changes(self):
+        self.assertEqual(self.req("GET", "/api/patterns")[0], 200)
+
+    def test_pin_required_and_login_flow(self):
+        server.CFG["lanPin"] = "2468"
+        self.assertEqual(self.req("GET", "/api/patterns")[0], 401)
+        st, page = self.req("GET", "/")
+        self.assertEqual(st, 200)
+        self.assertIn(b'action="/lan-login"', page)
+        self.assertEqual(self.login("0000")[0], 401)
+        st, cookie, loc = self.login("2468", "/lab/")
+        self.assertEqual((st, loc), (303, "/lab/"))
+        self.assertEqual(self.req("GET", "/api/patterns", headers={"Cookie": cookie})[0], 200)
+        server.CFG["lanPin"] = "1357"                                   # PIN을 바꾸면 예전 쿠키는 무효
+        self.assertEqual(self.req("GET", "/api/patterns", headers={"Cookie": cookie})[0], 401)
+
+    def test_pin_lets_lan_in_even_when_access_is_on(self):
+        server.CFG.update(lanPin="2468", requireCfAccess=True, cfAccessTeamDomain="myteam")
+        st, cookie, _ = self.login("2468")
+        self.assertEqual(self.req("GET", "/api/patterns", headers={"Cookie": cookie})[0], 200)
+
+    def test_brute_force_is_slowed(self):
+        server.CFG["lanPin"] = "2468"
+        for _ in range(5):
+            self.assertEqual(self.login("1111")[0], 401)
+        self.assertEqual(self.login("2468")[0], 429)                    # 맞아도 1분은 막힘
+
+    def test_redirect_stays_on_site(self):
+        server.CFG["lanPin"] = "2468"
+        self.assertEqual(self.login("2468", "//evil.example/x")[2], "/")
+
+
 class AccessTests(Base):
     def setUp(self):
         super().setUp()
