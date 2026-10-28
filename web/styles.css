@@ -72,8 +72,8 @@ body.prop-mode .appnav{display:none}
 .card:hover .media img{transform:scale(1.035)}
 .media .empty{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;letter-spacing:.1em;color:var(--ink-3);background:repeating-linear-gradient(45deg,#efede8,#efede8 8px,#e9e7e1 8px,#e9e7e1 16px)}
 .badge{position:absolute;left:10px;top:10px;background:rgba(255,255,255,.93);backdrop-filter:blur(6px);font-size:10px;font-weight:650;letter-spacing:.07em;padding:4px 8px;border-radius:6px;pointer-events:none}
-.check{position:absolute;right:10px;top:10px;width:25px;height:25px;border-radius:50%;border:1.5px solid rgba(255,255,255,.95);background:rgba(20,21,23,.3);display:grid;place-items:center;cursor:pointer;transition:.15s;opacity:0;backdrop-filter:blur(4px)}
-.card:hover .check,.check.on{opacity:1}
+.check{padding:0;position:absolute;right:10px;top:10px;width:25px;height:25px;border-radius:50%;border:1.5px solid rgba(255,255,255,.95);background:rgba(20,21,23,.3);display:grid;place-items:center;cursor:pointer;transition:.15s;opacity:0;backdrop-filter:blur(4px)}
+.card:hover .check,.check.on,.check:focus-visible{opacity:1}
 .check:hover{background:rgba(20,21,23,.55)}
 .check.on{background:var(--ink);border-color:var(--ink)}
 .check svg{width:13px;height:13px;stroke:#fff;stroke-width:2.8;fill:none;opacity:0}
@@ -87,6 +87,7 @@ body.prop-mode .appnav{display:none}
 .card-title{font-size:14.5px;font-weight:600;letter-spacing:-.015em;margin-top:4px;display:flex;align-items:baseline;gap:8px}
 .c-code{font-family:var(--mono);font-size:15px;font-weight:600;letter-spacing:-.01em}
 .c-name{font-size:13px;color:var(--ink-2);font-weight:500}
+.card-link{display:flex;align-items:baseline;gap:8px;color:inherit;text-decoration:none;min-width:0}
 .card-title .ko{font-size:12px;font-weight:400;color:var(--ink-2)}
 .card-meta{margin-top:6px;font-size:11.5px;color:var(--ink-3);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .card-meta .layer-pill{margin-left:auto}
@@ -227,11 +228,16 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .cmp-meta{display:flex;gap:5mm;align-items:baseline;padding-top:1.8mm;font-size:8.5px;color:#8d9198;flex-wrap:wrap}
 .cmp-meta b{font-family:var(--mono);font-size:11px;color:#141517;font-weight:600}
 .cmp-meta .v{color:#141517}
+/* 키보드 포커스 표시 (마우스 클릭 때는 안 보임) */
+a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.cartbar :focus-visible{outline-color:#fff}
+.check:focus-visible{outline:2px solid #fff;outline-offset:1px;box-shadow:0 0 0 5px var(--ink)}
+
 /* drawer */
 .drawer-scrim{position:fixed;inset:0;background:rgba(20,21,23,.35);opacity:0;pointer-events:none;transition:.25s;z-index:90}
 .drawer-scrim.on{opacity:1;pointer-events:auto}
-.drawer{position:fixed;top:0;right:0;bottom:0;width:780px;max-width:100vw;background:#fff;z-index:100;display:flex;flex-direction:column;transform:translateX(102%);transition:transform .3s cubic-bezier(.2,.8,.3,1);box-shadow:-20px 0 60px -30px rgba(0,0,0,.5)}
-.drawer.on{transform:none}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:780px;max-width:100vw;background:#fff;z-index:100;display:flex;flex-direction:column;transform:translateX(102%);visibility:hidden;transition:transform .3s cubic-bezier(.2,.8,.3,1),visibility 0s linear .3s;box-shadow:-20px 0 60px -30px rgba(0,0,0,.5)}
+.drawer.on{transform:none;visibility:visible;transition:transform .3s cubic-bezier(.2,.8,.3,1)}
 .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
 .drawer-head strong{font-size:15px;letter-spacing:-.02em}
 .icon-btn{border:0;background:transparent;font-size:15px;cursor:pointer;color:var(--ink-3);width:30px;height:30px;border-radius:8px}
@@ -305,7 +311,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 .foot{padding:30px 0 60px;border-top:1px solid var(--line);margin-top:10px;display:flex;justify-content:space-between;font-size:11px;color:var(--ink-3)}
 
 @media screen and (max-width:1080px){
-  .detail{grid-template-columns:1fr;gap:26px}
+  .detail{grid-template-columns:minmax(0,1fr);gap:26px}
   .hero{flex-direction:column;align-items:flex-start;gap:20px}
 }
 @media screen and (max-width:760px){
@@ -316,6 +322,7 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
   .hero h1{font-size:26px}
   .grid{grid-template-columns:1fr;gap:18px}
   .drawer{width:100vw}
+  .d-head-row{flex-wrap:wrap;align-items:flex-start;gap:16px}
   .field-row{grid-template-columns:80px 1fr}
   .sheet{width:100%;min-height:0;padding:16px}
   .p-img,.cmp-cell img{width:100%;height:auto;aspect-ratio:170/70}
