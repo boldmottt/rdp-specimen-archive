@@ -58,15 +58,12 @@ function cardHTML(p) {
     return html`<img loading="lazy" src="${thumbUrl(p.id, n, 480)}" srcset="${thumbUrl(p.id, n, 480)} 480w, ${thumbUrl(p.id, n, 960)} 960w, ${full} 2400w" sizes="(max-width:760px) 94vw, (max-width:1180px) 44vw, 340px" onerror="this.onerror=null;this.src='${full}'" alt="${alt}">`;
   };
   return String(html`<article class="card${picked ? " picked" : ""}" data-pid="${p.id}">
-      <div class="media">
+      <a class="media" href="${href}" aria-label="${alt} 상세 보기">
         ${v && v.images && v.images.length ? img(v.images[0]) : raw('<div class="empty">IMAGE N/A</div>')}
         ${p.project ? html`<div class="badge">${p.project}</div>` : ""}
-        <button type="button" class="check${picked ? " on" : ""}" data-check="1" title="제안서에 담기" aria-label="${alt} 제안서에 담기" aria-pressed="${picked ? "true" : "false"}">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5 9.5 18 20 6.5"/></svg>
-        </button>
-      </div>
+      </a>
       <div class="card-body">
-        <div class="card-title"><a class="card-link" href="${href}">${title}</a></div>
+        <div class="card-title">${title}</div>
         <div class="card-meta">${meta}</div>
         <div class="vchips">${chips}</div>
       </div>
@@ -87,7 +84,6 @@ export function renderCatalog() {
   $("#view").innerHTML = `<div class="wrap">
       <section class="hero">
         <div>
-          <div class="eyebrow">Specimen Archive</div>
           <h1>시편 아카이브</h1>
           <p>패턴 1개에 컬러 베리에이션 여러 개. 이미지·라벨·작업·배합을 한 곳에서 관리하고 바로 제안서로.</p>
         </div>
@@ -98,9 +94,9 @@ export function renderCatalog() {
         </div>
       </section>
       <div class="toolbar">${chips}<div class="spacer"></div>
-        <button class="chip" id="selall" title="지금 보이는 시편을 모두 제안서에 담기">전체 선택<span class="n">${list.reduce((a, p) => a + (p.variations || []).length, 0)}</span></button>
-        <button class="chip" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
-        <button class="chip" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
+        <button class="tool" id="selall" title="지금 보이는 시편을 모두 제안서에 담기">전체 선택<span class="n">${list.reduce((a, p) => a + (p.variations || []).length, 0)}</span></button>
+        <button class="tool" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
+        <button class="tool" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
         <div class="selwrap"><select id="sort" aria-label="정렬">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
@@ -146,17 +142,6 @@ export function renderCatalog() {
       toast(`동기화 완료 · ${r.patterns}개 시편 / 추가 ${r.added} · 갱신 ${r.updated}`);
     } catch (e) { toast("동기화 실패: " + e.message); sa.disabled = false; sa.textContent = "DB 동기화"; }
   };
-  $$(".card").forEach((el) => {
-    el.onclick = (e) => {
-      if (e.target.closest("[data-check]") || e.target.closest("[data-sel]")) return;
-      if (e.target.closest(".card-link")) {
-        if (e.ctrlKey || e.metaKey || e.shiftKey) return; // 새 탭 열기는 브라우저에 맡김
-        e.preventDefault();
-      }
-      const p = byId(el.dataset.pid);
-      location.hash = `#/p/${encodeURIComponent(p.id)}/${encodeURIComponent(p._sel || p.variations[0].id)}`;
-    };
-  });
   $$("[data-sel]").forEach((el) => {
     const card = el.closest(".card");
     const p = byId(card.dataset.pid);
@@ -174,8 +159,9 @@ export function renderCatalog() {
       const im = img(); if (im && el.dataset.img) im.src = el.dataset.img;
       card.classList.toggle("picked", inCart(p.id, el.dataset.sel));
       card.querySelectorAll("[data-sel]").forEach((b) => b.classList.toggle("in", inCart(p.id, b.dataset.sel)));
-      const chk = card.querySelector("[data-check]");
-      if (chk) { chk.classList.toggle("on", inCart(p.id, el.dataset.sel)); chk.setAttribute("aria-pressed", String(inCart(p.id, el.dataset.sel))); }
+      // 썸네일 링크도 방금 고른 컬러로 열리게
+      const link = card.querySelector("a.media");
+      if (link) link.href = `#/p/${encodeURIComponent(p.id)}/${encodeURIComponent(p._sel)}`;
       const all = card.querySelector("[data-all]");
       if (all) all.textContent = p.variations.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${p.variations.length}색`;
       renderCart();
@@ -188,17 +174,6 @@ export function renderCatalog() {
     if (allIn) App.cart = App.cart.filter((c) => c.pid !== p.id);
     else p.variations.forEach((x) => { if (!inCart(p.id, x.id)) App.cart.push({ pid: p.id, vid: x.id }); });
     saveLS(); renderCatalog(); renderCart();
-  }));
-  $$("[data-check]").forEach((el) => (el.onclick = (e) => {
-    e.stopPropagation();
-    const p = byId(el.closest(".card").dataset.pid);
-    const v = varOf(p, p._sel);
-    if (!v) return;
-    toggleCart(p.id, v.id);
-    const refocus = document.activeElement === el;
-    renderCatalog(); renderCart();
-    // 다시 그린 뒤에도 키보드 포커스가 같은 체크 버튼에 남도록
-    if (refocus) { const nb = document.querySelector(`.card[data-pid="${CSS.escape(p.id)}"] [data-check]`); if (nb) nb.focus(); }
   }));
 }
 

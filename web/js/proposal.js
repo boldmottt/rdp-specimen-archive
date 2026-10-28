@@ -33,10 +33,10 @@ function coverSheet(groups) {
       <div class="dt">${esc(fmtDate(d))}<br><span class="docno">${esc(docLabel())}</span></div></div>
       <h1>${esc(App.prop.title || "RDP 패턴 제안")}</h1>
       <div class="cov-sub">패턴 ${groups.length}종 · 컬러 ${flat.length}종</div>
-      <div class="cov-client">
-        <div><dt>Client</dt><dd>${esc(App.prop.client || "—")}</dd></div>
-        <div><dt>Prepared by</dt><dd>${esc(App.prop.by || "—")}</dd></div>
-      </div>
+      ${App.prop.client || App.prop.by ? `<div class="cov-client">
+        ${App.prop.client ? `<div><dt>Client</dt><dd>${esc(App.prop.client)}</dd></div>` : ""}
+        ${App.prop.by ? `<div><dt>Prepared by</dt><dd>${esc(App.prop.by)}</dd></div>` : ""}
+      </div>` : ""}
       <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div>
         <div class="cov-thumbs" style="grid-template-columns:repeat(${flat.length <= 4 ? Math.max(1, flat.length) : 4},1fr)">${thumbs}</div></div>
       <div class="cov-foot"><span>${esc(App.config.company || "")} · <span class="docno">${esc(docLabel())}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
@@ -181,10 +181,10 @@ export function renderProposal() {
     saveLS();
   }
   const groups = grouped();
-  $("#cartbar").className = "cartbar";
+  $("#cartbar").className = "cartbar"; $("#cartbar").innerHTML = "";   // 화면 밖에 숨은 버튼도 남기지 않기
   if (!groups.length) {
     $("#view").innerHTML = `<div class="wrap"><div class="empty-state"><h2>담긴 시편이 없습니다</h2>
-        <p>목차에서 카드의 체크 버튼이나 컬러 칩을 눌러 담아보세요.</p>
+        <p>목차에서 카드의 컬러 칩을 눌러 담아보세요.</p>
         <button class="btn-dark" id="golist">시편 보러 가기</button></div></div>`;
     $("#golist").onclick = () => (location.hash = "");
     return;
