@@ -303,6 +303,63 @@ class ValidationTests(Base):
         self.assertEqual(st, 200, r)
         self.assertEqual(len(r["warnings"]), 1)
 
+    def test_wrong_shapes_rejected(self):
+        for path, val in ((("label",), "Design Sample"), (("work",), []), (("work", "plate"), {"a": 1}),
+                          (("pattern", "tags"), [{"x": 1}]), (("history",), "memo")):
+            d = json.loads(json.dumps(self.doc))
+            o = d
+            for k in path[:-1]:
+                o = o[k]
+            o[path[-1]] = val
+            self.assertIn(path[-1], " ".join(self.bad(d)))
+        d = json.loads(json.dumps(self.doc))
+        d["variations"][0]["coating"] = "C1000"
+        self.assertIn("coating", " ".join(self.bad(d)))
+
+
+class ShapeTests(Base):
+    """label·work가 빠진 문서 하나가 목차 전체를 멈추게 하던 문제."""
+
+    def test_missing_label_and_work_are_filled_on_save(self):
+        d = {"schemaVersion": 2, "project": "ZZ", "pattern": {"code": "T1", "tags": "우드, 엠보"},
+             "variations": [{"id": "v01"}]}
+        st, r = self.put("ZZ-T1", d, create=True)
+        self.assertEqual(st, 200, r)
+        saved = self.read_pattern("ZZ-T1")
+        self.assertEqual((saved["label"], saved["work"]), ({}, {}))
+        self.assertEqual(saved["pattern"]["tags"], ["우드", "엠보"])
+        self.assertEqual(saved["variations"][0]["coating"], [])
+
+    def test_plate_text_becomes_list(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": []}])
+        doc["work"] = {"plate": "26_001, 26_002"}
+        st, r = self.put("P-W01", doc, create=True)
+        self.assertEqual(st, 200, r)
+        self.assertEqual(self.read_pattern("P-W01")["work"]["plate"], ["26_001", "26_002"])
+
+    def test_listing_reads_bad_files_safely(self):
+        ok = pattern("A-1", "A", "1", [{"id": "v01"}])
+        del ok["label"], ok["work"]
+        self.write_pattern(ok)
+        odd = pattern("B-1", "B", "1", [{"id": "v01", "coating": "x"}, None])
+        odd["label"] = "문자열 라벨"
+        self.write_pattern(odd)
+        broken = pattern("C-1", "C", "1", [{"id": "v01"}])
+        broken["pattern"] = "C 1"
+        self.write_pattern(broken)
+        st, r = self.req("GET", "/api/patterns")
+        self.assertEqual(st, 200)
+        got = {p["id"]: p for p in r["patterns"]}
+        self.assertEqual(sorted(got), ["A-1", "B-1"])               # 뼈대가 없는 C-1만 뺀다
+        self.assertEqual((got["A-1"]["label"], got["A-1"]["work"]), ({}, {}))
+        self.assertEqual(got["B-1"]["label"], {})
+        self.assertEqual(got["B-1"]["variations"], [{"id": "v01", "coating": []}])
+        errs = " ".join(r["errors"])
+        self.assertIn("B-1.json", errs)
+        self.assertIn("C-1.json", errs)
+        self.assertNotIn("A-1.json", errs)                           # 빈 칸 채우기는 오류가 아니다
+        self.assertEqual(self.read_pattern("B-1")["label"], "문자열 라벨")   # 읽기만 하고 파일은 안 바꾼다
+
 
 class UploadTests(Base):
     def test_same_second_uploads_get_distinct_names(self):

@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 라우터 · 부팅 (진입점) */
-import { $, $$, App, apiGet, esc, loadLS, toast } from "./core.js";
+import { $, $$, App, apiGet, esc, loadLS, normalizeDoc, toast } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
@@ -45,7 +45,7 @@ async function boot() {
   $("#drawer-scrim").onclick = () => closeEditor();
   $("#drawer-save").onclick = saveDraft;
   $$("#drawer-tabs button").forEach((b) => (b.onclick = () => {
-    if (E.tab === "json" && E.jsonErr) { E.msg = "JSON 문법 오류를 먼저 고치세요"; renderDrawer(); return; }
+    if (E.tab === "json" && E.jsonErr) { E.msg = "JSON 오류를 먼저 고치세요 — " + E.jsonErr; renderDrawer(); return; }
     E.tab = b.dataset.tab; syncTabs(); renderDrawer();
   }));
 
@@ -90,8 +90,9 @@ async function boot() {
   try {
     const data = await apiGet("/api/patterns");
     App.patterns = (data.patterns || []).map((pp) => {
-      (pp.variations || []).forEach((vv) => (vv.mixes || []).forEach((mm) => {
-        if (mm.result === "planned") mm.result = "plan";
+      normalizeDoc(pp);
+      pp.variations.forEach((vv) => vv.mixes.forEach((mm) => {
+        if (mm && mm.result === "planned") mm.result = "plan";
       }));
       return pp;
     });

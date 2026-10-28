@@ -128,7 +128,25 @@ export async function apiUpload(pid, vid, slot, blob, crop) {
 export const byId = (pid) => App.patterns.find((p) => p.id === pid);
 // 서버 충돌 검사용 버전 (rev가 없는 예전 파일은 updatedAt)
 export const revOf = (p) => (p && (p.rev || p.updatedAt)) || "";
-export const markSaved = (doc, r) => { if (r.savedAt) doc.updatedAt = r.savedAt; if (r.rev) doc.rev = r.rev; return doc; };
+
+// 서버 normalize_shape와 같은 뼈대: label·work는 객체, 동판·태그·도장은 목록.
+// 손으로 고친 문서 하나가 목차·상세 전체를 멈추게 하지 않도록, 화면에 들어오는 문서는 모두 이걸 거친다.
+const isObj = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+const asList = (x) => (Array.isArray(x) ? x : typeof x === "string" ? x.split(",").map((s) => s.trim()).filter(Boolean) : []);
+export function normalizeDoc(p) {
+  if (!isObj(p)) return p;
+  ["pattern", "label", "work"].forEach((k) => { if (!isObj(p[k])) p[k] = {}; });
+  if ("plate" in p.work) p.work.plate = asList(p.work.plate);
+  if ("tags" in p.pattern) p.pattern.tags = asList(p.pattern.tags);
+  if (p.history != null && !Array.isArray(p.history)) p.history = [];
+  p.variations = (Array.isArray(p.variations) ? p.variations : []).filter(isObj);
+  p.variations.forEach((v) => {
+    ["coating", "images", "mixes"].forEach((k) => { if (!Array.isArray(v[k])) v[k] = []; });
+    ["label", "layerPlates", "layerPatterns"].forEach((k) => { if (k in v && !isObj(v[k])) delete v[k]; });
+  });
+  return p;
+}
+export const markSaved = (doc, r) => { if (r.savedAt) doc.updatedAt = r.savedAt; if (r.rev) doc.rev = r.rev; return normalizeDoc(doc); };
 export const varOf = (p, vid) => (p ? (p.variations || []).find((v) => v.id === vid) || (p.variations || [])[0] : null);
 export const imgUrl = (pid, name) => `/img/${encodeURIComponent(pid)}/${encodeURIComponent(name)}`;
 export const thumbUrl = (pid, name, w) => `/api/thumb/${encodeURIComponent(pid)}/${encodeURIComponent(name)}?w=${w}`;

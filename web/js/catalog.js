@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPut, byId, esc, fmtDate, imgUrl, inCart, layers, markSaved, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPut, byId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 
 /* ---------------- catalog ---------------- */
@@ -137,7 +137,7 @@ export function renderCatalog() {
       const r = await fetch("/api/rdp/sync-all", { method: "POST" }).then((x) => x.json());
       if (!r || r.ok === false) throw new Error(r && r.error ? r.error : "동기화 실패");
       const fresh = await apiGet("/api/patterns");
-      App.patterns = fresh.patterns || [];
+      App.patterns = (fresh.patterns || []).map(normalizeDoc);
       renderCatalog();
       toast(`동기화 완료 · ${r.patterns}개 시편 / 추가 ${r.added} · 갱신 ${r.updated}`);
     } catch (e) { toast("동기화 실패: " + e.message); sa.disabled = false; sa.textContent = "DB 동기화"; }

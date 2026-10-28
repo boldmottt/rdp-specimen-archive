@@ -243,12 +243,77 @@ def _num(val, where, errors, allow_negative=False):
     return val
 
 
+def _str_list(x):
+    """동판·태그 목록: 쉼표로 쓴 글자는 목록으로 바꾼다. (목록, 형식 오류 여부)"""
+    if x is None:
+        return [], False
+    if isinstance(x, str):
+        return [s.strip() for s in x.split(",") if s.strip()], False
+    if isinstance(x, list) and all(isinstance(s, (str, int, float)) and not isinstance(s, bool) for s in x):
+        return [str(s).strip() for s in x if str(s).strip()], False
+    return x, True
+
+
+def normalize_shape(doc: dict, coerce: bool = False) -> list:
+    """화면이 기대하는 뼈대를 맞춘다: label·work는 객체, 동판·태그·도장은 목록.
+    빠진 칸은 빈 값으로 채우고(doc을 바꿈), 형식이 틀린 칸은 목록으로 돌려준다.
+    coerce=True(읽기)면 틀린 칸도 빈 값으로 바꿔서 화면이 그릴 수 있게 한다 — 저장 전에는 오류로 막는다.
+    (label 없는 문서 하나가 목차 전체를 멈추게 하던 문제)"""
+    problems = []
+
+    def bad(obj, key, msg, empty):
+        problems.append(msg)
+        if coerce:
+            obj[key] = empty
+
+    for key in ("label", "work"):
+        if doc.get(key) is None:
+            doc[key] = {}
+        elif not isinstance(doc[key], dict):
+            bad(doc, key, f"{key}가 객체가 아닙니다", {})
+    work, pat = doc.get("work"), doc.get("pattern")
+    if isinstance(work, dict) and "plate" in work:
+        plates, wrong = _str_list(work["plate"])
+        if wrong:
+            bad(work, "plate", "work.plate는 동판 목록이어야 합니다", [])
+        else:
+            work["plate"] = plates
+    if isinstance(pat, dict) and "tags" in pat:
+        tags, wrong = _str_list(pat["tags"])
+        if wrong:
+            bad(pat, "tags", "pattern.tags는 태그 목록이어야 합니다", [])
+        else:
+            pat["tags"] = tags
+    hist = doc.get("history")
+    if hist is not None and (not isinstance(hist, list) or not all(isinstance(h, dict) for h in hist)):
+        bad(doc, "history", "history는 객체 목록이어야 합니다", [])
+    vars_ = doc.get("variations") if isinstance(doc.get("variations"), list) else []
+    if coerce and not all(isinstance(v, dict) for v in vars_):
+        problems.append("객체가 아닌 베리에이션은 빼고 읽습니다")
+        vars_[:] = [v for v in vars_ if isinstance(v, dict)]
+    for i, v in enumerate(vars_):
+        if not isinstance(v, dict):
+            continue      # 저장 검사(validate_pattern)가 따로 오류로 알린다
+        where = v.get("id") or f"variations[{i}]"
+        if v.get("coating") is None:
+            v["coating"] = []
+        elif not isinstance(v["coating"], list) or not all(isinstance(c, dict) for c in v["coating"]):
+            bad(v, "coating", f"{where}: coating은 객체 목록이어야 합니다", [])
+        for key in ("label", "layerPlates", "layerPatterns"):
+            if key in v and v[key] is None:
+                del v[key]
+            elif key in v and not isinstance(v[key], dict):
+                bad(v, key, f"{where}: {key}가 객체가 아닙니다", {})
+    return problems
+
+
 def validate_pattern(doc: dict):
     """저장 전 구조 검사. 숫자 문자열 같은 가벼운 형식 차이는 그 자리에서 고친다(doc을 바꿈).
     오류가 하나라도 있으면 저장하지 않는다."""
     errors = []
     if not isinstance(doc, dict):
         return ["JSON 최상위가 객체가 아닙니다"]
+    errors += normalize_shape(doc)
     pid = doc.get("id") or ""
     if not ID_RE.match(pid):
         errors.append("id가 올바르지 않습니다")
@@ -1071,9 +1136,20 @@ def load_all():
             with open(path, encoding="utf-8") as f:
                 doc = json.load(f)
             stem = name[:-5]
+            if not isinstance(doc, dict):
+                errors.append(f"{name}: 최상위가 객체가 아님, 건너뜀")
+                continue
             if doc.get("id") != stem:
                 errors.append(f"{name}: 파일명과 id가 다름 (id={doc.get('id')}) — 동기화 충돌 사본일 수 있음, 건너뜀")
                 continue
+            # 화면이 그릴 수 없는 문서 하나가 목차 전체를 멈추게 하면 안 된다:
+            # 뼈대(pattern·variations)가 없으면 빼고, 나머지 틀린 칸은 빈 값으로 읽고 알린다
+            if not isinstance(doc.get("pattern"), dict) or not isinstance(doc.get("variations"), list):
+                errors.append(f"{name}: pattern 또는 variations 형식 오류 — 건너뜀")
+                continue
+            problems = normalize_shape(doc, coerce=True)
+            if problems:
+                errors.append(f"{name}: 형식 오류를 빈 값으로 읽음 — {' / '.join(problems)} (저장하면 그대로 고쳐집니다)")
             doc["_file"] = name
             doc["_mtime"] = os.path.getmtime(path)
             out.append(doc)

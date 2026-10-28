@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 편집 서랍 (기본 · 컬러 · 배합 · 이미지 · JSON) */
-import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, deriveId, esc, imgUrl, markSaved, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
+import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, deriveId, esc, imgUrl, markSaved, normalizeDoc, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { addInkTag, bindRecipePreviews, inkInfo, inkLabel, inkOrder, inkPool, labOf, labText, labToCss, layerCodeOf, layerPlate, loadInkCatalog, mixTable, platePatterns, setLayerPlate, syncLayerPlates } from "./detail.js";
 import { renderCart } from "./proposal.js";
@@ -698,7 +698,7 @@ export function renderDrawer() {
         const r = await fetch(`/api/rdp/sync/${encodeURIComponent(d.id)}`, { method: "POST" }).then((x) => x.json());
         if (!r.ok) throw new Error(r.error || "동기화 실패");
         const fresh = await apiGet("/api/patterns");
-        const p2 = (fresh.patterns || []).find((x) => x.id === d.id);
+        const p2 = normalizeDoc((fresh.patterns || []).find((x) => x.id === d.id));
         if (p2) {
           const idx = App.patterns.findIndex((x) => x.id === d.id);
           if (idx >= 0) App.patterns[idx] = p2; else App.patterns.push(p2);
@@ -798,8 +798,13 @@ export function renderDrawer() {
 
   if (E.tab === "json") {
     $("#jsonarea").oninput = (e) => {
-      try { E.draft = JSON.parse(e.target.value); E.jsonErr = null; }
-      catch (err) { E.jsonErr = err.message; }
+      try {
+        const parsed = JSON.parse(e.target.value);
+        const why = jsonShapeError(parsed);
+        if (why) { E.jsonErr = why; return; }
+        E.draft = normalizeDoc(parsed); E.jsonErr = null;
+        E.vIdx = Math.min(E.vIdx, E.draft.variations.length - 1);
+      } catch (err) { E.jsonErr = err.message; }
     };
   }
 
@@ -815,16 +820,26 @@ export function renderDrawer() {
   };
 }
 
+// JSON 탭: 편집기가 그릴 수 없는 모양은 탭 이동·저장 전에 막는다 (최상위 객체 + 컬러 1개 이상)
+const jsonShapeError = (x) => (!x || typeof x !== "object" || Array.isArray(x) ? "최상위는 객체여야 합니다"
+  : !Array.isArray(x.variations) || !x.variations.some((v) => v && typeof v === "object" && !Array.isArray(v))
+    ? "variations에 컬러가 하나 이상 있어야 합니다" : "");
+
 export async function saveDraft() {
   if (!E.draft) return;
   let d = E.draft;
   try {
     if (E.tab === "json" && $("#jsonarea")) {
-      try { d = E.draft = JSON.parse($("#jsonarea").value); } catch (e) {
+      let parsed;
+      try { parsed = JSON.parse($("#jsonarea").value); } catch (e) { parsed = e; }
+      const why = parsed instanceof Error ? "JSON 문법 오류" : jsonShapeError(parsed);
+      if (why) {
         const msg = $("#drawer-msg");
-        if (msg) { msg.textContent = "JSON 문법 오류 — 고친 뒤 다시 저장하세요"; msg.className = "msg err"; }
+        if (msg) { msg.textContent = why + " — 고친 뒤 다시 저장하세요"; msg.className = "msg err"; }
         return;
       }
+      d = E.draft = normalizeDoc(parsed);
+      E.vIdx = Math.min(E.vIdx, d.variations.length - 1);
     }
     if (!d.pattern.code) { E.msg = "패턴 코드를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
     if (!d.id) {
@@ -904,7 +919,7 @@ export async function saveDraft() {
     if (e.status === 409 && e.payload && e.payload.current) {
       const ok = confirm("다른 곳에서 먼저 저장되었습니다.\n최신 내용을 불러올까요? 지금 편집 중인 내용은 사라집니다.");
       if (ok) {
-        const cur = e.payload.current;
+        const cur = normalizeDoc(e.payload.current);
         const i = App.patterns.findIndex((x) => x.id === cur.id);
         if (i >= 0) App.patterns[i] = cur; else App.patterns.push(cur);
         closeEditor(); rerender(); toast("최신 내용을 불러왔습니다");
