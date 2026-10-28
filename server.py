@@ -1235,6 +1235,65 @@ def process_upload(pid: str, vid: str, slot: int, raw: bytes, crop: dict):
             "sourceWidth": src_w, "lowRes": low_res, "original": os.path.basename(src_path)}
 
 
+# ---------------------------------------------------------------- 제안서 보관함
+PROPOSAL_LOCK = threading.Lock()
+SLUG_RE = re.compile(r"^[0-9A-Za-z가-힣_-][0-9A-Za-z가-힣._-]{0,79}$")
+
+
+def proposal_dir(slug: str) -> str:
+    if not SLUG_RE.match(slug or ""):
+        raise ValueError("제안서 이름 형식 오류")
+    return safe_join(PROPOSALS, slug)
+
+
+def load_proposals():
+    """확정본 목록 (최신 확정 먼저). 깨진 파일은 건너뛴다."""
+    out = []
+    if not os.path.isdir(PROPOSALS):
+        return out
+    for slug in os.listdir(PROPOSALS):
+        path = os.path.join(PROPOSALS, slug, "proposal.json")
+        if not SLUG_RE.match(slug) or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except Exception as e:
+            print(f"[warn] 제안서를 읽지 못했습니다 {slug}: {e}")
+            continue
+        if isinstance(doc, dict):
+            out.append((slug, doc))
+    out.sort(key=lambda x: str((x[1].get("_snapshot") or {}).get("createdAt") or x[1].get("createdAt") or ""), reverse=True)
+    return out
+
+
+def proposal_summary(slug, doc):
+    items = doc.get("items") or []
+    vars_ = [v for it in items for v in (it.get("variations") or [])]
+    thumb = None
+    for it in items:
+        for v in it.get("variations") or []:
+            if v.get("images"):
+                thumb = {"pid": (it.get("pattern") or {}).get("id"), "name": v["images"][0]}
+                break
+        if thumb:
+            break
+    snap = doc.get("_snapshot") or {}
+    return {"slug": slug, "docNo": doc.get("docNo") or "", "rev": str(doc.get("rev") or "0"),
+            "title": doc.get("title") or "", "client": doc.get("client") or "", "by": doc.get("by") or "",
+            "date": doc.get("date") or "", "createdAt": snap.get("createdAt") or doc.get("createdAt") or "",
+            "patterns": len(items), "variations": len(vars_), "missing": len(snap.get("missing") or []),
+            "thumb": thumb}
+
+
+def next_doc_no(prefix: str, taken) -> str:
+    """prefix + 두 자리 번호 중 아직 안 쓴 가장 작은 번호."""
+    n = 1
+    while f"{prefix}{n:02d}" in taken:
+        n += 1
+    return f"{prefix}{n:02d}"
+
+
 # ---------------------------------------------------------------- handler
 class Handler(BaseHTTPRequestHandler):
     server_version = "RDPArchive/2.0"
@@ -1465,6 +1524,34 @@ class Handler(BaseHTTPRequestHandler):
                 return self.serve_thumb(tp[0], tp[1], q.get("w", ["480"])[0])
             if p.startswith("/img/"):
                 return self.serve_image(p[len("/img/"):])
+            if p == "/api/proposals":
+                return self.json({"ok": True, "proposals": [proposal_summary(s_, d_) for s_, d_ in load_proposals()]})
+            if p == "/api/proposals/next-no":
+                prefix = (parse_qs(u.query).get("prefix") or [""])[0]
+                if not re.match(r"^[0-9A-Za-z_-]{1,40}$", prefix):
+                    return self.error(400, "prefix 형식 오류")
+                taken = {str(d_.get("docNo") or "") for _, d_ in load_proposals()}
+                return self.json({"ok": True, "docNo": next_doc_no(prefix, taken)})
+            if p.startswith("/api/proposals/"):
+                try:
+                    d = proposal_dir(p[len("/api/proposals/"):].strip("/"))
+                except ValueError as e:
+                    return self.error(400, str(e))
+                path = os.path.join(d, "proposal.json")
+                if not os.path.isfile(path):
+                    return self.error(404, "확정본이 없습니다")
+                with open(path, encoding="utf-8") as f:
+                    return self.json({"ok": True, "slug": os.path.basename(d), "proposal": json.load(f)})
+            if p.startswith("/proposal-img/"):
+                # 확정본에 복사해 둔 이미지 (원본 시편 이미지가 바뀌거나 지워져도 그대로)
+                parts = [x for x in p[len("/proposal-img/"):].split("/") if x]
+                if len(parts) != 3:
+                    return self.error(400, "경로 형식 오류")
+                try:
+                    base = os.path.join(proposal_dir(parts[0]), "images")
+                except ValueError as e:
+                    return self.error(400, str(e))
+                return self.serve_image(f"{parts[1]}/{parts[2]}", base)
             return self.serve_static(p)
         except BrokenPipeError:
             pass
@@ -1667,35 +1754,55 @@ class Handler(BaseHTTPRequestHandler):
 
             if p == "/api/proposals":
                 doc = json.loads(self.read_body().decode("utf-8"))
-                slug = doc.get("slug") or ("proposal-" + now_stamp())
-                slug = re.sub(r"[^0-9A-Za-z가-힣._-]", "-", slug)[:60]
-                d = os.path.join(PROPOSALS, slug)
-                n = 1
-                while os.path.exists(d):
-                    n += 1
-                    d = os.path.join(PROPOSALS, f"{slug}-{n:02d}")
-                os.makedirs(d, exist_ok=True)
+                if not isinstance(doc, dict) or not isinstance(doc.get("items"), list) or not doc["items"]:
+                    return self.error(400, "담긴 시편이 없습니다")
+                allow_missing = bool(doc.pop("allowMissing", False))
+                with PROPOSAL_LOCK:
+                    # 1) 같은 문서번호·Rev가 이미 확정돼 있으면 쓰지 않는다 (다른 PC에서 같은 번호를 쓴 경우 등)
+                    docs = load_proposals()
+                    key = (str(doc.get("docNo") or ""), str(doc.get("rev") or "0"))
+                    if key[0]:
+                        dup = next((s_ for s_, d_ in docs if (str(d_.get("docNo") or ""), str(d_.get("rev") or "0")) == key), None)
+                        if dup:
+                            m = re.match(r"^(.*-)(\d+)$", key[0])
+                            taken = {str(d_.get("docNo") or "") for _, d_ in docs}
+                            return self.json({"ok": False, "duplicate": True, "existing": dup,
+                                              "suggest": next_doc_no(m.group(1), taken) if m else ""}, 409)
+                    # 2) 참조 이미지가 모두 있는지 먼저 확인
+                    sources, missing = [], []
+                    for item in doc["items"]:
+                        pid = (item.get("pattern") or {}).get("id")
+                        if not pid:
+                            continue
+                        safe_id(pid)
+                        for v in item.get("variations", []):
+                            for name in (v.get("images") or []):
+                                src = safe_join(IMAGES, pid, os.path.basename(str(name)))
+                                if os.path.isfile(src):
+                                    sources.append((pid, src))
+                                else:
+                                    missing.append(f"{pid}/{name}")
+                    if missing and not allow_missing:
+                        return self.json({"ok": False, "missing": missing}, 409)
 
-                # 스냅샷이 참조하는 이미지를 함께 복사 (나중에 gc가 원본을 지워도 안전)
-                copied, missing = [], []
-                for item in doc.get("items", []):
-                    pid = (item.get("pattern") or {}).get("id")
-                    if not pid:
-                        continue
-                    for v in item.get("variations", []):
-                        for name in (v.get("images") or []):
-                            src = safe_join(IMAGES, pid, os.path.basename(str(name)))
-                            if not os.path.isfile(src):
-                                missing.append(f"{pid}/{name}")
-                                continue
-                            dst_dir = os.path.join(d, "images", pid)
-                            os.makedirs(dst_dir, exist_ok=True)
-                            shutil.copy2(src, os.path.join(dst_dir, os.path.basename(str(name))))
-                            copied.append(f"{pid}/{name}")
-
-                doc["_snapshot"] = {"createdAt": now_stamp(), "images": len(copied), "missing": missing}
-                atomic_write(os.path.join(d, "proposal.json"),
-                             json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+                    slug = doc.get("slug") or ("proposal-" + now_stamp())
+                    slug = re.sub(r"[^0-9A-Za-z가-힣._-]", "-", slug)[:60].lstrip(".") or "proposal"
+                    d = os.path.join(PROPOSALS, slug)
+                    n = 1
+                    while os.path.exists(d):
+                        n += 1
+                        d = os.path.join(PROPOSALS, f"{slug}-{n:02d}")
+                    os.makedirs(d, exist_ok=True)
+                    # 스냅샷이 참조하는 이미지를 함께 복사 (나중에 gc가 원본을 지워도 안전)
+                    copied = []
+                    for pid, src in sources:
+                        dst_dir = os.path.join(d, "images", pid)
+                        os.makedirs(dst_dir, exist_ok=True)
+                        shutil.copy2(src, os.path.join(dst_dir, os.path.basename(src)))
+                        copied.append(f"{pid}/{os.path.basename(src)}")
+                    doc["_snapshot"] = {"createdAt": now_stamp(), "images": len(copied), "missing": missing}
+                    atomic_write(os.path.join(d, "proposal.json"),
+                                 json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
                 return self.json({"ok": True, "path": os.path.join(d, "proposal.json"),
                                   "slug": os.path.basename(d), "images": len(copied), "missing": missing})
             return self.error(404, "not found")
@@ -1924,7 +2031,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def serve_image(self, rel):
+    def serve_image(self, rel, base=None):
         try:
             parts = [p for p in rel.split("/") if p]
             if len(parts) != 2:
@@ -1932,7 +2039,7 @@ class Handler(BaseHTTPRequestHandler):
             safe_id(parts[0])
             if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", parts[1], re.I):
                 raise ValueError("bad image name")
-            path = safe_join(IMAGES, parts[0], parts[1])
+            path = safe_join(base or IMAGES, parts[0], parts[1])
         except ValueError as e:
             return self.error(400, str(e))
         if not os.path.isfile(path):
