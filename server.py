@@ -27,6 +27,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.request
 import uuid
 import webbrowser
@@ -1463,19 +1464,48 @@ PROPOSAL_LOCK = threading.Lock()
 SLUG_RE = re.compile(r"^[0-9A-Za-z가-힣_-][0-9A-Za-z가-힣._-]{0,79}$")
 
 
+def nfc(name: str) -> str:
+    return unicodedata.normalize("NFC", name or "")
+
+
 def proposal_dir(slug: str) -> str:
-    if not SLUG_RE.match(slug or ""):
+    """확정본 폴더. 맥(NFD)·윈도우(NFC) 어느 쪽 한글 이름으로 만들어진 폴더도 찾는다."""
+    slug = nfc(slug)
+    if not SLUG_RE.match(slug):
         raise ValueError("제안서 이름 형식 오류")
-    return safe_join(PROPOSALS, slug)
+    path = safe_join(PROPOSALS, slug)
+    if not os.path.exists(path):
+        nfd = safe_join(PROPOSALS, unicodedata.normalize("NFD", slug))
+        if os.path.exists(nfd):
+            return nfd
+    return path
+
+
+def _snap(doc) -> dict:
+    return doc.get("_snapshot") if isinstance(doc.get("_snapshot"), dict) else {}
+
+
+def _proposal_vars(doc):
+    """(시편 id, 컬러) 목록 — 모양이 틀린 칸은 건너뛴다 (손으로 고친 확정본 하나가 목록 전체를 멈추지 않게)."""
+    out = []
+    for it in doc.get("items") if isinstance(doc.get("items"), list) else []:
+        if not isinstance(it, dict):
+            continue
+        pid = (it.get("pattern") if isinstance(it.get("pattern"), dict) else {}).get("id")
+        for v in it.get("variations") if isinstance(it.get("variations"), list) else []:
+            if isinstance(v, dict):
+                out.append((pid, v))
+    return out
 
 
 def load_proposals():
-    """확정본 목록 (최신 확정 먼저). 깨진 파일은 건너뛴다."""
+    """확정본 목록 (최신 확정 먼저). 깨진 파일은 건너뛴다. 이름은 NFC로 돌려준다 (맥에서 만든 폴더도 보이게)."""
     out = []
     if not os.path.isdir(PROPOSALS):
         return out
-    for slug in os.listdir(PROPOSALS):
-        path = os.path.join(PROPOSALS, slug, "proposal.json")
+    for name in os.listdir(PROPOSALS):
+        slug = nfc(name)
+        path = os.path.join(PROPOSALS, name, "proposal.json")
         if not SLUG_RE.match(slug) or not os.path.isfile(path):
             continue
         try:
@@ -1486,27 +1516,44 @@ def load_proposals():
             continue
         if isinstance(doc, dict):
             out.append((slug, doc))
-    out.sort(key=lambda x: str((x[1].get("_snapshot") or {}).get("createdAt") or x[1].get("createdAt") or ""), reverse=True)
+    out.sort(key=lambda x: str(_snap(x[1]).get("createdAt") or x[1].get("createdAt") or ""), reverse=True)
     return out
 
 
 def proposal_summary(slug, doc):
-    items = doc.get("items") or []
-    vars_ = [v for it in items for v in (it.get("variations") or [])]
-    thumb = None
-    for it in items:
-        for v in it.get("variations") or []:
-            if v.get("images"):
-                thumb = {"pid": (it.get("pattern") or {}).get("id"), "name": v["images"][0]}
-                break
-        if thumb:
-            break
-    snap = doc.get("_snapshot") or {}
+    items = doc.get("items") if isinstance(doc.get("items"), list) else []
+    vars_ = _proposal_vars(doc)
+    thumb = next(({"pid": pid, "name": v["images"][0]} for pid, v in vars_
+                  if isinstance(v.get("images"), list) and v["images"] and isinstance(v["images"][0], str) and pid), None)
+    snap = _snap(doc)
     return {"slug": slug, "docNo": doc.get("docNo") or "", "rev": str(doc.get("rev") or "0"),
             "title": doc.get("title") or "", "client": doc.get("client") or "", "by": doc.get("by") or "",
             "date": doc.get("date") or "", "createdAt": snap.get("createdAt") or doc.get("createdAt") or "",
-            "patterns": len(items), "variations": len(vars_), "missing": len(snap.get("missing") or []),
+            "patterns": len(items), "variations": len(vars_),
+            "missing": len(snap.get("missing")) if isinstance(snap.get("missing"), list) else 0,
             "thumb": thumb}
+
+
+def proposal_shape_error(doc) -> str:
+    """확정 저장 요청의 모양 검사 — 틀리면 쓰기 전에 400 (전에는 중간에 500이 나거나 깨진 확정본이 남았다)."""
+    items = doc.get("items")
+    if not isinstance(items, list) or not items:
+        return "담긴 시편이 없습니다"
+    for i, it in enumerate(items):
+        pat = it.get("pattern") if isinstance(it, dict) else None
+        if not isinstance(pat, dict) or not isinstance(pat.get("id"), str) or not ID_RE.match(pat["id"]):
+            return f"items[{i}]: 시편(pattern.id) 형식 오류"
+        vs = it.get("variations", [])
+        if not isinstance(vs, list) or not all(isinstance(v, dict) for v in vs):
+            return f"items[{i}]: variations 형식 오류"
+        for v in vs:
+            imgs = v.get("images", [])
+            if not isinstance(imgs, list) or not all(isinstance(n, str) and n for n in imgs):
+                return f"items[{i}]: 이미지 목록 형식 오류"
+    for k in ("docNo", "rev", "title", "client", "by", "date", "slug"):
+        if doc.get(k) is not None and (isinstance(doc[k], bool) or not isinstance(doc[k], (str, int, float))):
+            return f"{k} 형식 오류"
+    return ""
 
 
 def next_doc_no(prefix: str, taken) -> str:
@@ -1750,10 +1797,16 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/img/"):
                 return self.serve_image(p[len("/img/"):])
             if p == "/api/proposals":
-                return self.json({"ok": True, "proposals": [proposal_summary(s_, d_) for s_, d_ in load_proposals()]})
+                rows = []
+                for s_, d_ in load_proposals():
+                    try:
+                        rows.append(proposal_summary(s_, d_))
+                    except Exception as e:   # noqa: BLE001 — 깨진 확정본 하나가 목록 전체를 멈추지 않게
+                        print(f"[warn] 제안서 요약 실패 {s_}: {e}")
+                return self.json({"ok": True, "proposals": rows})
             if p == "/api/proposals/next-no":
                 prefix = (parse_qs(u.query).get("prefix") or [""])[0]
-                if not re.match(r"^[0-9A-Za-z_-]{1,40}$", prefix):
+                if not re.match(r"^[0-9A-Za-z._-]{1,40}$", prefix):   # 날짜를 2026.10.28처럼 써도
                     return self.error(400, "prefix 형식 오류")
                 taken = {str(d_.get("docNo") or "") for _, d_ in load_proposals()}
                 return self.json({"ok": True, "docNo": next_doc_no(prefix, taken)})
@@ -1766,17 +1819,23 @@ class Handler(BaseHTTPRequestHandler):
                 if not os.path.isfile(path):
                     return self.error(404, "확정본이 없습니다")
                 with open(path, encoding="utf-8") as f:
-                    return self.json({"ok": True, "slug": os.path.basename(d), "proposal": json.load(f)})
+                    return self.json({"ok": True, "slug": nfc(os.path.basename(d)), "proposal": json.load(f)})
             if p.startswith("/proposal-img/"):
                 # 확정본에 복사해 둔 이미지 (원본 시편 이미지가 바뀌거나 지워져도 그대로)
                 parts = [x for x in p[len("/proposal-img/"):].split("/") if x]
                 if len(parts) != 3:
                     return self.error(400, "경로 형식 오류")
                 try:
-                    base = os.path.join(proposal_dir(parts[0]), "images")
+                    pdir = proposal_dir(parts[0])
                 except ValueError as e:
                     return self.error(400, str(e))
-                return self.serve_image(f"{parts[1]}/{parts[2]}", base)
+                w = (parse_qs(u.query).get("w") or [""])[0]
+                if w:   # 보관함 목록용 축소본 — 확정본 이미지는 바뀌지 않으므로 오래 캐시
+                    return self.serve_thumb(parts[1], parts[2], w, base=os.path.join(pdir, "images"),
+                                            cache_dir=os.path.join(THUMBS, "_proposals", nfc(os.path.basename(pdir))),
+                                            cache="max-age=31536000, immutable")
+                return self.serve_image(f"{parts[1]}/{parts[2]}", os.path.join(pdir, "images"),
+                                        cache="max-age=31536000, immutable")
             return self.serve_static(p)
         except BrokenPipeError:
             pass
@@ -1985,10 +2044,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(400, str(e))
 
             if p == "/api/proposals":
-                doc = json.loads(self.read_body().decode("utf-8"))
-                if not isinstance(doc, dict) or not isinstance(doc.get("items"), list) or not doc["items"]:
+                try:
+                    doc = json.loads(self.read_body().decode("utf-8"))
+                except ValueError:
+                    return self.error(400, "JSON 형식 오류")
+                if not isinstance(doc, dict):
                     return self.error(400, "담긴 시편이 없습니다")
+                why = proposal_shape_error(doc)
+                if why:
+                    return self.error(400, why)
                 allow_missing = bool(doc.pop("allowMissing", False))
+                doc.pop("_snapshot", None)          # 서버가 기록하는 값
                 with PROPOSAL_LOCK:
                     # 1) 같은 문서번호·Rev가 이미 확정돼 있으면 쓰지 않는다 (다른 PC에서 같은 번호를 쓴 경우 등)
                     docs = load_proposals()
@@ -1998,8 +2064,12 @@ class Handler(BaseHTTPRequestHandler):
                         if dup:
                             m = re.match(r"^(.*-)(\d+)$", key[0])
                             taken = {str(d_.get("docNo") or "") for _, d_ in docs}
+                            # 개정본을 만들다 그 Rev가 이미 있으면 다음 Rev도 제안한다 (전에는 새 번호만 → 개정이 막다른 길)
+                            revs = [int(r) for d_ in (d_ for _, d_ in docs) if str(d_.get("docNo") or "") == key[0]
+                                    for r in [str(d_.get("rev") or "0")] if r.isdigit()]
                             return self.json({"ok": False, "duplicate": True, "existing": dup,
-                                              "suggest": next_doc_no(m.group(1), taken) if m else ""}, 409)
+                                              "suggest": next_doc_no(m.group(1), taken) if m else "",
+                                              "nextRev": str(max(revs) + 1) if revs else "1"}, 409)
                     # 2) 참조 이미지가 모두 있는지 먼저 확인
                     sources, missing = [], []
                     for item in doc["items"]:
@@ -2016,6 +2086,12 @@ class Handler(BaseHTTPRequestHandler):
                                     missing.append(f"{pid}/{name}")
                     if missing and not allow_missing:
                         return self.json({"ok": False, "missing": missing}, 409)
+                    if missing:   # 없는 이미지는 확정본에서 뺀다 (깨진 그림 대신 '이미지 없음'으로 보이게)
+                        gone = set(missing)
+                        for item in doc["items"]:
+                            pid = item["pattern"]["id"]
+                            for v in item.get("variations", []):
+                                v["images"] = [n for n in v.get("images") or [] if f"{pid}/{n}" not in gone]
 
                     slug = doc.get("slug") or ("proposal-" + now_stamp())
                     slug = re.sub(r"[^0-9A-Za-z가-힣._-]", "-", slug)[:60].lstrip(".") or "proposal"
@@ -2234,15 +2310,16 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True, "id": pid, "savedAt": doc["updatedAt"], "rev": doc["rev"], "warnings": warns,
                           "removedImages": removed, "renamedFrom": doc.get("renamedFrom")})
 
-    def serve_thumb(self, pid, name, w):
-        """카드용 축소본. 큰 원본을 브라우저가 급하게 줄이면 무아레가 생겨서 미리 Lanczos로 줄여 캐시한다."""
+    def serve_thumb(self, pid, name, w, base=None, cache_dir=None, cache="max-age=604800"):
+        """카드용 축소본. 큰 원본을 브라우저가 급하게 줄이면 무아레가 생겨서 미리 Lanczos로 줄여 캐시한다.
+        base: 원본 폴더 (기본 images, 확정본은 그 제안서의 images) · cache_dir: 축소본 캐시 폴더."""
         try:
             safe_id(pid)
             if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", name, re.I):
                 raise ValueError("bad image name")
             w = max(120, min(2000, int(w)))
-            src = safe_join(IMAGES, pid, name)
-            dst_dir = safe_join(THUMBS, pid)
+            src = safe_join(base or IMAGES, pid, name)
+            dst_dir = safe_join(cache_dir or THUMBS, pid)
             dst = os.path.join(dst_dir, f"{w}-{name}")
         except ValueError as e:
             return self.error(400, str(e))
@@ -2255,22 +2332,22 @@ class Handler(BaseHTTPRequestHandler):
                 im = Image.open(src).convert("RGB")
                 h = max(1, round(w * im.height / im.width))
                 im = im.resize((w, h), Image.LANCZOS)
-                tmp = dst + ".tmp"
+                tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"   # 같은 축소본을 동시에 만들어도 서로의 반쯤 쓴 파일을 옮기지 않게
                 im.save(tmp, "JPEG", quality=82, optimize=True)
                 os.replace(tmp, dst)
             except Exception:
-                return self.serve_image(f"{pid}/{name}")
+                return self.serve_image(f"{pid}/{name}", base, cache)
         with open(dst, "rb") as f:
             body = f.read()
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "max-age=604800")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def serve_image(self, rel, base=None):
+    def serve_image(self, rel, base=None, cache="no-cache, must-revalidate"):
         try:
             parts = [p for p in rel.split("/") if p]
             if len(parts) != 2:
@@ -2289,7 +2366,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(body)
 

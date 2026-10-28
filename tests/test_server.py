@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1102,6 +1103,71 @@ class ProposalTests(Base):
         self.assertEqual(self.req("POST", "/api/proposals", self.doc(rev="1"))[0], 200)   # 개정본은 허용
         st, r = self.req("GET", "/api/proposals/next-no?prefix=RDP-P-20261028-")
         self.assertEqual(r["docNo"], "RDP-P-20261028-02")
+
+    def test_revision_conflict_suggests_next_rev(self):
+        """Rev 1이 이미 있는데 다시 Rev 1을 만들면 막다른 길이 아니라 다음 Rev(2)도 제안한다."""
+        for rev in ("0", "1"):
+            self.assertEqual(self.req("POST", "/api/proposals", self.doc(rev=rev))[0], 200)
+        st, r = self.req("POST", "/api/proposals", self.doc(rev="1"))
+        self.assertEqual((st, r["nextRev"], r["suggest"]), (409, "2", "RDP-P-20261028-02"), r)
+
+    def test_bad_shapes_are_400_and_write_nothing(self):
+        for bad in ({"items": [None]}, {"items": [{"pattern": "P-W01"}]}, {"items": [{"pattern": {"id": "../x"}}]},
+                    {"items": [{"pattern": {"id": "P-W01"}, "variations": [{"images": "v01.jpg"}]}]},
+                    {"items": [{"pattern": {"id": "P-W01"}, "variations": []}], "docNo": {"x": 1}}):
+            st, r = self.req("POST", "/api/proposals", bad)
+            self.assertEqual(st, 400, (bad, r))
+        self.assertEqual(os.listdir(server.PROPOSALS), [])
+
+    def test_broken_snapshot_does_not_break_list(self):
+        self.assertEqual(self.req("POST", "/api/proposals", self.doc())[0], 200)
+        bad = os.path.join(server.PROPOSALS, "broken")
+        os.makedirs(bad)
+        with open(os.path.join(bad, "proposal.json"), "w", encoding="utf-8") as f:
+            json.dump({"items": "x", "_snapshot": "x", "docNo": "B"}, f)
+        st, r = self.req("GET", "/api/proposals")
+        self.assertEqual(st, 200, r)
+        self.assertEqual(sorted(x["docNo"] for x in r["proposals"]), ["B", "RDP-P-20261028-01"])
+
+    def test_mac_nfd_folder_name_is_listed_and_opened(self):
+        import unicodedata
+        st, r = self.req("POST", "/api/proposals", dict(self.doc(), slug="2026-10-28_고객사"))
+        self.assertEqual(st, 200, r)
+        nfc_name = r["slug"]
+        nfd_name = unicodedata.normalize("NFD", nfc_name)
+        os.rename(os.path.join(server.PROPOSALS, nfc_name), os.path.join(server.PROPOSALS, nfd_name))   # 맥 동기화로 NFD가 된 폴더
+        st, r = self.req("GET", "/api/proposals")
+        self.assertEqual([x["slug"] for x in r["proposals"]], [nfc_name])
+        st, r = self.req("GET", "/api/proposals/" + urllib.parse.quote(nfc_name))
+        self.assertEqual((st, r.get("slug")), (200, nfc_name), r)
+
+    def test_missing_images_are_dropped_from_snapshot(self):
+        d = dict(self.doc(images=("v01.jpg", "gone.jpg")), allowMissing=True)
+        st, r = self.req("POST", "/api/proposals", d)
+        self.assertEqual((st, r["missing"]), (200, ["P-W01/gone.jpg"]), r)
+        st, got = self.req("GET", f"/api/proposals/{r['slug']}")
+        self.assertEqual(got["proposal"]["items"][0]["variations"][0]["images"], ["v01.jpg"])
+
+    def test_dotted_date_prefix_and_snapshot_thumbnail(self):
+        st, r = self.req("GET", "/api/proposals/next-no?prefix=RDP-P-2026.10.28-")
+        self.assertEqual((st, r.get("docNo")), (200, "RDP-P-2026.10.28-01"), r)
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow 없음")
+        buf = io.BytesIO()
+        Image.new("RGB", (800, 330), (90, 90, 90)).save(buf, "JPEG")
+        with open(os.path.join(server.IMAGES, "P-W01", "v01.jpg"), "wb") as f:
+            f.write(buf.getvalue())
+        st, r = self.req("POST", "/api/proposals", self.doc())
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("GET", f"/proposal-img/{urllib.parse.quote(r['slug'])}/P-W01/v01.jpg?w=240", headers={"Host": "localhost"})
+        res = c.getresponse()
+        body = res.read()
+        c.close()
+        self.assertEqual(res.status, 200)
+        self.assertIn("immutable", res.getheader("Cache-Control"))
+        self.assertEqual(Image.open(io.BytesIO(body)).size[0], 240)
 
     def test_bad_slug_and_path(self):
         self.assertEqual(self.req("GET", "/api/proposals/..%2Fpatterns")[0], 400)
