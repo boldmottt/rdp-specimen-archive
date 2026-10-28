@@ -8,6 +8,7 @@
 import base64
 import hashlib
 import http.client
+import io
 import json
 import os
 import shutil
@@ -201,6 +202,126 @@ class InkMappingTests(Base):
         self.assertEqual(m["inks"], {"200YE-D": 20, "custom": 7})
 
 
+class RevisionTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": [mix("1도", "B1", "26_001")]}])
+        self.write_pattern(self.doc)
+
+    def test_same_second_saves_conflict(self):
+        """같은 초에 저장해도 두 번째(옛 버전 기준) 저장은 409 — 예전엔 updatedAt이 같아 통과했다."""
+        base = server.doc_rev(self.doc)
+        st, r1 = self.put("P-W01", dict(self.doc, note="A"), rev=base)
+        self.assertEqual(st, 200, r1)
+        st, r2 = self.put("P-W01", dict(self.doc, note="B"), rev=base)
+        self.assertEqual(st, 409, r2)
+        self.assertEqual(self.read_pattern("P-W01")["note"], "A")
+        st, r3 = self.put("P-W01", dict(self.doc, note="C"), rev=r1["rev"])
+        self.assertEqual(st, 200, r3)
+        self.assertNotEqual(r1["rev"], r3["rev"])
+
+    def test_missing_base_rev_is_rejected(self):
+        st, r = self.put("P-W01", dict(self.doc, note="X"))
+        self.assertEqual(st, 409, r)
+        self.assertNotIn("note", self.read_pattern("P-W01"))
+
+    def test_legacy_file_without_any_version_still_saves(self):
+        doc = pattern("P-W02", "P", "W02", [{"id": "v01", "mixes": []}], rev=None)
+        self.write_pattern(doc)
+        st, r = self.put("P-W02", dict(doc, note="ok"))
+        self.assertEqual(st, 200, r)
+        self.assertTrue(r["rev"])
+
+    def test_delete_requires_current_rev(self):
+        path = os.path.join(server.PATTERNS, "P-W01.json")
+        st, r = self.req("DELETE", "/api/patterns/P-W01")
+        self.assertEqual(st, 409, r)
+        st, r = self.req("DELETE", "/api/patterns/P-W01", headers={"X-Base-Rev": "old"})
+        self.assertEqual(st, 409, r)
+        self.assertTrue(os.path.exists(path))
+        st, r = self.req("DELETE", "/api/patterns/P-W01", headers={"X-Base-Rev": server.doc_rev(self.doc)})
+        self.assertEqual(st, 200, r)
+        self.assertFalse(os.path.exists(path))
+
+
+class ValidationTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.doc = pattern("P-W01", "P", "W01", [{"id": "v01", "mixes": [mix("1도", "B1", "26_001")]}])
+        self.write_pattern(self.doc)
+        self.rev = server.doc_rev(self.doc)
+
+    def bad(self, doc):
+        before = self.read_pattern("P-W01")
+        st, r = self.put("P-W01", doc, rev=self.rev)
+        self.assertEqual(st, 400, r)
+        self.assertEqual(self.read_pattern("P-W01"), before)   # 실패하면 파일은 그대로
+        return r["errors"]
+
+    def test_null_mix_rejected_before_write(self):
+        d = json.loads(json.dumps(self.doc))
+        d["variations"][0]["mixes"] = [None]
+        self.assertIn("객체가 아닙니다", " ".join(self.bad(d)))
+
+    def test_bad_numbers_rejected(self):
+        for val in (-1, "abc", True):
+            d = json.loads(json.dumps(self.doc))
+            d["variations"][0]["mixes"][0]["inks"]["BK"] = val
+            self.bad(d)
+        d = json.loads(json.dumps(self.doc))
+        d["variations"][0]["mixes"][0]["labSce"] = {"L": "x", "a": 1, "b": 2}
+        self.bad(d)
+
+    def test_dangling_same_as_rejected(self):
+        d = json.loads(json.dumps(self.doc))
+        d["variations"][0]["sameAs"] = "v09"
+        self.assertIn("같은 배합", " ".join(self.bad(d)))
+
+    def test_bad_image_name_rejected(self):
+        d = json.loads(json.dumps(self.doc))
+        d["variations"][0]["images"] = ["../x.jpg"]
+        self.bad(d)
+
+    def test_numeric_strings_normalized(self):
+        d = json.loads(json.dumps(self.doc))
+        m = d["variations"][0]["mixes"][0]
+        m["inks"] = {"BK": "12.5", "WH": ""}
+        m["thinnerG"] = " 3 "
+        m["labSce"] = {"L": "50", "a": "-1.5", "b": 2}
+        st, r = self.put("P-W01", d, rev=self.rev)
+        self.assertEqual(st, 200, r)
+        m2 = self.read_pattern("P-W01")["variations"][0]["mixes"][0]
+        self.assertEqual(m2["inks"], {"BK": 12.5})
+        self.assertEqual(m2["thinnerG"], 3.0)
+        self.assertEqual(m2["labSce"], {"L": 50.0, "a": -1.5, "b": 2})
+
+    def test_duplicate_reference_is_warning(self):
+        d = json.loads(json.dumps(self.doc))
+        d["variations"][0]["mixes"] = [mix("1도", "B1", "26_001", isReference=True),
+                                       mix("1도", "B2", "26_001", isReference=True)]
+        st, r = self.put("P-W01", d, rev=self.rev)
+        self.assertEqual(st, 200, r)
+        self.assertEqual(len(r["warnings"]), 1)
+
+
+class UploadTests(Base):
+    def test_same_second_uploads_get_distinct_names(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow 없음")
+        buf = io.BytesIO()
+        Image.new("RGB", (340, 140), (120, 80, 40)).save(buf, format="PNG")
+        raw = buf.getvalue()
+        a = server.process_upload("P-W01", "v01", 1, raw, {})
+        b = server.process_upload("P-W01", "v01", 1, raw, {})
+        self.assertNotEqual(a["file"], b["file"])
+        names = os.listdir(os.path.join(server.IMAGES, "P-W01"))
+        self.assertIn(a["file"], names)
+        self.assertIn(b["file"], names)
+        self.assertFalse([n for n in names if n.endswith(".part")])
+
+
 class RenameTests(Base):
     def test_rename_without_updatedAt(self):
         """예전/데모 데이터(updatedAt 없음)도 rename 되고 새 savedAt이 돌아온다."""
@@ -315,7 +436,7 @@ class RenameDbTests(Base):
 
     def test_rename_db_rows(self):
         r = self.renamed()
-        st, r = self.req("POST", "/api/rdp/rename-db/P-W05", {"mode": "rename"}, {"X-Base-Rev": r["savedAt"]})
+        st, r = self.req("POST", "/api/rdp/rename-db/P-W05", {"mode": "rename"}, {"X-Base-Rev": r["rev"]})
         self.assertEqual(st, 200, r)
         self.assertEqual(r["renamed"], 6)
         self.assertEqual(self.db_counts(), {("P", "W05"): 6})
@@ -326,7 +447,7 @@ class RenameDbTests(Base):
 
     def test_ignore_old_rows(self):
         r = self.renamed()
-        st, r = self.req("POST", "/api/rdp/rename-db/P-W05", {"mode": "ignore"})
+        st, r = self.req("POST", "/api/rdp/rename-db/P-W05", {"mode": "ignore"}, {"X-Base-Rev": r["rev"]})
         self.assertEqual(st, 200, r)
         self.assertEqual(self.db_counts(), {("P", "W01"): 6})
         st, r = self.req("GET", "/api/rdp/push-preview/P-W05")
@@ -338,7 +459,7 @@ class RenameDbTests(Base):
         doc = self.read_pattern("P-W05")
         doc["id"] = "P-W01"
         doc["pattern"]["code"] = "W01"
-        st, r = self.put("P-W01", doc, rev=r["savedAt"], rename_from="P-W05")
+        st, r = self.put("P-W01", doc, rev=r["rev"], rename_from="P-W05")
         self.assertEqual(st, 200, r)
         self.assertIsNone(r["renamedFrom"])
 
@@ -346,7 +467,7 @@ class RenameDbTests(Base):
         r = self.renamed()
         doc = self.read_pattern("P-W05")
         doc.pop("renamedFrom")
-        st, r = self.put("P-W05", doc, rev=r["savedAt"])
+        st, r = self.put("P-W05", doc, rev=r["rev"])
         self.assertEqual(st, 200, r)
         self.assertEqual(self.read_pattern("P-W05")["renamedFrom"]["code"], "W01")
 
@@ -479,14 +600,14 @@ class LayerPatternTests(Base):
         doc = self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
         self.req("POST", "/api/rdp/push/P-W01")
         self.assertEqual(self.codes(), [("M01", "2도", "B2")])
-        rev = self.read_pattern("P-W01").get("updatedAt")
+        rev = server.doc_rev(self.read_pattern("P-W01"))
         for want in ("M02", ""):
             d = self.read_pattern("P-W01")
             d["variations"][0]["layerPatterns"] = {"2도": want} if want else {}
             d["variations"][0]["layerPatternsFrom"] = {"2도": ["HACK"]}   # 클라이언트 값은 무시
             st, r = self.put("P-W01", d, rev=rev)
             self.assertEqual(st, 200, r)
-            rev = r["savedAt"]
+            rev = r["rev"]
             self.assertNotIn("HACK", json.dumps(self.read_pattern("P-W01")))
             st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
             self.assertEqual(r["inserts"], [], r)
