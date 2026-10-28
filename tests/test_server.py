@@ -517,6 +517,51 @@ class RenameTests(Base):
         self.assertEqual(st, 404)
 
 
+class LeftoverTests(Base):
+    """삭제할 때 _orig·_thumb도 정리 — 남으면 그 이름으로 바꾸기가 막히고, 새 시편에 옛 원본이 섞였다."""
+
+    def touch(self, base, pid, name="x.jpg"):
+        os.makedirs(os.path.join(base, pid), exist_ok=True)
+        with open(os.path.join(base, pid, name), "wb") as f:
+            f.write(b"x")
+
+    def trash(self):
+        return " ".join(os.listdir(server.TRASH))
+
+    def test_delete_moves_originals_and_drops_thumbs(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "images": ["x.jpg"]}])
+        self.write_pattern(doc)
+        for base in (server.IMAGES, server.ORIG, server.THUMBS):
+            self.touch(base, "P-W01")
+        st, r = self.req("DELETE", "/api/patterns/P-W01", headers={"X-Base-Rev": server.doc_rev(doc)})
+        self.assertEqual(st, 200, r)
+        for base in (server.IMAGES, server.ORIG, server.THUMBS):
+            self.assertFalse(os.path.exists(os.path.join(base, "P-W01")), base)
+        self.assertIn("P-W01_orig", self.trash())
+
+    def test_rename_onto_old_leftover_works(self):
+        self.touch(server.ORIG, "P-W09")                       # 예전에 지운 P-W09의 원본만 남은 상태
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01"}])
+        self.write_pattern(doc)
+        d = json.loads(json.dumps(doc))
+        d["pattern"]["code"] = "W09"
+        st, r = self.put("P-W09", d, rev=server.doc_rev(doc), rename_from="P-W01")
+        self.assertEqual(st, 200, r)
+        self.assertIn("P-W09_orig-leftover", self.trash())
+
+    def test_create_moves_leftover_but_keeps_presave_uploads(self):
+        self.touch(server.ORIG, "P-W09")
+        st, r = self.put("P-W09", pattern("P-W09", "P", "W09", [{"id": "v01"}], rev=None), create=True)
+        self.assertEqual(st, 200, r)
+        self.assertFalse(os.path.exists(os.path.join(server.ORIG, "P-W09")))
+        # 새 시편을 저장하기 전에 올린 사진(이미지 폴더가 있음)의 원본은 그대로
+        self.touch(server.IMAGES, "P-N01")
+        self.touch(server.ORIG, "P-N01")
+        st, r = self.put("P-N01", pattern("P-N01", "P", "N01", [{"id": "v01"}], rev=None), create=True)
+        self.assertEqual(st, 200, r)
+        self.assertTrue(os.path.exists(os.path.join(server.ORIG, "P-N01", "x.jpg")))
+
+
 class RenameDbTests(Base):
     def setUp(self):
         super().setUp()

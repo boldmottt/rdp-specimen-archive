@@ -830,7 +830,7 @@ export function renderDrawer() {
 
   const del = $("#del-pattern");
   if (del) del.onclick = async () => {
-    if (!confirm("이 시편을 삭제할까요? JSON과 이미지가 _trash로 이동합니다.")) return;
+    if (!confirm("이 시편을 삭제할까요? JSON·이미지·업로드 원본이 _trash로 이동합니다.")) return;
     try {
       await apiDelete(`/api/patterns/${encodeURIComponent(E.draft.id)}`, revOf(byId(E.draft.id)));
       App.patterns = App.patterns.filter((x) => x.id !== E.draft.id);

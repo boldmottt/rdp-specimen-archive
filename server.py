@@ -234,6 +234,17 @@ def move_to_trash(path: str, label: str = ""):
     shutil.move(path, dest)
 
 
+def clear_leftovers(pid: str):
+    """시편 JSON도 이미지 폴더도 없는데 _orig/<id>만 남아 있으면(예전에 지운 시편의 찌꺼기) 휴지통으로 옮긴다.
+    — 그 이름으로 바꾸기가 '_orig/... 이미 쓰임'으로 막히거나, 새 시편에 옛 원본 사진이 섞이지 않게.
+    이미지 폴더가 있으면(새 시편을 저장하기 전에 올린 사진) 건드리지 않는다. 썸네일 캐시는 지운다."""
+    if os.path.exists(safe_join(PATTERNS, pid + ".json")) or os.path.isdir(os.path.join(IMAGES, pid)):
+        return
+    if os.path.isdir(os.path.join(ORIG, pid)):
+        move_to_trash(os.path.join(ORIG, pid), f"{pid}_orig-leftover")
+    shutil.rmtree(os.path.join(THUMBS, pid), ignore_errors=True)
+
+
 def rename_pattern(old_id: str, new_id: str, data: bytes):
     """이미지 → 원본 → 새 JSON → 옛 JSON(_trash) 순서로 옮긴다.
     중간에 실패하면 이미 옮긴 것을 역순으로 되돌린다. (호출 전에 대상이 비어 있는지 확인할 것)"""
@@ -2059,6 +2070,8 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     move_to_trash(src, pid + ".json")
                     move_to_trash(os.path.join(IMAGES, pid), pid + "_images")
+                    move_to_trash(os.path.join(ORIG, pid), pid + "_orig")      # 업로드 원본도 함께 (남으면 그 이름을 다시 못 씀)
+                    shutil.rmtree(os.path.join(THUMBS, pid), ignore_errors=True)   # 다시 만들 수 있는 캐시
                 return self.json({"ok": True})
             if p.startswith("/api/image/"):
                 parts = p[len("/api/image/"):].strip("/").split("/")
@@ -2160,13 +2173,16 @@ class Handler(BaseHTTPRequestHandler):
         if rename_from:
             if not os.path.isfile(src_path):
                 return self.error(404, f"원본 시편({rename_from})이 없습니다")
+            clear_leftovers(pid)
             taken = [x for x in (path, os.path.join(IMAGES, pid), os.path.join(ORIG, pid)) if os.path.exists(x)]
             if taken:
                 return self.json({"ok": False, "exists": True,
                                   "message": f"'{pid}' 이름이 이미 쓰이고 있습니다 ({', '.join(os.path.relpath(x, DATA) for x in taken)})"}, 409)
-        elif (self.headers.get("X-Create") or "").strip() == "1" and os.path.exists(path):
-            return self.json({"ok": False, "exists": True,
-                              "message": f"'{pid}' 시편이 이미 있습니다"}, 409)
+        elif (self.headers.get("X-Create") or "").strip() == "1":
+            if os.path.exists(path):
+                return self.json({"ok": False, "exists": True,
+                                  "message": f"'{pid}' 시편이 이미 있습니다"}, 409)
+            clear_leftovers(pid)
 
         prev = None
         if os.path.exists(src_path):
@@ -2207,6 +2223,7 @@ class Handler(BaseHTTPRequestHandler):
                 rename_pattern(rename_from, pid, data)
             except Exception as e:
                 return self.error(500, f"이름 변경 실패 — 원래 상태로 되돌렸습니다: {e}")
+            shutil.rmtree(os.path.join(THUMBS, rename_from), ignore_errors=True)   # 옛 이름의 썸네일 캐시
         else:
             atomic_write(path, data)
         try:
