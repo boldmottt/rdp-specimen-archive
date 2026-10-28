@@ -59,6 +59,9 @@ except Exception:
 RATIO_W, RATIO_H = 170, 70
 TARGET_W, TARGET_H = 2400, 988
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+# 시편 이미지 파일 이름 — 저장 검사와 보내기(이미지·축소본·삭제)가 같은 규칙을 쓴다
+# (전에는 저장은 통과하는데 보낼 때 400이 나서 깨진 그림이 되는 이름이 있었다)
+IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", re.I)
 BASE_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 LAN_HOSTS = set()
 SAFE_HOSTS = set(BASE_HOSTS)
@@ -395,9 +398,13 @@ def validate_pattern(doc: dict):
             errors.append(f"variation id 중복: {vid}")
         seen.add(vid)
         imgs = v.get("images", [])
-        if not isinstance(imgs, list) or any(not isinstance(n, str) or not n or "/" in n or "\\" in n or n.startswith(".")
-                                             for n in imgs):
+        if not isinstance(imgs, list) or not all(isinstance(n, str) for n in imgs):
             errors.append(f"{vid or i}: images는 파일 이름 목록이어야 합니다")
+        else:
+            bad = [n for n in imgs if not IMAGE_NAME_RE.match(n)]
+            if bad:
+                errors.append(f"{vid or i}: 쓸 수 없는 이미지 이름 {', '.join(bad[:3])} "
+                              "(영문·숫자·._- 와 .jpg/.png/.webp — 편집기에서 다시 올려 주세요)")
         mixes = v.get("mixes", [])
         if not isinstance(mixes, list):
             errors.append(f"variations[{i}].mixes가 배열이 아닙니다")
@@ -1336,6 +1343,24 @@ def gc_images(pid: str, doc: dict, min_age: float = 600) -> list:
     return moved
 
 
+def gc_unsaved_uploads(min_age: float = 7 * 86400) -> list:
+    """새 시편을 저장하지 않고 그만둔 업로드(시편 JSON 없는 images·_orig 폴더)를 일주일 지나면 휴지통으로.
+    새 시편은 저장 전에 사진부터 올리므로 업로드 때는 막지 않고, 오래 버려진 것만 치운다 (휴지통에서 복구 가능)."""
+    moved, now = [], time.time()
+    for base, label in ((IMAGES, "images"), (ORIG, "orig")):
+        if not os.path.isdir(base):
+            continue
+        for pid in sorted(os.listdir(base)):
+            d = os.path.join(base, pid)
+            if not os.path.isdir(d) or not ID_RE.match(pid) or os.path.exists(os.path.join(PATTERNS, pid + ".json")):
+                continue
+            newest = max((os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d)), default=os.path.getmtime(d))
+            if now - newest >= min_age:
+                move_to_trash(d, f"{pid}_unsaved-{label}")
+                moved.append(f"{label}/{pid}")
+    return moved
+
+
 def image_meta(pid: str) -> dict:
     d = {}
     pdir = os.path.join(IMAGES, pid)
@@ -2049,10 +2074,27 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self.error(400, str(e))
                 q = parse_qs(u.query)
-                slot = int(q.get("slot", ["1"])[0])
-                crop = {k: q.get(k, [None])[0] for k in ("x", "y", "w", "h")}
+                try:
+                    slot = int(q.get("slot", ["1"])[0])
+                    if not 1 <= slot <= 50:
+                        raise ValueError
+                    crop = {}
+                    for k in ("x", "y", "w", "h"):
+                        v = q.get(k, [None])[0]
+                        if v in (None, "", "None"):
+                            continue
+                        crop[k] = float(v)
+                        if not math.isfinite(crop[k]) or crop[k] < 0:
+                            raise ValueError
+                except ValueError:
+                    return self.error(400, "slot(1~50)·자르기 값은 0 이상의 숫자여야 합니다")
                 raw = self.read_body()
-                res = process_upload(parts[0], parts[1], slot, raw, crop)
+                if not raw:
+                    return self.error(400, "이미지 내용이 비어 있습니다")
+                try:
+                    res = process_upload(parts[0], parts[1], slot, raw, crop)
+                except ValueError as e:   # 읽을 수 없는 그림 (지원하지 않는 형식·깨진 파일)
+                    return self.error(400, str(e))
                 return self.json({"ok": True, **res})
             return self.error(404, "not found")
         except Exception as e:
@@ -2332,7 +2374,7 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) == 3:
                     try:
                         safe_id(parts[0])
-                        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", parts[2], re.I):
+                        if not IMAGE_NAME_RE.match(parts[2]):
                             raise ValueError("bad image name")
                     except ValueError as e:
                         return self.error(400, str(e))
@@ -2493,7 +2535,7 @@ class Handler(BaseHTTPRequestHandler):
         base: 원본 폴더 (기본 images, 확정본은 그 제안서의 images) · cache_dir: 축소본 캐시 폴더."""
         try:
             safe_id(pid)
-            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", name, re.I):
+            if not IMAGE_NAME_RE.match(name):
                 raise ValueError("bad image name")
             w = thumb_width(w)
             src = safe_join(base or IMAGES, pid, name)
@@ -2531,7 +2573,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) != 2:
                 raise ValueError("bad image path")
             safe_id(parts[0])
-            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", parts[1], re.I):
+            if not IMAGE_NAME_RE.match(parts[1]):
                 raise ValueError("bad image name")
             path = safe_join(base or IMAGES, parts[0], parts[1])
         except ValueError as e:
@@ -2664,6 +2706,8 @@ if __name__ == "__main__":
                 moved = gc_images(doc["id"], doc, min_age=86400)   # 하루 지난, JSON에 없는 이미지만
                 if moved:
                     print(f"[gc] {doc['id']}: {len(moved)}개 정리")
+            for x in gc_unsaved_uploads():
+                print(f"[gc] 저장하지 않은 업로드 정리: {x}")
         except Exception as e:
             print(f"[gc] 건너뜀: {e}")
     start_heartbeat()

@@ -471,6 +471,57 @@ class UploadTests(Base):
         self.assertFalse([n for n in names if n.endswith(".part")])
 
 
+class UploadInputTests(Base):
+    """잘못된 업로드 입력은 500이 아니라 400 (전에는 slot=abc·깨진 그림이 서버 오류로 보였다)."""
+
+    def png(self):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (340, 140), (120, 80, 40)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def put_img(self, query, body):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("PUT", "/api/image/P-W01/v01" + query, body=body,
+                  headers={"Host": "localhost", "Content-Type": "application/octet-stream"})
+        r = c.getresponse()
+        r.read()
+        c.close()
+        return r.status
+
+    def test_bad_inputs_are_400(self):
+        try:
+            ok = self.png()
+        except ImportError:
+            self.skipTest("Pillow 없음")
+        for q in ("?slot=abc", "?slot=0", "?slot=1&x=abc&y=0&w=10&h=10", "?slot=1&x=-5&y=0&w=10&h=10", "?slot=1&x=nan&y=0&w=1&h=1"):
+            self.assertEqual(self.put_img(q, ok), 400, q)
+        self.assertEqual(self.put_img("?slot=1", b"not an image"), 400)
+        self.assertEqual(self.put_img("?slot=1", b""), 400)
+        self.assertEqual(self.put_img("?slot=1&x=0&y=0&w=340&h=140", ok), 200)
+
+    def test_unservable_image_names_are_rejected_on_save(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "images": ["v01.jpg"]}])
+        self.write_pattern(doc)
+        for bad in ("사진.jpg", "a.gif", "a b.jpg"):
+            d = json.loads(json.dumps(doc))
+            d["variations"][0]["images"] = [bad]
+            st, r = self.put("P-W01", d, rev=server.doc_rev(doc))
+            self.assertEqual(st, 400, bad)
+            self.assertIn("쓸 수 없는 이미지 이름", " ".join(r["errors"]))
+
+    def test_abandoned_presave_uploads_are_trashed_after_a_week(self):
+        old = time.time() - 8 * 86400
+        for pid in ("NEW-1", "NEW-2", "P-W01"):
+            self.add_image(pid, "a.jpg")
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01"}]))
+        for pid in ("NEW-1", "P-W01"):
+            os.utime(os.path.join(server.IMAGES, pid, "a.jpg"), (old, old))
+        self.assertEqual(server.gc_unsaved_uploads(), ["images/NEW-1"])   # 일주일 지난 것만, 저장된 시편은 그대로
+        self.assertTrue(os.path.isdir(os.path.join(server.IMAGES, "NEW-2")))
+        self.assertTrue(os.path.isdir(os.path.join(server.IMAGES, "P-W01")))
+
+
 class RenameTests(Base):
     def test_rename_without_updatedAt(self):
         """예전/데모 데이터(updatedAt 없음)도 rename 되고 새 savedAt이 돌아온다."""
