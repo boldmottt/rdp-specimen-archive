@@ -680,6 +680,60 @@ def track_layer_code_changes(prev, doc):
             v["layerPatternsFrom"] = hist
 
 
+def _mplate(m) -> str:
+    return str(m.get("plate") or "").strip()
+
+
+def plate_from(m) -> list:
+    """그 배합이 예전에 있던 동판들, 오래된 것부터 (서버가 저장할 때 기록, plateFrom)."""
+    return [str(p).strip() for p in (m.get("plateFrom") or []) if isinstance(p, (str, int, float)) and str(p).strip()]
+
+
+def track_plate_changes(prev, doc):
+    """배합의 동판이 바뀌면 옛 동판을 plateFrom에 남긴다 — DB에 새 행을 넣지 않고 옛 동판 행을 옮기기 위해
+    (DB 키에 동판이 들어가서, 그냥 넣으면 같은 배합이 옛 동판·새 동판 두 줄로 남는다).
+    클라이언트가 보낸 값은 쓰지 않고 이전 파일에서 이어받는다 (layerPatternsFrom과 같은 방식).
+    짝은 같은 컬러·(도수, 배치)로 찾고, 같은 동판끼리 먼저, 남은 것이 한 쌍일 때만 '동판이 바뀌었다'고 본다."""
+    prev_vs = {pv.get("id"): pv for pv in (prev or {}).get("variations") or [] if isinstance(pv, dict)}
+    for v in doc.get("variations") or []:
+        if not isinstance(v, dict):
+            continue
+        mixes = [m for m in v.get("mixes") or [] if isinstance(m, dict)]
+        for m in mixes:
+            m.pop("plateFrom", None)
+        pv = prev_vs.get(v.get("id"))
+        if not pv:
+            continue
+        key = lambda m: (str(m.get("layer") or ""), str(m.get("batch") or "").strip())   # noqa: E731
+        olds = {}
+        for o in pv.get("mixes") or []:
+            if isinstance(o, dict):
+                olds.setdefault(key(o), []).append(o)
+
+        def inherit(m, o):
+            hist = [x for x in plate_from(o) if x != _mplate(o)]
+            if _mplate(o) and _mplate(o) != _mplate(m):
+                hist.append(_mplate(o))
+            hist = [x for x in dict.fromkeys(hist) if x != _mplate(m)][-10:]   # 최근 10개면 충분
+            if hist:
+                m["plateFrom"] = hist
+
+        news = {}
+        for m in mixes:
+            news.setdefault(key(m), []).append(m)
+        for k, group in news.items():
+            cands, rest = list(olds.get(k, [])), []
+            for m in group:
+                same = next((o for o in cands if _mplate(o) == _mplate(m)), None)
+                if same is None:
+                    rest.append(m)
+                else:
+                    cands.remove(same)
+                    inherit(m, same)
+            if len(rest) == 1 and len(cands) == 1:
+                inherit(rest[0], cands[0])
+
+
 def foreign_claims(doc, others):
     """다른 시편이 '도수별 패턴'으로 이 시편 코드를 쓰는 (도수, 도장코드) 조합.
     그 시편이 이 코드로 보낸 행은 이 시편 것이 아니다."""
@@ -815,6 +869,9 @@ def _plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
         return {"updates": [], "inserts": [], "moves": [], "skipped": [{"batch": "-", "reason": "베리에이션 없음"}]}
     main = doc_code(doc)
     taken = taken or {}
+    # 지금 어떤 배합이 정확히 쓰고 있는 키 — 동판 이동은 이 키의 DB 행을 건드리지 않는다
+    mix_keys = {(layer_code(doc, v, m.get("layer")), m.get("layer"), m.get("batch"), _mplate(m))
+                for v, _rows in assigned for m in v.get("mixes") or [] if isinstance(m, dict)}
     updates, inserts, moves, skipped, shared = [], [], [], [], []
     seen_codes = set()
     seen_keys = {}      # (패턴코드, 도수, 배치, 동판) -> 이미 계획한 컬러 (DB UNIQUE 키와 같음)
@@ -866,20 +923,32 @@ def _plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
             seen[key] = (coat, m)
             cur = dbmap.get(key)
             if cur is None:
-                # 예전 코드로 들어간 같은 배합(도수 패턴을 정하기 전의 시편 코드, 또는 바꾸기 전 도수 패턴) → 코드만 옮긴다
-                for src in [main] + layer_codes_from(v, m.get("layer")):
-                    if src == code:
-                        continue
-                    old = dbmap.get((src, m.get("layer"), m.get("batch"), plate))
-                    if old is not None and old.get("_id") not in moved_ids:
+                # 예전 키로 들어간 같은 배합 → 새 행을 넣지 않고 그 행을 옮긴다
+                #  · 코드: 도수 패턴을 정하기 전의 시편 코드, 또는 바꾸기 전 도수 패턴 (layerPatternsFrom)
+                #  · 동판: 저장할 때 남긴 바꾸기 전 동판 (plateFrom, 최근 것부터)
+                codes = [code] + [c for c in dict.fromkeys([main] + layer_codes_from(v, m.get("layer"))) if c != code]
+                plates = [plate] + [x for x in reversed(plate_from(m)) if x != plate]
+                for src_plate in plates:
+                    for src in codes:
+                        if (src, src_plate) == (code, plate):
+                            continue
+                        okey = (src, m.get("layer"), m.get("batch"), src_plate)
+                        old = dbmap.get(okey)
+                        if old is None or old.get("_id") in moved_ids or (src_plate != plate and okey in mix_keys):
+                            continue
                         if key in taken:
                             # 옮길 자리에 이미 같은 키 행이 있다 → 옮기면 UNIQUE 위반
                             cur = False
-                            skipped.append(dict(base, reason=f"옮길 코드 {code}에 같은 키가 이미 있음 ({src} 행과 둘 중 하나 정리 필요)"))
+                            where = f"코드 {code}" if src_plate == plate else f"동판 {plate}"
+                            skipped.append(dict(base, reason=f"옮길 {where}에 같은 키가 이미 있음 "
+                                                             f"({src}·{src_plate} 행과 둘 중 하나 정리 필요)"))
                             break
                         moved_ids.add(old.get("_id"))
-                        moves.append(dict(base, id=old.get("_id"), **{"from": src, "to": code}))
+                        moves.append(dict(base, id=old.get("_id"), fromPlate=src_plate, toPlate=plate,
+                                          **{"from": src, "to": code}))
                         cur = old
+                        break
+                    if cur is not None:
                         break
             if cur is False:
                 continue
@@ -954,8 +1023,14 @@ def apply_push(project, code, doc, plan):
             # 미리보기 뒤에 누가 같은 키를 넣었어도 전체가 실패하지 않게 행 단위로
             cur.execute("SAVEPOINT mv_row")
             try:
-                cur.execute("UPDATE rdp_mixes SET pattern_code=? WHERE id=? AND project=? AND pattern_code=?",
-                            (mv["to"], mv["id"], project, mv["from"]))
+                from_plate, to_plate = mv.get("fromPlate", mv["plate"]), mv.get("toPlate", mv["plate"])
+                if from_plate != to_plate:
+                    cur.execute("UPDATE rdp_mixes SET pattern_code=?, plate=? WHERE id=? AND project=? AND pattern_code=?"
+                                " AND TRIM(COALESCE(plate, ''))=?",
+                                (mv["to"], to_plate, mv["id"], project, mv["from"], from_plate))
+                else:
+                    cur.execute("UPDATE rdp_mixes SET pattern_code=? WHERE id=? AND project=? AND pattern_code=?",
+                                (mv["to"], mv["id"], project, mv["from"]))
                 n_mov += cur.rowcount
                 cur.execute("RELEASE mv_row")
             except sqlite3.IntegrityError as e:
@@ -963,7 +1038,7 @@ def apply_push(project, code, doc, plan):
                 cur.execute("RELEASE mv_row")
                 bad_ids.add(mv["id"])
                 failed.append({"layer": mv["layer"], "batch": mv["batch"], "plate": mv["plate"], "code": mv["to"],
-                               "reason": "옮길 코드에 같은 키가 이미 있음" if "UNIQUE" in str(e) else str(e)})
+                               "reason": "옮길 자리에 같은 키가 이미 있음" if "UNIQUE" in str(e) else str(e)})
         for u in plan["updates"]:
             m = by_key.get((u["vid"], u["layer"], u["batch"], u["plate"]))
             if not m or u.get("id") is None or u["id"] in bad_ids:
@@ -2037,6 +2112,7 @@ class Handler(BaseHTTPRequestHandler):
         # (서버가 관리하는 값: 클라이언트가 보낸 renamedFrom은 무시)
         doc.pop("renamedFrom", None)
         track_layer_code_changes(prev if isinstance(prev, dict) else None, doc)
+        track_plate_changes(prev if isinstance(prev, dict) else None, doc)
         if isinstance(prev, dict):
             prev_key = (prev.get("project") or "", (prev.get("pattern") or {}).get("code") or "")
             new_key = (doc.get("project") or "", (doc.get("pattern") or {}).get("code") or "")

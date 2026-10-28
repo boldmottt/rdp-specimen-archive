@@ -68,7 +68,7 @@ export function newDoc() {
 function freshCopy(m, existing) {
   const c = clone(m);
   c.isReference = false; c.result = ""; c.date = todayLocal();
-  delete c._id;
+  delete c._id; delete c.plateFrom;
   // 배합 이름(batch)은 그대로 가져가되, 같은 컬러에 같은 도수·이름이 이미 있으면 -2, -3 …
   const list = existing || [];
   const same = (x, b) => (x.layer || "") === (c.layer || "") && (x.batch || "") === b;
@@ -121,7 +121,10 @@ function pushPanel(pv) {
   const multi = new Set([...upd, ...ins].map((x) => x.vid)).size > 1;
   const tag = (x) => (multi && x.vid ? `<span class="pp-skip">${esc(x.vid)}</span> ` : "");
   const rows = [];
-  mv.forEach((x) => rows.push(`<li><b>${esc(x.batch)}</b> ${tag(x)}<span class="pp-f">${esc(x.layer || "")} 패턴 코드 이동 ${esc(x.from)} → <b>${esc(x.to)}</b></span></li>`));
+  // 이동: 예전 코드·동판으로 들어간 DB 행을 새 행 대신 옮긴다 (코드와 동판이 함께 바뀌었으면 둘 다)
+  const moveText = (x) => [x.from !== x.to ? `패턴 코드 ${esc(x.from)} → <b>${esc(x.to)}</b>` : "",
+    x.fromPlate && x.fromPlate !== x.toPlate ? `동판 ${esc(x.fromPlate)} → <b>${esc(x.toPlate)}</b>` : ""].filter(Boolean).join(" · ");
+  mv.forEach((x) => rows.push(`<li><b>${esc(x.batch)}</b> ${tag(x)}<span class="pp-f">${esc(x.layer || "")} ${moveText(x)} 이동</span></li>`));
   upd.forEach((u) => rows.push(`<li><b>${esc(u.batch)}</b> ${tag(u)}<span class="pp-f">${u.fields.map((f) => `${esc(f.name)} ${esc(String(f.from))} → <b>${esc(String(f.to))}</b>`).join(", ")}</span></li>`));
   ins.forEach((i) => rows.push(`<li><b>${esc(i.batch)}</b> ${tag(i)}<span class="pp-f">신규 배합 (${esc(i.code || "")} · ${esc(i.layer || "")} · ${esc(i.plate)})</span></li>`));
   const n = rows.length;
@@ -130,7 +133,7 @@ function pushPanel(pv) {
   const shown = rows.slice(0, 14).join("");
   const more = rows.length > 14 ? `<li class="pp-more">외 ${rows.length - 14}건</li>` : "";
   return `<div class="push-panel">
-      <div class="pp-head">DB에 반영할 변경 — ${mv.length ? `코드 이동 <b>${mv.length}</b> · ` : ""}수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sh.length ? ` · 공유 배합 ${sh.length}` : ""}${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
+      <div class="pp-head">DB에 반영할 변경 — ${mv.length ? `이동 <b>${mv.length}</b> · ` : ""}수정 <b>${upd.length}</b> · 신규 <b>${ins.length}</b>${sh.length ? ` · 공유 배합 ${sh.length}` : ""}${sk.length ? ` · 건너뜀 ${sk.length}` : ""}</div>
       ${rows.length ? `<ul>${shown}${more}</ul>` : ""}${n ? "" : `<div class="pp-empty">반영할 변경이 없습니다</div>`}
       <div class="pp-actions">
         <button class="mini-btn" id="pp-cancel">취소</button>
@@ -662,7 +665,7 @@ export function renderDrawer() {
         E.push = null;
         renderDrawer();
         const nf = (r.failed || []).length;
-        toast(`DB 반영 완료 · ${r.moved ? `코드 이동 ${r.moved} · ` : ""}수정 ${r.updated || 0} · 신규 ${r.inserted || 0}`
+        toast(`DB 반영 완료 · ${r.moved ? `이동 ${r.moved} · ` : ""}수정 ${r.updated || 0} · 신규 ${r.inserted || 0}`
           + (nf ? ` · 실패 ${nf}건 (${(r.failed || []).map((f) => `${f.layer} ${f.batch}: ${f.reason}`).join(", ")})` : "")
           + (r.backup ? ` (백업 ${r.backup})` : ""));
       } catch (e) {

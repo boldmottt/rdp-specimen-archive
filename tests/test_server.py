@@ -680,6 +680,79 @@ class LayerPatternTests(Base):
         self.assertEqual((r["same"] + len(r["changed"]), r["archiveOnly"], r["dbOnly"]), (1, [], []), r)
 
 
+class PlateMoveTests(Base):
+    """DB 키에 동판이 들어간다 → 동판만 바꾼 배합은 새 행을 넣지 않고 옛 동판 행을 옮긴다 (같은 배합 두 줄 방지)."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [
+            mix("1도", "A", "26_001"), mix("1도", "B", "26_001"), mix("2도", "A", "26_002")]}]))
+        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        self.assertEqual((st, r["inserted"]), (200, 3), r)
+
+    def rows(self):
+        con = sqlite3.connect(self.db)
+        out = sorted(con.execute("SELECT layer, batch_no, plate, bk FROM rdp_mixes").fetchall())
+        con.close()
+        return out
+
+    def save(self, change):
+        d = self.read_pattern("P-W01")
+        change(d["variations"][0]["mixes"])
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        return self.read_pattern("P-W01")["variations"][0]["mixes"]
+
+    def test_plate_change_moves_row_instead_of_insert(self):
+        def change(ms):
+            ms[0].update(plate="26_009", inks={"BK": 12.0}, plateFrom=["HACK"])   # 클라이언트 값은 무시
+        self.assertEqual(self.save(change)[0]["plateFrom"], ["26_001"])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(r["inserts"], [], r)
+        self.assertEqual([(m["batch"], m["fromPlate"], m["toPlate"]) for m in r["moves"]], [("A", "26_001", "26_009")])
+        self.assertEqual([u["batch"] for u in r["updates"]], ["A"])
+        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        self.assertEqual((r["moved"], r["updated"], r["inserted"]), (1, 1, 0), r)
+        self.assertEqual(self.rows(), [("1도", "A", "26_009", 12.0), ("1도", "B", "26_001", 10.0), ("2도", "A", "26_002", 10.0)])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual((r["moves"], r["updates"], r["inserts"]), ([], [], []))
+
+    def test_two_changes_before_push_move_the_original_row(self):
+        self.save(lambda ms: ms[0].update(plate="26_005"))
+        self.assertEqual(self.save(lambda ms: ms[0].update(plate="26_009"))[0]["plateFrom"], ["26_001", "26_005"])
+        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        self.assertEqual((r["moved"], r["inserted"]), (1, 0), r)
+        self.assertEqual([x[:3] for x in self.rows()][:2], [("1도", "A", "26_009"), ("1도", "B", "26_001")])
+
+    def test_layer_plate_change_moves_every_row(self):
+        def change(ms):
+            for m in ms:
+                if m["layer"] == "1도":
+                    m["plate"] = "26_009"
+        self.save(change)
+        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        self.assertEqual((r["moved"], r["inserted"]), (2, 0), r)
+        self.assertEqual([x[:3] for x in self.rows()], [("1도", "A", "26_009"), ("1도", "B", "26_009"), ("2도", "A", "26_002")])
+
+    def test_new_mix_with_same_batch_on_other_plate_is_inserted(self):
+        """작업일지처럼 배치 이름은 동판마다 다시 쓴다 — 새 배합은 다른 동판의 행을 옮기지 않는다."""
+        self.assertNotIn("plateFrom", self.save(lambda ms: ms.append(mix("1도", "A", "26_003")))[-1])
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(r["moves"], [])
+        self.assertEqual([(i["batch"], i["plate"]) for i in r["inserts"]], [("A", "26_003")])
+
+    def test_move_onto_other_colors_key_is_skipped(self):
+        d = self.read_pattern("P-W01")
+        d["variations"].append({"id": "v02", "colorCode": "K-9", "mixes": []})
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        self.db_insert("P", "W01", "1도", "A", "26_009", coating="K-9")
+        self.save(lambda ms: ms[0].update(plate="26_009"))
+        st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual((r["moves"], r["inserts"]), ([], []), r)
+        self.assertIn("옮길 동판 26_009", " ".join(x["reason"] for x in r["skipped"]))
+
+
 class SharedBatchTests(Base):
     """rdp.db는 (프로젝트, 패턴 코드, 동판, 도수, 배치)가 UNIQUE — 여러 컬러가 한 배합을 같이 쓴다."""
 

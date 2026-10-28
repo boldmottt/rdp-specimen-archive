@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 시편 상세 · 배합표 · 예상색 */
-import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, dash, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toggleCart, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, dash, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
 import { inlineSave, startInline } from "./inline.js";
 import { saveNewPattern } from "./catalog.js";
 import { showPlate } from "./plates.js";
@@ -54,10 +54,19 @@ export function layerCodeOf(p, v, layer) {
   return lp || ((p && p.pattern && p.pattern.code) || "");
 }
 
+// 도수 대표 동판을 바꾸면 그 동판을 따르던 줄(같은 동판이거나 비어 있던 줄)만 함께 바꾼다.
+// 다른 동판에서 찍은 예외 줄은 그대로 두고, 그대로 둔 줄 수를 돌려준다.
+// (바뀐 줄은 저장할 때 서버가 옛 동판을 plateFrom에 남겨서, DB 전송 때 새 행 대신 옛 동판 행을 옮긴다)
 export function setLayerPlate(v, layer, plate) {
+  const old = layerPlate(v, layer);
   v.layerPlates = v.layerPlates || {};
   v.layerPlates[layer] = plate;
-  (v.mixes || []).forEach((m) => { if (m.layer === layer) m.plate = plate; });
+  let kept = 0;
+  (v.mixes || []).forEach((m) => {
+    if (m.layer !== layer) return;
+    if (!m.plate || m.plate === old) m.plate = plate; else if (m.plate !== plate) kept++;
+  });
+  return kept;
 }
 
 export function syncLayerPlates(v) {
@@ -396,14 +405,14 @@ export function renderDetail(pid, vid, override) {
       const val = inp.value.trim();
       restore();
       if (val === (cur || "")) return;
+      let kept = 0;
       await inlineSave(pid, (d2) => {
         const v2 = (d2.variations || []).find((x) => x.id === v.id);
         if (!v2) return false;
-        v2.layerPlates = v2.layerPlates || {};
-        v2.layerPlates[layer] = val;
-        (v2.mixes || []).forEach((m) => { if (m.layer === layer) m.plate = val; });
+        kept = setLayerPlate(v2, layer, val);
         return true;
       });
+      if (kept) toast(`다른 동판에서 찍은 ${layer} 배합 ${kept}줄은 그대로 뒀어요`);
       renderDetail(pid, v.id);
     };
     inp.onblur = commit;
