@@ -1567,6 +1567,15 @@ def next_doc_no(prefix: str, taken) -> str:
     return f"{prefix}{n:02d}"
 
 
+THUMB_WIDTHS = (120, 240, 480, 960, 1440, 2000)
+
+
+def thumb_width(w) -> int:
+    """요청 폭을 정해진 단계로 올림 — 아무 폭이나 캐시하면 이미지마다 축소본이 끝없이 쌓일 수 있었다."""
+    w = int(w)
+    return next((x for x in THUMB_WIDTHS if x >= w), THUMB_WIDTHS[-1])
+
+
 # ---------------------------------------------------------------- 여러 PC 감지
 # 같은 드라이브 폴더를 두 PC의 서버가 함께 쓰면 잠금이 PC마다 따로라 저장이 엇갈릴 수 있다.
 # 서버마다 1분에 한 번 _ui/servers/<PC>-<포트>.json에 '살아 있음'을 남기고, 다른 PC 것이 최근이면 알린다.
@@ -2486,7 +2495,7 @@ class Handler(BaseHTTPRequestHandler):
             safe_id(pid)
             if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.(jpg|jpeg|png|webp)$", name, re.I):
                 raise ValueError("bad image name")
-            w = max(120, min(2000, int(w)))
+            w = thumb_width(w)
             src = safe_join(base or IMAGES, pid, name)
             dst_dir = safe_join(cache_dir or THUMBS, pid)
             dst = os.path.join(dst_dir, f"{w}-{name}")

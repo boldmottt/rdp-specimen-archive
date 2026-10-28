@@ -392,6 +392,23 @@ class ValidationTests(Base):
         self.assertIn("coating", " ".join(self.bad(d)))
 
 
+class ThumbTests(Base):
+    def test_odd_widths_share_fixed_steps(self):
+        """아무 폭이나 캐시하면 축소본이 끝없이 쌓인다 → 정해진 단계로 올려서 저장."""
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow 없음")
+        os.makedirs(os.path.join(server.IMAGES, "P-W01"))
+        Image.new("RGB", (2400, 988), (80, 80, 80)).save(os.path.join(server.IMAGES, "P-W01", "a.jpg"))
+        for w in (130, 200, 239, 481, 999, 1999, 9999):
+            st, body = self.req("GET", f"/api/thumb/P-W01/a.jpg?w={w}")
+            self.assertEqual(st, 200, w)
+        self.assertEqual(sorted(os.listdir(os.path.join(server.THUMBS, "P-W01"))),
+                         ["1440-a.jpg", "2000-a.jpg", "240-a.jpg", "960-a.jpg"])
+        self.assertEqual(self.req("GET", "/api/thumb/P-W01/a.jpg?w=abc")[0], 400)
+
+
 class ShapeTests(Base):
     """label·work가 빠진 문서 하나가 목차 전체를 멈추게 하던 문제."""
 

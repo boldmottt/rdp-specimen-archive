@@ -39,7 +39,8 @@ function cardHTML(p) {
   const when = (v && v.date) ? fmtDate(v.date).slice(2) : (p.updatedAt ? String(p.updatedAt).slice(2, 10).replace(/-/g, ".") : "");
   const metaParts = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? v.status : when];
   const meta = html`${metaParts.filter(Boolean).map((x, i) => html`${i ? raw("<i></i>") : ""}${x}`)}${layers(v).length ? html`<span class="layer-pill">${layers(v).join("·")}</span>` : ""}`;
-  const dot = (x) => (x.images && x.images.length ? html`<span class="vdot" data-src="${imgUrl(p.id, x.images[0])}"></span>` : raw('<span class="vdot"></span>'));
+  // 컬러 점은 평균색만 필요하다 → 원본(2400px) 대신 가장 작은 축소본
+  const dot = (x) => (x.images && x.images.length ? html`<span class="vdot" data-src="${thumbUrl(p.id, x.images[0], 120)}"></span>` : raw('<span class="vdot"></span>'));
   const chips = vars.length > 1
     ? html`${vars.map((x) => html`
       <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}" data-sel="${x.id}" data-img="${vImg(p.id, x) || ""}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
