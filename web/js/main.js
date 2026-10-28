@@ -81,8 +81,12 @@ async function boot() {
     const typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
     if (e.key === "/" && !typing) { e.preventDefault(); $("#search").focus(); }
     if (e.key === "Escape") {
+      // Esc는 '지금 하던 것 취소'다 — 인라인 편집·대화상자가 이미 처리했거나 입력 중이면 목차로 나가지 않는다
+      if (e.defaultPrevented) return;
       if ($("#crop-modal").classList.contains("on")) return $("#crop-modal").classList.remove("on");
       if ($("#drawer").classList.contains("on")) return closeEditor();
+      if (document.querySelector("dialog[open]")) return;   // 배합 미리보기·확정 저장 대화상자는 스스로 닫힌다
+      if (typing) { ae.blur(); return; }
       if (location.hash) location.hash = "";
     }
   });
@@ -111,5 +115,10 @@ async function boot() {
   rerender();
 }
 
-window.addEventListener("hashchange", rerender);
-boot();
+// 같은 파일이 다른 주소(main.js?v=…)로 한 번 더 실행되면 모든 이벤트가 두 번씩 걸린다
+// (Esc가 입력 취소 뒤 목차 이동까지 하던 원인) → 부팅은 한 번만
+if (!window.__rdpBooted) {
+  window.__rdpBooted = true;
+  window.addEventListener("hashchange", rerender);
+  boot();
+}
