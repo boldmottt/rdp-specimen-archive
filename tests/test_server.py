@@ -738,6 +738,58 @@ def make_jwt(payload, d=D, kid="k1", alg="RS256"):
     return f"{h}.{p}.{b64u(sig)}"
 
 
+class ProposalTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "images": ["v01.jpg"], "mixes": []}]))
+        self.add_image("P-W01", "v01.jpg")
+
+    def doc(self, docNo="RDP-P-20261028-01", rev="0", images=("v01.jpg",)):
+        return {"slug": "2026-10-28_ACME", "docNo": docNo, "rev": rev, "title": "T", "client": "ACME",
+                "items": [{"pattern": {"id": "P-W01", "code": "W01"},
+                           "variations": [{"id": "v01", "name": "Gray", "images": list(images)}]}]}
+
+    def test_confirm_list_get_and_image(self):
+        st, r = self.req("POST", "/api/proposals", self.doc())
+        self.assertEqual(st, 200, r)
+        slug = r["slug"]
+        os.remove(os.path.join(server.IMAGES, "P-W01", "v01.jpg"))   # 원본이 지워져도
+        st, r = self.req("GET", "/api/proposals")
+        self.assertEqual([x["docNo"] for x in r["proposals"]], ["RDP-P-20261028-01"])
+        self.assertEqual(r["proposals"][0]["variations"], 1)
+        st, r = self.req("GET", f"/api/proposals/{slug}")
+        self.assertEqual(r["proposal"]["client"], "ACME")
+        st, raw = self.req("GET", f"/proposal-img/{slug}/P-W01/v01.jpg")
+        self.assertEqual(st, 200)                                       # 확정본 사본은 남아 있다
+        self.assertEqual(raw, b"\xff\xd8fakejpeg")
+
+    def test_missing_image_needs_confirmation(self):
+        st, r = self.req("POST", "/api/proposals", self.doc(images=("gone.jpg",)))
+        self.assertEqual(st, 409, r)
+        self.assertEqual(r["missing"], ["P-W01/gone.jpg"])
+        self.assertEqual(os.listdir(server.PROPOSALS), [])             # 아무것도 쓰지 않음
+        d = dict(self.doc(images=("gone.jpg",)), allowMissing=True)
+        st, r = self.req("POST", "/api/proposals", d)
+        self.assertEqual(st, 200, r)
+        st, got = self.req("GET", f"/api/proposals/{r['slug']}")
+        self.assertNotIn("allowMissing", got["proposal"])
+
+    def test_duplicate_doc_no_rejected_with_suggestion(self):
+        self.assertEqual(self.req("POST", "/api/proposals", self.doc())[0], 200)
+        st, r = self.req("POST", "/api/proposals", self.doc())
+        self.assertEqual(st, 409, r)
+        self.assertTrue(r["duplicate"])
+        self.assertEqual(r["suggest"], "RDP-P-20261028-02")
+        self.assertEqual(self.req("POST", "/api/proposals", self.doc(rev="1"))[0], 200)   # 개정본은 허용
+        st, r = self.req("GET", "/api/proposals/next-no?prefix=RDP-P-20261028-")
+        self.assertEqual(r["docNo"], "RDP-P-20261028-02")
+
+    def test_bad_slug_and_path(self):
+        self.assertEqual(self.req("GET", "/api/proposals/..%2Fpatterns")[0], 400)
+        self.assertEqual(self.req("GET", "/proposal-img/x/../../P-W01/v01.jpg")[0], 400)
+        self.assertEqual(self.req("GET", "/api/proposals/nope")[0], 404)
+
+
 class AccessTests(Base):
     def setUp(self):
         super().setUp()

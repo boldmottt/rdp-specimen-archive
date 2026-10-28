@@ -177,13 +177,13 @@ td.res{text-align:left!important;font-weight:600}
 
 /* proposal */
 .prop-toolbar{position:sticky;top:64px;z-index:40;background:rgba(246,245,242,.94);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);margin-bottom:26px}
-.prop-toolbar-in{max-width:1440px;margin:0 auto;padding:12px 34px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.prop-toolbar-in{max-width:1440px;margin:0 auto;padding:12px 34px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .field{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-3)}
 .field label{white-space:nowrap}
 .field input,.field select{border:1px solid var(--line-2);background:transparent;border-radius:8px;padding:7px 10px;font:inherit;font-size:12.5px;color:var(--ink);outline:none;min-width:0}
 .field input:focus{border-color:var(--ink);background:#fff}
 .field label{flex:none}
-.field input.w-lg{width:240px}.field input.w-md{width:130px}.field input.w-sm{width:104px}
+.field input.w-lg{width:180px}.field input.w-md{width:116px}.field input.w-sm{width:100px}
 .toggle{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);cursor:pointer;user-select:none}
 .toggle input{accent-color:#141517}
 .sheets{padding-bottom:120px;display:flex;flex-direction:column;align-items:center;gap:20px}
@@ -574,3 +574,36 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .recipe-preview a{font-size:12px;text-decoration:underline}
 @media screen and (max-width:500px){.recipe-form{grid-template-columns:1fr}.recipe-preview{padding:16px}}
 @media print{.recipe-preview{display:none!important}}
+
+/* 제안서 상태 · 보관함 */
+.prop-status{font-size:12px;white-space:nowrap}
+.prop-status.ok{color:var(--ok)}
+.prop-status{border:1px solid currentColor;border-radius:999px;padding:3px 10px;font-weight:600}
+a.prop-status.ok:hover{background:#fff}
+.prop-status.warn{color:var(--warn)}
+.choose-dialog{width:min(560px,94vw)}
+.choose-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:18px}
+.arch-title{font-size:15px;letter-spacing:-.01em}
+.arch-count{font-size:12.5px;color:var(--ink-3)}
+.arch-badge{font-size:11.5px;font-weight:600;color:var(--ok);border:1px solid currentColor;border-radius:999px;padding:2px 9px}
+.arch-list{display:flex;flex-direction:column;border-top:1px solid var(--line);margin-bottom:80px}
+.arch-row{display:grid;grid-template-columns:120px minmax(0,1.6fr) minmax(0,1.1fr) minmax(0,1fr) 150px;gap:18px;align-items:center;padding:14px 6px;border-bottom:1px solid var(--line);transition:background .15s}
+.arch-row:hover{background:#fff}
+.arch-thumb{display:block;width:120px;aspect-ratio:170/70;border-radius:6px;overflow:hidden;background:#eceae5}
+.arch-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.arch-main{display:flex;flex-direction:column;gap:3px;min-width:0}
+.arch-main b{font-size:14.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arch-main span{font-size:12.5px;color:var(--ink-3)}
+.arch-doc{font-family:var(--mono);font-size:12.5px}
+.arch-doc em{font-style:normal;color:var(--ink-3)}
+.arch-n{font-size:12.5px;color:var(--ink-2)}
+.arch-n .warn{font-style:normal;color:var(--warn)}
+.arch-date{display:flex;flex-direction:column;align-items:flex-end;font-size:12.5px;font-variant-numeric:tabular-nums}
+.arch-date small{font-size:11.5px;color:var(--ink-3)}
+@media screen and (max-width:760px){
+  .prop-toolbar-in{padding-left:16px;padding-right:16px}
+  .arch-row{grid-template-columns:96px minmax(0,1fr);gap:4px 12px;align-items:start}
+  .arch-thumb{width:96px;grid-row:span 4}
+  .arch-date{align-items:flex-start;flex-direction:row;gap:8px;flex-wrap:wrap}
+}
+@media print{.prop-status{display:none}}

@@ -2,7 +2,7 @@
 import { $, $$, App, apiGet, esc, loadLS, toast } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
-import { renderCart, renderProposal } from "./proposal.js";
+import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
 import { E, closeEditor, newDoc, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
@@ -21,6 +21,10 @@ export function rerender() {
     renderCart();
   } else if (h === "/proposal") {
     renderProposal();
+  } else if (h === "/proposals") {
+    renderArchive();
+  } else if (h.indexOf("/proposals/") === 0) {
+    renderArchived(decodeURIComponent(h.slice("/proposals/".length)));
   } else {
     renderCatalog();
     renderCart();
