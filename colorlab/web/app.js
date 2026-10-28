@@ -476,7 +476,18 @@
     ks.slice(0, -1).forEach((k, i) => { if (x[k] == null) x[k] = /^\d+$/.test(ks[i + 1]) ? [] : {}; x = x[k]; });
     if (v === undefined) delete x[ks[ks.length - 1]]; else x[ks[ks.length - 1]] = v;
   }
-  function markDirty() { S.dirty = true; status(); const b = $("#save"); if (b) b.classList.add("hot"); }
+  // 보정 프로필 적용·끄기·되돌리기는 저장된 라이브러리로 하고 끝나면 다시 불러온다 → 저장 안 한 변경이 있으면 막는다
+  const PROFILE_BUTTONS = ["#prof-run", "#prof-apply", "#prof-off", "#prof-revert"];
+  function markDirty() {
+    S.dirty = true; status();
+    const b = $("#save"); if (b) b.classList.add("hot");
+    PROFILE_BUTTONS.forEach((sel) => { const x = $(sel); if (x) { x.disabled = true; x.title = "라이브러리를 저장한 뒤 할 수 있어요"; } });
+  }
+  function blockedByEdits() {
+    if (!S.dirty) return false;
+    toast("저장 안 한 라이브러리 변경이 있어요 — 먼저 저장하거나 되돌린 뒤 하세요 (지금 하면 그 변경이 사라집니다)", true);
+    return true;
+  }
 
   // 측정값 칸: SCI · SCE LAB + 분광 단추
   function measCell(path, title) {
@@ -677,9 +688,9 @@
           · 잉크 ${esc(act.inks.join(", ") || "(측정 보정 잉크만)")} · <span class="cl-tag ${confClass(act.confidence.level)}">신뢰도 ${esc(act.confidence.level)}</span>
           <span class="cl-note">${esc((act.created || "").replace("T", " "))}</span>
           ${act.stale && act.stale.length ? `<span class="cl-tag mid" title="계산 이후 바뀐 입력">재맞추기 필요 — ${esc(act.stale.join(" · "))}</span>` : ""}
-          <span class="grow"></span><button class="cl-btn ghost sm" id="prof-off">끄기</button>`
+          <span class="grow"></span><button class="cl-btn ghost sm" id="prof-off"${S.dirty ? " disabled" : ""}>끄기</button>`
         : `<span class="cl-note">적용한 프로필이 없습니다 — 은폐 도막만 있는 잉크는 프로필을 적용해야 계산됩니다.</span><span class="grow"></span>`}
-        ${prev ? `<button class="cl-btn ghost sm" id="prof-revert" title="${esc(`동판 ${prev.plate} · ${prev.mode.toUpperCase()} · ${(prev.created || "").replace("T", " ")}`)}">${act ? "바로 전 프로필로 되돌리기" : "바로 전 프로필 다시 켜기"}</button>` : ""}</div>
+        ${prev ? `<button class="cl-btn ghost sm" id="prof-revert"${S.dirty ? " disabled" : ""} title="${esc(`동판 ${prev.plate} · ${prev.mode.toUpperCase()} · ${(prev.created || "").replace("T", " ")}`)}">${act ? "바로 전 프로필로 되돌리기" : "바로 전 프로필 다시 켜기"}</button>` : ""}</div>
       <div class="cl-actions">
         <label class="cl-f sm"><span>동판</span><select id="prof-plate">${lots.map((l) => `<option value="${esc(l)}"${l === plate ? " selected" : ""}>${esc(l)} (시료 ${counts[l] || 0})</option>`).join("")}</select></label>
         <span class="cl-note">모드: <b>${S.mode.toUpperCase()}</b> (오른쪽 위에서 바꿈)${S.mode === "sce" ? " — 은폐 도막(광택)과 종이 시료(무광)를 SCE로 비교하면 오차가 커요. SCI 권장" : ""}</span>
@@ -730,7 +741,7 @@
       <div class="cl-actions">
         ${lv === "부족" ? `<button class="cl-btn" disabled>적용할 수 없음</button><span class="cl-note bad">위 문제를 먼저 해결해야 합니다</span>`
           : `${lv === "낮음" ? `<label class="cl-check"><input type="checkbox" id="prof-ack"${S.prof.ack ? " checked" : ""}> 신뢰도가 낮은 것을 알고 적용합니다</label>` : ""}
-             <button class="cl-btn" id="prof-apply"${lv === "낮음" && !S.prof.ack ? " disabled" : ""}>이 프로필 적용</button>
+             <button class="cl-btn" id="prof-apply"${(lv === "낮음" && !S.prof.ack) || S.dirty ? " disabled" : ""}>이 프로필 적용</button>
              <span class="cl-note">적용하면 이 동판의 망점 곡선·막두께와 위 잉크 값이 예측·추천·보정에 쓰입니다. 원본 측정은 바뀌지 않아요.</span>`}</div>` : ""}
     </div>`;
   }
@@ -747,6 +758,7 @@
   }
 
   async function applyProfile() {
+    if (blockedByEdits()) return;
     const r = S.prof.run;
     try {
       await api("POST", "/api/lab/profile/apply", { mode: r.mode, plate: r.plate, space: r.space, snapshot: S.prof.snapshot, ack_low: !!S.prof.ack },
@@ -762,6 +774,7 @@
   }
 
   async function switchProfile(action) {
+    if (blockedByEdits()) return;
     if (!confirm(action === "off" ? "적용 중인 보정 프로필을 끌까요? (바로 전 프로필로 남아서 다시 켤 수 있어요)" : "바로 전 프로필로 바꿀까요?")) return;
     try {
       await api("POST", `/api/lab/profile/${action}`, {}, { "X-Base-Rev": S.rev });
