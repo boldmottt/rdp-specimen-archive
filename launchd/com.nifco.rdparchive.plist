@@ -5,7 +5,7 @@
   <key>Label</key><string>com.nifco.rdparchive</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/python3</string>
+    <string>__PY__</string>
     <string>__APP__/server.py</string>
     <string>--no-browser</string>
   </array>
@@ -18,7 +18,7 @@
   <key>StandardErrorPath</key><string>__LOG__</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PATH</key><string>__PYDIR__:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 </dict>
 </plist>

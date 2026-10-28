@@ -7,6 +7,7 @@
 1. `RDP Archive.command` 더블클릭 (또는 `python3 server.py`)
 2. 브라우저가 `http://localhost:8791` 로 열림
 3. 창을 닫으면 서버 종료. 다시 쓰려면 다시 더블클릭
+   (로그인 자동 실행 `install_launchagent.sh`를 등록했다면 이 파일은 그 서버를 다시 시작하고 브라우저만 엽니다 — 창을 닫아도 계속 켜져 있음)
 
 처음 한 번만: `python3 -m pip install --user pillow`
 
