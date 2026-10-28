@@ -159,7 +159,14 @@ export const inCart = (pid, vid) => App.cart.some((c) => c.pid === pid && c.vid 
 export function toggleCart(pid, vid) {
   const i = App.cart.findIndex((c) => c.pid === pid && c.vid === vid);
   if (i >= 0) App.cart.splice(i, 1); else App.cart.push({ pid, vid });
+  if (!App.cart.length) resetPropIdentity();
   saveLS();
+}
+
+// 담은 시편을 다 비우면 새 제안서로 본다: 문서 번호·날짜·확정 상태를 새로 (지난 확정의 날짜·번호가 남지 않게)
+export function resetPropIdentity() {
+  Object.assign(App.prop, { date: "", docNo: "", rev: "0", confirmed: null });
+  delete App.prop.confirmedDocNo;
 }
 
 const colorCache = new Map();
