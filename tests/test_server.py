@@ -409,6 +409,39 @@ class ThumbTests(Base):
         self.assertEqual(self.req("GET", "/api/thumb/P-W01/a.jpg?w=abc")[0], 400)
 
 
+class SmallServerTests(Base):
+    def test_sync_all_is_allowed_in_lan_mode(self):
+        """DB는 읽기만 하는 동기화 — 한 건씩 가져오기처럼 LAN 모드에서도 된다 (DB 쓰기만 allowLanWrite)."""
+        with mock.patch.object(server, "LAN_MODE", True):
+            self.assertEqual(self.req("POST", "/api/rdp/sync-all")[0], 200)
+            self.assertEqual(self.req("POST", "/api/rdp/push/P-W01", {"planHash": "x"})[0], 403)   # DB 쓰기는 그대로 막힘
+
+    def test_open_folder_only_from_this_computer(self):
+        with mock.patch.object(server.subprocess, "Popen") as popen, mock.patch.object(server.os, "startfile", create=True):
+            self.assertEqual(self.req("POST", "/api/open-folder")[0], 200)
+            with mock.patch.object(server.Handler, "_is_local_direct", lambda self: False):
+                self.assertEqual(self.req("POST", "/api/open-folder")[0], 403)
+        self.assertLessEqual(popen.call_count, 1)
+
+    def test_merge_sort_survives_numeric_layer(self):
+        v = {"mixes": [mix(1, "B1", "26_001"), mix("1도", "A1", "26_001")]}
+        server.merge_mixes(v, [])
+        self.assertEqual([m["batch"] for m in v["mixes"]], ["B1", "A1"])
+
+    def test_prune_old_only_when_configured(self):
+        folder = os.path.join(self.tmp, "box")
+        os.makedirs(os.path.join(folder, "old-dir"))
+        for name in ("old.json", "new.json"):
+            with open(os.path.join(folder, name), "w") as f:
+                f.write("x")
+        old = time.time() - 40 * 86400
+        for name in ("old.json", "old-dir"):
+            os.utime(os.path.join(folder, name), (old, old))
+        self.assertEqual(server.prune_old(folder, None), 0)
+        self.assertEqual(server.prune_old(folder, 30), 2)
+        self.assertEqual(os.listdir(folder), ["new.json"])
+
+
 class ShapeTests(Base):
     """label·work가 빠진 문서 하나가 목차 전체를 멈추게 하던 문제."""
 

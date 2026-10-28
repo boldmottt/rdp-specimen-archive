@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPut, byId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 
 /* ---------------- catalog ---------------- */
@@ -113,7 +113,7 @@ export function renderCatalog() {
     </div>`;
 
   const of = $("#openfolder");
-  if (of) of.onclick = (e) => { e.preventDefault(); fetch("/api/open-folder", { method: "POST" }).then(() => toast("Finder에서 열었습니다")).catch(() => {}); };
+  if (of) of.onclick = (e) => { e.preventDefault(); apiPost("/api/open-folder").then(() => toast("데이터 폴더를 열었습니다")).catch((err) => toast(err.message)); };
   paintDots();
   $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
   const btnAll = $("#selall");

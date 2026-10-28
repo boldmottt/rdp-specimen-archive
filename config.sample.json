@@ -9,5 +9,7 @@
   "rdpDbPath": "~/path/to/rdp.db",
   "worklogDir": "~/MySecondBrain/Areas/NIFCO/작업일지",
   "lan": false,
-  "lanPin": ""
+  "lanPin": "",
+  "backupKeepDays": null,
+  "trashKeepDays": null
 }

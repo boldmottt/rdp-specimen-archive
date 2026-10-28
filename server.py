@@ -687,7 +687,8 @@ def merge_mixes(v, db_mixes):
                 if apply_db_mix(cur[pick], dm, registry):
                     updated += 1
 
-    cur.sort(key=lambda m: (m.get("layer") or "", m.get("date") or "", m.get("batch") or "", m.get("plate") or ""))
+    # 글자로 비교 (도수를 숫자 1로 적은 배합이 섞여 있어도 정렬이 TypeError로 멈추지 않게)
+    cur.sort(key=lambda m: tuple(str(m.get(k) or "") for k in ("layer", "date", "batch", "plate")))
     return added, updated
 
 
@@ -1341,6 +1342,31 @@ def gc_images(pid: str, doc: dict, min_age: float = 600) -> list:
             move_to_trash(os.path.join(pdir, f), f"{pid}_{f}")
             moved.append(f)
     return moved
+
+
+def prune_old(folder: str, days) -> int:
+    """folder 안에서 days일보다 오래된 항목을 아주 지운다. days를 정하지 않으면(기본) 아무것도 지우지 않는다.
+    _backup·_trash가 드라이브 용량을 끝없이 차지하지 않게 — config.json의 backupKeepDays·trashKeepDays."""
+    try:
+        days = float(days)
+    except (TypeError, ValueError):
+        return 0
+    if days < 1 or not os.path.isdir(folder):
+        return 0
+    cutoff, n = time.time() - days * 86400, 0
+    for name in os.listdir(folder):
+        path = os.path.join(folder, name)
+        try:
+            if os.path.getmtime(path) >= cutoff:
+                continue
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            n += 1
+        except OSError as e:
+            print(f"[warn] 오래된 항목을 지우지 못했습니다 {path}: {e}")
+    return n
 
 
 def gc_unsaved_uploads(min_age: float = 7 * 86400) -> list:
@@ -2166,11 +2192,21 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/api/lab/"):
                 return self._lab("POST", p, {}, self._lab_body())
             if p == "/api/open-folder":
-                subprocess.Popen(["open", DATA])
+                # 이 맥 앞에서 누른 것만 (터널·LAN으로 누르면 집 맥에 Finder 창이 뜬다)
+                if not self._is_local_direct():
+                    return self.error(403, "데이터 폴더는 서버가 켜진 컴퓨터에서만 열 수 있어요")
+                try:
+                    if sys.platform == "darwin":
+                        subprocess.Popen(["open", DATA])
+                    elif os.name == "nt":
+                        os.startfile(DATA)   # noqa: S606 — 윈도우 탐색기
+                    else:
+                        subprocess.Popen(["xdg-open", DATA])
+                except OSError as e:
+                    return self.error(500, f"폴더를 열지 못했습니다: {e} — 경로: {DATA}")
                 return self.json({"ok": True})
             if p == "/api/rdp/sync-all":
-                if not self._db_write_allowed():
-                    return self.error(403, "LAN 모드에서는 DB 동기화가 꺼져 있습니다 (config.allowLanWrite)")
+                # DB는 읽기만 하고 아카이브 JSON을 고친다 → 한 건씩 가져오기(/api/rdp/sync/)와 같이 LAN 모드에서도 허용
                 total = {"added": 0, "updated": 0, "patterns": 0, "skipped": []}
                 docs = load_all()[0]
                 for doc in docs:
@@ -2710,6 +2746,14 @@ if __name__ == "__main__":
                 print(f"[gc] 저장하지 않은 업로드 정리: {x}")
         except Exception as e:
             print(f"[gc] 건너뜀: {e}")
+        for folder, key in ((BACKUP, "backupKeepDays"), (TRASH, "trashKeepDays")):
+            if CFG.get(key):
+                n = prune_old(folder, CFG.get(key))
+                if n:
+                    print(f"[gc] {os.path.basename(folder)}: {CFG.get(key)}일 지난 {n}개를 지웠습니다 ({key})")
+            elif os.path.isdir(folder):
+                print(f"[i] {os.path.basename(folder)} {len(os.listdir(folder))}개 보관 중"
+                      f" (오래된 것을 자동으로 지우려면 config.json에 {key})")
     start_heartbeat()
 
     bind_addr = "127.0.0.1"
