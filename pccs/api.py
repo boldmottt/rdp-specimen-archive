@@ -40,6 +40,23 @@ def get_index(folder):
         return _cache["index"]
 
 
+def _check(w, idx):
+    """일지 하나 검사. 검사기 자체가 실패해도 그 일지만 오류로 보이고 목록은 살아 있게 한다."""
+    try:
+        return worklog.check(w, idx)
+    except Exception as e:   # noqa: BLE001 — 어떤 모양의 일지가 와도 화면 전체가 500이 되면 안 된다
+        return {"errors": [{"where": "검사", "msg": f"이 일지를 검사하지 못했습니다 ({type(e).__name__}: {e}) — 형식을 확인하세요"}],
+                "warnings": [], "stats": {}}
+
+
+def _summary(w, res):
+    try:
+        return worklog.summary(w, res)
+    except Exception:   # noqa: BLE001
+        return {"name": w.name, "date": w.date, "kind": w.kind, "category": "", "titles": [], "lots": [],
+                "errors": len(res["errors"]) or 1, "warnings": len(res["warnings"]), "stats": {}}
+
+
 def handle(path, query, cfg):
     """(HTTP 상태, JSON 객체)를 돌려준다."""
     folder = worklog_dir(cfg)
@@ -59,7 +76,7 @@ def handle(path, query, cfg):
     if path == "/api/pccs/files":
         files = []
         for w in reversed(idx.logs):
-            files.append(worklog.summary(w, worklog.check(w, idx)))
+            files.append(_summary(w, _check(w, idx)))
         return 200, {"ok": True, "dir": folder, "files": files}
 
     if path == "/api/pccs/file":
@@ -67,8 +84,8 @@ def handle(path, query, cfg):
         w = next((x for x in idx.logs if x.name == name), None)   # 색인에 있는 이름만 (경로 조작 불가)
         if w is None:
             return 404, {"ok": False, "error": "일지를 찾을 수 없습니다"}
-        res = worklog.check(w, idx)
-        return 200, {"ok": True, **worklog.summary(w, res), "result": res,
+        res = _check(w, idx)
+        return 200, {"ok": True, **_summary(w, res), "result": res,
                      "frontmatter": w.fm if w.kind in ("v3", "v2") else None,
                      "error": w.error}
 

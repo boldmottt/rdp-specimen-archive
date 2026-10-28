@@ -498,13 +498,17 @@ def similar(target, mode, patterns, worklog_index=None, limit=12, transfers=None
             if w.kind != "v3":
                 continue
             for j in w.jobs:
-                for s in j.get("samples") or []:
-                    L = _full_lab(((s or {}).get("lab") or {}).get(mode))
+                plate = j.get("plate") if isinstance(j.get("plate"), dict) else {}   # 모양이 틀린 일지는 PCCS3가 오류로 알린다
+                for s in j.get("samples") if isinstance(j.get("samples"), list) else []:
+                    if not isinstance(s, dict) or not isinstance(s.get("lab"), dict):
+                        continue
+                    L = _full_lab(s["lab"].get(mode))
                     if L is None:
                         continue
-                    lot = (j.get("plate") or {}).get("lot")
+                    lot = plate.get("lot")
+                    layers = s.get("layers") if isinstance(s.get("layers"), dict) else {}
                     out.append({"source": "작업일지", "id": w.name, "title": f"{w.date} · 동판 {lot}",
-                                "detail": f"{s.get('substrate')} · " + " + ".join(f"{k} {v}" for k, v in (s.get("layers") or {}).items()),
+                                "detail": f"{s.get('substrate')} · " + " + ".join(f"{k} {v}" for k, v in layers.items()),
                                 "inks": {}, "lab": [round(x, 2) for x in L], "hex": cm.lab_to_hex(L),
                                 "dE": round(cm.delta_e2000(L, target), 2), "eval": s.get("eval"),
                                 "link": f"/pccs/#/file/{w.name}"})

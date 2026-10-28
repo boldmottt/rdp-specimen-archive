@@ -30,6 +30,20 @@ def yaml_available() -> bool:
     return yaml is not None
 
 
+# 일지는 사람·AI가 손으로 쓰므로 모양이 틀릴 수 있다 → 틀린 칸은 빈 값으로 읽고, 검사(check)가 오류로 알린다.
+# (plate: "A1"처럼 글자 하나 때문에 폴더 전체 색인·화면이 멈추면 안 된다)
+def _d(x):
+    return x if isinstance(x, dict) else {}
+
+
+def _l(x):
+    return x if isinstance(x, list) else []
+
+
+def _qty(x):
+    return x if isinstance(x, int) and not isinstance(x, bool) and x > 0 else 0
+
+
 # ---------------------------------------------------------------- 읽기
 class Worklog:
     """일지 파일 하나. kind: v3 / v2 / none(frontmatter 없음) / broken(YAML 오류)."""
@@ -64,7 +78,7 @@ class Worklog:
         """YAML 1.1은 'no:' 키를 False로 읽는다 → seq로 옮기고 오류로 남긴다."""
         n = 0
         for j in self.jobs:
-            for o in [j] + list(j.get("samples") or []):
+            for o in [j] + _l(j.get("samples")):
                 if isinstance(o, dict) and "seq" not in o and False in o:
                     o["seq"] = o.pop(False)
                     n += 1
@@ -77,11 +91,11 @@ class Worklog:
 
     @property
     def jobs(self):
-        return [j for j in ((self.fm or {}).get("jobs") or []) if isinstance(j, dict)]
+        return [j for j in _l((self.fm or {}).get("jobs")) if isinstance(j, dict)]
 
     @property
     def substrates(self):
-        return [s for s in ((self.fm or {}).get("substrates") or []) if isinstance(s, dict)]
+        return [s for s in _l((self.fm or {}).get("substrates")) if isinstance(s, dict)]
 
 
 # ---------------------------------------------------------------- 배합 도우미
@@ -93,11 +107,15 @@ def _num(x):
 
 
 def ink_total(b):
-    return sum(_num(v) or 0 for v in (b.get("inks") or {}).values())
+    return sum(_num(v) or 0 for v in _d(b.get("inks")).values())
 
 
 def has_values(b):
-    return bool(b.get("inks"))
+    return bool(_d(b.get("inks")))
+
+
+def inks_sig(b):
+    return tuple(sorted((str(k), str(v)) for k, v in _d(b.get("inks")).items()))
 
 
 def batch_key(lot, layer, code):
@@ -127,8 +145,8 @@ class Index:
             if w.kind != "v3":
                 continue
             for j in w.jobs:
-                lot = (j.get("plate") or {}).get("lot")
-                for b in j.get("batches") or []:
+                lot = _d(j.get("plate")).get("lot")
+                for b in _l(j.get("batches")):
                     if isinstance(b, dict):
                         self.batches.setdefault(batch_key(lot, b.get("layer"), b.get("code")), []).append((w, b))
 
@@ -153,7 +171,7 @@ class Index:
             p["last"] = max(p["last"], e["date"])
             p["days"].add(e["date"])
             p["patterns"].update(c for c in e["layers"].values() if c)
-            p["samples"] += sum(s.get("qty") or 0 for s in e.get("samples") or [])
+            p["samples"] += sum(_qty(s.get("qty")) for s in e.get("samples") or [])
         out = []
         for p in seen.values():
             out.append({**p, "days": len(p["days"]), "patterns": sorted(p["patterns"])})
@@ -164,7 +182,7 @@ class Index:
         for w in self.logs:
             if w.kind == "v3":
                 for j in w.jobs:
-                    plate = j.get("plate") or {}
+                    plate = _d(j.get("plate"))
                     l = str(plate.get("lot") or "")
                     if not l or (lot and l != lot):
                         continue
@@ -173,19 +191,19 @@ class Index:
                         "seq": j.get("seq"), "title": j.get("title") or "", "customer": j.get("customer") or "",
                         "project": j.get("project") or "", "stage": j.get("stage") or "",
                         "status": j.get("status") or "",
-                        "layers": {str(k): str(v) for k, v in (plate.get("layers") or {}).items()},
+                        "layers": {str(k): str(v) for k, v in _d(plate.get("layers")).items()},
                         "batches": [{"layer": b.get("layer"), "code": str(b.get("code")),
                                      "same_as": b.get("same_as"), "status": b.get("status"),
-                                     "note": b.get("note")} for b in j.get("batches") or [] if isinstance(b, dict)],
-                        "samples": [s for s in j.get("samples") or [] if isinstance(s, dict)],
+                                     "note": b.get("note")} for b in _l(j.get("batches")) if isinstance(b, dict)],
+                        "samples": [s for s in _l(j.get("samples")) if isinstance(s, dict)],
                     })
             elif w.kind == "v2":
                 # v2.1: patterns → plates(lot, layers, batches)만 있다
                 per = {}
-                for p in (w.fm or {}).get("patterns") or []:
+                for p in _l((w.fm or {}).get("patterns")):
                     if not isinstance(p, dict):
                         continue
-                    for pl in p.get("plates") or []:
+                    for pl in _l(p.get("plates")):
                         if not isinstance(pl, dict):
                             continue
                         l = str(pl.get("lot") or "")
@@ -193,12 +211,12 @@ class Index:
                             continue
                         e = per.setdefault(l, {"lot": l, "date": w.date, "file": w.name, "kind": "v2",
                                                "layers": {}, "batches": [], "samples": []})
-                        for layer in pl.get("layers") or []:
+                        for layer in _l(pl.get("layers")):
                             e["layers"][str(layer)] = str(p.get("code") or "")
-                        for c in pl.get("batches") or []:
+                        for c in _l(pl.get("batches")):
                             e["batches"].append({"layer": None, "code": str(c)})
                 out.extend(per.values())
-        return sorted(out, key=lambda e: (e["date"], e["file"], e.get("seq") or 0))
+        return sorted(out, key=lambda e: (e["date"], e["file"], str(e.get("seq") or "")))
 
 
 def load_folder(folder):
@@ -208,7 +226,7 @@ def load_folder(folder):
             if name.endswith(".md") and not name.startswith("."):
                 try:
                     logs.append(Worklog(os.path.join(folder, name)))
-                except (OSError, UnicodeDecodeError) as e:
+                except Exception as e:      # 한 파일이 폴더 전체 색인을 멈추게 하지 않는다
                     w = Worklog.__new__(Worklog)
                     w.path, w.name, w.mtime, w.fm, w.body = os.path.join(folder, name), name, 0, None, ""
                     w.kind, w.error, w.notes = "broken", f"읽기 실패: {e}", []
@@ -246,8 +264,14 @@ def check(w, index=None):
     if d.get("category") and d["category"] not in CATEGORY:
         E("공통", f"category 값이 규칙 밖: {d['category']}")
     tags = d.get("tags") or []
+    if not isinstance(tags, list):
+        E("공통", f"tags가 목록이 아님: {tags}")
+        tags = []
     if tags and tags[0] != "NIFCO":
         E("공통", "tags 첫 항목이 NIFCO가 아님")
+    for k in ("jobs", "substrates"):
+        if d.get(k) is not None and not isinstance(d[k], list):
+            E("공통", f"{k}가 목록이 아님 (- 로 시작하는 줄들이어야 함)")
 
     subs = w.substrates
     for s in subs:
@@ -274,12 +298,20 @@ def check(w, index=None):
     # --- 이 파일의 배합
     local = {}
     for j in w.jobs:
-        lot = (j.get("plate") or {}).get("lot")
+        tag = f"작업 {j.get('seq')}"
+        if j.get("plate") is not None and not isinstance(j["plate"], dict):
+            E(tag, f"plate가 {{lot:, layers:}} 형식이 아님: {j['plate']}")
+        for k in ("batches", "samples"):
+            if j.get(k) is not None and not isinstance(j[k], list):
+                E(tag, f"{k}가 목록이 아님 (- 로 시작하는 줄들이어야 함)")
+        lot = _d(j.get("plate")).get("lot")
         if not isinstance(lot, str):
-            E(f"작업 {j.get('seq')}", f"plate.lot이 따옴표 문자열이 아님: {lot}")
-        for b in j.get("batches") or []:
+            E(tag, f"plate.lot이 따옴표 문자열이 아님: {lot}")
+        for b in _l(j.get("batches")):
             if not isinstance(b, dict):
                 continue
+            if b.get("inks") is not None and not isinstance(b["inks"], dict):
+                E(tag, f"배합 {b.get('layer')}/{b.get('code')}: inks는 {{잉크: g}} 형식이어야 함")
             if not isinstance(b.get("code"), str):
                 E(f"작업 {j.get('seq')}", f"배치 코드가 문자열이 아님 (따옴표 필요): {b.get('code')}")
             key = batch_key(lot, b.get("layer"), b.get("code"))
@@ -320,7 +352,7 @@ def check(w, index=None):
                             E(f"배합 {name}", f"원본이 다른 날짜 파일({ow.name})이면 값도 함께 적어야 함")
                         elif not same_values(b, ob):
                             E(f"배합 {name}", f"same_as 원본({ow.name})과 값이 다름")
-                        if len({str(sorted((x.get('inks') or {}).items())) for _, x in others}) > 1:
+                        if len({inks_sig(x) for _, x in others}) > 1:
                             W(f"배합 {name}", f"same_as 원본({b['same_as']})이 여러 날짜에 서로 다른 값으로 있음 — 가장 최근 {ow.date} 기준")
             if not has_values(b):
                 continue
@@ -328,7 +360,7 @@ def check(w, index=None):
             E(f"배합 {name}", "inks 없음 (same_as도 없음)")
             continue
         ink = ink_total(b)
-        tot = ink + sum(_num((b.get(k) or {}).get("g")) or 0 for k in ("matting", "thinner", "hardener"))
+        tot = ink + sum(_num(_d(b.get(k)).get("g")) or 0 for k in ("matting", "thinner", "hardener"))
         if b.get("total") is None:
             E(f"배합 {name}", "total 없음")
         elif abs(tot - (_num(b["total"]) or 0)) > 1e-6:
@@ -358,7 +390,7 @@ def check(w, index=None):
     sig = {}
     for key, b in local.items():
         if has_values(b) and "same_as" not in b:
-            s = (tuple(sorted((b.get("inks") or {}).items())), str(b.get("matting")), str(b.get("thinner")), str(b.get("hardener")))
+            s = (inks_sig(b), str(b.get("matting")), str(b.get("thinner")), str(b.get("hardener")))
             sig.setdefault(s, []).append("/".join(key))
     for keys in sig.values():
         if len(keys) > 1:
@@ -376,14 +408,17 @@ def check(w, index=None):
             E(tag, f"stage 값이 규칙 밖: {j['stage']}")
         if j.get("type") and j["type"] not in TYPE:
             E(tag, f"type 값이 규칙 밖: {j['type']}")
-        plate = j.get("plate") or {}
+        plate = _d(j.get("plate"))
         lot, layers = str(plate.get("lot")), plate.get("layers") or {}
+        if not isinstance(layers, dict):
+            E(tag, "plate.layers는 {도수: 패턴 코드} 형식이어야 함")
+            layers = {}
         if not layers:
             E(tag, "plate.layers(도수 → 패턴 코드) 없음")
-        for b in j.get("batches") or []:
+        for b in _l(j.get("batches")):
             if isinstance(b, dict) and b.get("layer") not in layers:
                 E(tag, f"배합 {b.get('layer')}/{b.get('code')}의 도수가 plate.layers에 없음")
-        for s in j.get("samples") or []:
+        for s in _l(j.get("samples")):
             if not isinstance(s, dict):
                 continue
             st = f"{tag} 시료 {s.get('seq')}"
@@ -401,7 +436,9 @@ def check(w, index=None):
                 stats["qty"] += s["qty"]
             if not s.get("layers"):
                 E(st, "layers(도수 → 배치 코드) 없음")
-            for ly, cd in (s.get("layers") or {}).items():
+            elif not isinstance(s["layers"], dict):
+                E(st, "layers는 {도수: 배치 코드} 형식이어야 함")
+            for ly, cd in _d(s.get("layers")).items():
                 if not isinstance(cd, str):
                     E(st, f"배치 코드가 문자열이 아님 (따옴표 필요): {cd}")
                 if ly not in layers:
@@ -415,23 +452,23 @@ def check(w, index=None):
     # --- patterns(v2.1) ↔ jobs (패턴 코드별로 쪼갠 형태여야 한다)
     want = {}
     for j in w.jobs:
-        plate = j.get("plate") or {}
-        for b in j.get("batches") or []:
+        plate = _d(j.get("plate"))
+        for b in _l(j.get("batches")):
             if not isinstance(b, dict):
                 continue
-            code = (plate.get("layers") or {}).get(b.get("layer"))
+            code = _d(plate.get("layers")).get(b.get("layer"))
             e = want.setdefault((str(code), str(plate.get("lot"))), {"layers": set(), "batches": set()})
             e["layers"].add(str(b.get("layer")))
             e["batches"].add(str(b.get("code")))
     have = {}
-    for p in d.get("patterns") or []:
+    for p in _l(d.get("patterns")):
         if not isinstance(p, dict):
             continue
-        for pl in p.get("plates") or []:
+        for pl in _l(p.get("plates")):
             if isinstance(pl, dict):
                 have[(str(p.get("code")), str(pl.get("lot")))] = {
-                    "layers": set(map(str, pl.get("layers") or [])),
-                    "batches": set(map(str, pl.get("batches") or []))}
+                    "layers": set(map(str, _l(pl.get("layers")))),
+                    "batches": set(map(str, _l(pl.get("batches"))))}
     for k in sorted(set(want) | set(have)):
         if want.get(k) != have.get(k):
             E("patterns", f"{k[0]} / {k[1]}: jobs={_fmt(want.get(k))} · patterns={_fmt(have.get(k))}"
@@ -439,8 +476,8 @@ def check(w, index=None):
 
     # --- 본문 '총계 (lot)' 줄들 (작업 순서 표 · 시료 표 · 결과)
     for j in w.jobs:
-        lot = str((j.get("plate") or {}).get("lot"))
-        q = sum(s.get("qty") or 0 for s in j.get("samples") or [] if isinstance(s, dict) and isinstance(s.get("qty"), int))
+        lot = str(_d(j.get("plate")).get("lot"))
+        q = sum(_qty(s.get("qty")) for s in _l(j.get("samples")) if isinstance(s, dict))
         for ln in re.findall(rf"[^\n]*총계 \({re.escape(lot)}\)[^\n]*", w.body):
             nums = re.findall(r"(\d+)장", ln)
             if nums and int(nums[-1]) != q:   # 줄의 마지막 'N장' (앞의 '동판 1장' 제외)
@@ -456,11 +493,11 @@ def _fmt(x):
 
 
 def summary(w, result):
-    titles = [j.get("title") or f"동판 {(j.get('plate') or {}).get('lot')}" for j in w.jobs]
-    lots = [str((j.get("plate") or {}).get("lot")) for j in w.jobs]
+    titles = [str(j.get("title") or f"동판 {_d(j.get('plate')).get('lot')}") for j in w.jobs]
+    lots = [str(_d(j.get("plate")).get("lot")) for j in w.jobs]
     if w.kind == "v2":
-        lots = sorted({str(pl.get("lot")) for p in (w.fm or {}).get("patterns") or [] if isinstance(p, dict)
-                       for pl in p.get("plates") or [] if isinstance(pl, dict) and pl.get("lot")})
+        lots = sorted({str(pl.get("lot")) for p in _l((w.fm or {}).get("patterns")) if isinstance(p, dict)
+                       for pl in _l(p.get("plates")) if isinstance(pl, dict) and pl.get("lot")})
     return {"name": w.name, "date": w.date, "kind": w.kind, "category": (w.fm or {}).get("category") or "",
             "titles": titles, "lots": lots,
             "errors": len(result["errors"]), "warnings": len(result["warnings"]), "stats": result.get("stats") or {}}
