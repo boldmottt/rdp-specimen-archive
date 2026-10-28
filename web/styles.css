@@ -64,22 +64,16 @@ body.prop-mode .appnav{display:none}
 
 /* grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:26px 24px;padding-bottom:130px}
-.card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:transform .25s cubic-bezier(.2,.7,.3,1),box-shadow .25s,border-color .25s}
-.card:hover{transform:translateY(-3px);box-shadow:0 16px 34px -22px rgba(0,0,0,.5);border-color:var(--line-2)}
+.card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;transition:transform .25s cubic-bezier(.2,.7,.3,1),box-shadow .25s,border-color .25s}
+.card:has(.media:hover){transform:translateY(-3px);box-shadow:0 16px 34px -22px rgba(0,0,0,.5);border-color:var(--line-2)}
 .card.picked{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
-.media{position:relative;aspect-ratio:170/70;background:#eceae5;overflow:hidden}
+.media{position:relative;display:block;aspect-ratio:170/70;background:#eceae5;overflow:hidden;color:inherit}
+a.media:focus-visible{outline:none}
+a.media:focus-visible::after{content:"";position:absolute;inset:0;z-index:2;pointer-events:none;border-radius:inherit;box-shadow:inset 0 0 0 2px #fff,inset 0 0 0 4px var(--ink)}
 .media img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .6s cubic-bezier(.2,.7,.3,1)}
-.card:hover .media img{transform:scale(1.035)}
+.media:hover img{transform:scale(1.035)}
 .media .empty{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;letter-spacing:.1em;color:var(--ink-3);background:repeating-linear-gradient(45deg,#efede8,#efede8 8px,#e9e7e1 8px,#e9e7e1 16px)}
 .badge{position:absolute;left:10px;top:10px;background:rgba(255,255,255,.93);backdrop-filter:blur(6px);font-size:10px;font-weight:650;letter-spacing:.07em;padding:4px 8px;border-radius:6px;pointer-events:none}
-.check{padding:0;position:absolute;right:10px;top:10px;width:25px;height:25px;border-radius:50%;border:1.5px solid rgba(255,255,255,.95);background:rgba(20,21,23,.3);display:grid;place-items:center;cursor:pointer;transition:.15s;opacity:0;backdrop-filter:blur(4px)}
-.card:hover .check,.check.on,.check:focus-visible{opacity:1}
-.check:hover{background:rgba(20,21,23,.55)}
-.check.on{background:var(--ink);border-color:var(--ink)}
-.check svg{width:13px;height:13px;stroke:#fff;stroke-width:2.8;fill:none;opacity:0}
-.check.on svg{opacity:0}
-.check.on svg{opacity:1}
-@media (hover:none){.check{opacity:1}}
 .card-body{padding:13px 15px 14px}
 .card-top{display:flex;align-items:baseline;gap:9px;justify-content:space-between}
 .code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
@@ -87,7 +81,6 @@ body.prop-mode .appnav{display:none}
 .card-title{font-size:14.5px;font-weight:600;letter-spacing:-.015em;margin-top:4px;display:flex;align-items:baseline;gap:8px}
 .c-code{font-family:var(--mono);font-size:15px;font-weight:600;letter-spacing:-.01em}
 .c-name{font-size:13px;color:var(--ink-2);font-weight:500}
-.card-link{display:flex;align-items:baseline;gap:8px;color:inherit;text-decoration:none;min-width:0}
 .card-title .ko{font-size:12px;font-weight:400;color:var(--ink-2)}
 .card-meta{margin-top:6px;font-size:11.5px;color:var(--ink-3);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .card-meta .layer-pill{margin-left:auto}
@@ -231,7 +224,6 @@ table.mix td.note{text-align:left;font-family:inherit;color:var(--ink-2);font-si
 /* 키보드 포커스 표시 (마우스 클릭 때는 안 보임) */
 a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .cartbar :focus-visible{outline-color:#fff}
-.check:focus-visible{outline:2px solid #fff;outline-offset:1px;box-shadow:0 0 0 5px var(--ink)}
 
 /* drawer */
 .drawer-scrim{position:fixed;inset:0;background:rgba(20,21,23,.35);opacity:0;pointer-events:none;transition:.25s;z-index:90}
