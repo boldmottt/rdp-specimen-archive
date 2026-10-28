@@ -20,7 +20,7 @@ export const todayLocal = () => { const d = new Date(), p = (n) => String(n).pad
 export const clone = (o) => JSON.parse(JSON.stringify(o));
 const uid = (p) => p + Math.random().toString(36).slice(2, 6);
 
-export const RESULT_LABEL = { ok: "✅ 합격", warn: "⚠️ 조정", ng: "❌ NG", plan: "⏳ 예정", "": "—" };
+export const RESULT_LABEL = { ok: "합격", warn: "조정", ng: "NG", plan: "예정", "": "—" };
 
 export const App = {
   patterns: [],

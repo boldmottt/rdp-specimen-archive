@@ -84,7 +84,6 @@ export function renderCatalog() {
   $("#view").innerHTML = `<div class="wrap">
       <section class="hero">
         <div>
-          <div class="eyebrow">Specimen Archive</div>
           <h1>시편 아카이브</h1>
           <p>패턴 1개에 컬러 베리에이션 여러 개. 이미지·라벨·작업·배합을 한 곳에서 관리하고 바로 제안서로.</p>
         </div>
@@ -95,9 +94,9 @@ export function renderCatalog() {
         </div>
       </section>
       <div class="toolbar">${chips}<div class="spacer"></div>
-        <button class="chip" id="selall" title="지금 보이는 시편을 모두 제안서에 담기">전체 선택<span class="n">${list.reduce((a, p) => a + (p.variations || []).length, 0)}</span></button>
-        <button class="chip" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
-        <button class="chip" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
+        <button class="tool" id="selall" title="지금 보이는 시편을 모두 제안서에 담기">전체 선택<span class="n">${list.reduce((a, p) => a + (p.variations || []).length, 0)}</span></button>
+        <button class="tool" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
+        <button class="tool" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
         <div class="selwrap"><select id="sort" aria-label="정렬">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
