@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RDP 시편 아카이브</title>
-<link rel="stylesheet" href="styles.css?v=67">
+<link rel="stylesheet" href="styles.css?v=68">
 </head>
 <body>
 
@@ -19,7 +19,7 @@
     <div class="grow"></div>
     <div class="search">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
-      <input id="search" type="search" placeholder="패턴명 · 코드 · 컬러 · 동판" autocomplete="off">
+      <input id="search" type="search" aria-label="시편 검색" placeholder="패턴명 · 코드 · 컬러 · 동판" autocomplete="off">
     </div>
     <button class="ghost" id="newbtn">새 시편</button>
     <button class="ghost" id="cartbtn">제안서 <span id="cartbtn-n">0</span></button>
@@ -31,13 +31,13 @@
 
 <!-- 편집 드로어 -->
 <div class="drawer-scrim" id="drawer-scrim"></div>
-<aside class="drawer" id="drawer">
+<aside class="drawer" id="drawer" role="dialog" aria-labelledby="drawer-title">
   <div class="drawer-head">
     <div>
       <div class="eyebrow" style="margin:0 0 4px">Edit</div>
       <strong id="drawer-title">시편 편집</strong>
     </div>
-    <button class="icon-btn" id="drawer-close" title="닫기">✕</button>
+    <button class="icon-btn" id="drawer-close" title="닫기" aria-label="닫기">✕</button>
   </div>
   <div class="drawer-tabs" id="drawer-tabs">
     <button data-tab="base" class="on">기본</button>
@@ -57,19 +57,19 @@
 </aside>
 
 <!-- 이미지 크롭 -->
-<div class="crop-modal" id="crop-modal">
+<div class="crop-modal" id="crop-modal" role="dialog" aria-labelledby="crop-title">
   <div class="crop-box">
     <div class="crop-head">
-      <strong>이미지 자르기</strong>
+      <strong id="crop-title">이미지 자르기</strong>
       <span class="hint">170 : 70 고정 · 드래그로 위치, 슬라이더로 확대</span>
-      <button class="icon-btn" id="crop-cancel2">✕</button>
+      <button class="icon-btn" id="crop-cancel2" aria-label="닫기">✕</button>
     </div>
     <div class="crop-stage" id="crop-stage">
-      <img id="crop-img" alt="">
+      <img id="crop-img" alt="자를 이미지">
       <div class="crop-guide"></div>
     </div>
     <div class="crop-controls">
-      <label>확대</label>
+      <label for="crop-zoom">확대</label>
       <input type="range" id="crop-zoom" min="100" max="400" value="100">
       <span id="crop-info" class="hint"></span>
     </div>
@@ -83,6 +83,6 @@
 <div class="plate-pop" id="plate-pop"></div>
 <div class="toast" id="toast"></div>
 
-<script src="app.js?v=66"></script>
+<script src="app.js?v=67"></script>
 </body>
 </html>

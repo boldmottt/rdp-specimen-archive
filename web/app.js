@@ -327,7 +327,7 @@
     const nm = p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "";
     const title = `<span class="c-code">${esc(p.pattern.code)}</span><span class="c-name">${esc([nm, p.pattern.nameKo].filter(Boolean).join(" ") || "")}</span>`;
     const when = (v && v.date) ? fmtDate(v.date).slice(2) : (p.updatedAt ? String(p.updatedAt).slice(2, 10).replace(/-/g, ".") : "");
-    const meta = [(p.work.plate || [])[0] ? "동판 " + p.work.plate[0] : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : (when ? esc(when) : "")]
+    const meta = [(p.work.plate || [])[0] ? "동판 " + esc(p.work.plate[0]) : "", "컬러 " + vars.length, v && v.status ? esc(v.status) : (when ? esc(when) : "")]
       .filter(Boolean).map((x, i) => (i ? "<i></i>" : "") + x).join("") + (layers(v).length ? `<span class="layer-pill">${esc(layers(v).join("·"))}</span>` : "");
     const chips = vars.length > 1
       ? vars.map((x) => `
@@ -340,20 +340,22 @@
         ${v.images && v.images.length ? `<span class="vdot" data-src="${imgUrl(p.id, v.images[0])}"></span>` : '<span class="vdot"></span>'}
         <span class="nm" style="font-family:var(--mono)">${esc(vName(v))}</span>
       </button>` : "");
+    const href = `#/p/${encodeURIComponent(p.id)}${v ? "/" + encodeURIComponent(v.id) : ""}`;
+    const alt = esc([p.pattern.code, v ? vName(v) : ""].filter(Boolean).join(" "));
     return `<article class="card${picked ? " picked" : ""}" data-pid="${esc(p.id)}">
       <div class="media">
         ${v && v.images && v.images.length ? (() => {
           const n = v.images[0];
           const full = imgUrl(p.id, n);
-          return `<img loading="lazy" src="${thumbUrl(p.id, n, 480)}" srcset="${thumbUrl(p.id, n, 480)} 480w, ${thumbUrl(p.id, n, 960)} 960w, ${full} 2400w" sizes="(max-width:760px) 94vw, (max-width:1180px) 44vw, 340px" onerror="this.onerror=null;this.src='${full}'" alt="">`;
+          return `<img loading="lazy" src="${thumbUrl(p.id, n, 480)}" srcset="${thumbUrl(p.id, n, 480)} 480w, ${thumbUrl(p.id, n, 960)} 960w, ${full} 2400w" sizes="(max-width:760px) 94vw, (max-width:1180px) 44vw, 340px" onerror="this.onerror=null;this.src='${full}'" alt="${alt}">`;
         })() : '<div class="empty">IMAGE N/A</div>'}
         ${p.project ? `<div class="badge">${esc(p.project)}</div>` : ""}
-        <div class="check${picked ? " on" : ""}" data-check="1" title="제안서에 담기">
-          <svg viewBox="0 0 24 24"><path d="M4 12.5 9.5 18 20 6.5"/></svg>
-        </div>
+        <button type="button" class="check${picked ? " on" : ""}" data-check="1" title="제안서에 담기" aria-label="${alt} 제안서에 담기" aria-pressed="${picked ? "true" : "false"}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5 9.5 18 20 6.5"/></svg>
+        </button>
       </div>
       <div class="card-body">
-        <div class="card-title">${title}</div>
+        <div class="card-title"><a class="card-link" href="${href}">${title}</a></div>
         <div class="card-meta">${meta}</div>
         <div class="vchips">${chips}</div>
       </div>
@@ -388,7 +390,7 @@
         <button class="chip" id="selall" title="지금 보이는 시편을 모두 제안서에 담기">전체 선택<span class="n">${list.reduce((a, p) => a + (p.variations || []).length, 0)}</span></button>
         <button class="chip" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
         <button class="chip" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
-        <div class="selwrap"><select id="sort">
+        <div class="selwrap"><select id="sort" aria-label="정렬">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
         </select></div>
@@ -436,6 +438,10 @@
     $$(".card").forEach((el) => {
       el.onclick = (e) => {
         if (e.target.closest("[data-check]") || e.target.closest("[data-sel]")) return;
+        if (e.target.closest(".card-link")) {
+          if (e.ctrlKey || e.metaKey || e.shiftKey) return; // 새 탭 열기는 브라우저에 맡김
+          e.preventDefault();
+        }
         const p = byId(el.dataset.pid);
         location.hash = `#/p/${encodeURIComponent(p.id)}/${encodeURIComponent(p._sel || p.variations[0].id)}`;
       };
@@ -458,7 +464,7 @@
         card.classList.toggle("picked", inCart(p.id, el.dataset.sel));
         card.querySelectorAll("[data-sel]").forEach((b) => b.classList.toggle("in", inCart(p.id, b.dataset.sel)));
         const chk = card.querySelector("[data-check]");
-        if (chk) chk.classList.toggle("on", inCart(p.id, el.dataset.sel));
+        if (chk) { chk.classList.toggle("on", inCart(p.id, el.dataset.sel)); chk.setAttribute("aria-pressed", String(inCart(p.id, el.dataset.sel))); }
         const all = card.querySelector("[data-all]");
         if (all) all.textContent = p.variations.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${p.variations.length}색`;
         renderCart();
@@ -478,7 +484,10 @@
       const v = varOf(p, p._sel);
       if (!v) return;
       toggleCart(p.id, v.id);
+      const refocus = document.activeElement === el;
       renderCatalog(); renderCart();
+      // 다시 그린 뒤에도 키보드 포커스가 같은 체크 버튼에 남도록
+      if (refocus) { const nb = document.querySelector(`.card[data-pid="${CSS.escape(p.id)}"] [data-check]`); if (nb) nb.focus(); }
     }));
   }
 
@@ -787,10 +796,10 @@
     const head = `<tr><th>배합</th>${used.map((c) => `<th>${inkLabel(c)}</th>`).join("")}${hasMatting ? "<th>소광</th>" : ""}<th>신나</th><th>경화</th>${hasLab ? "<th>LAB</th>" : ""}<th>잉크합</th><th>예상색</th><th>결과</th><th>비고</th></tr>`;
     const body = mixes.map((m, mi) => `<tr>
       <td>${esc(m.batch)}${m.isReference ? " *" : ""}</td>
-      ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? m.inks[c] : "—"}</td>`).join("")}
-      ${hasMatting ? `<td>${m.mattingG != null ? m.mattingG + "g" : m.mattingPct != null ? m.mattingPct + "%" : "—"}</td>` : ""}
-      <td>${m.thinnerG != null ? m.thinnerG + "g" : m.thinnerPct != null ? m.thinnerPct + "%" : "—"}</td>
-      <td>${m.hardenerG != null ? m.hardenerG + "g" : m.hardenerPct != null ? m.hardenerPct + "%" : "—"}</td>
+      ${used.map((c) => `<td>${m.inks && m.inks[c] != null ? esc(m.inks[c]) : "—"}</td>`).join("")}
+      ${hasMatting ? `<td>${m.mattingG != null ? esc(m.mattingG) + "g" : m.mattingPct != null ? esc(m.mattingPct) + "%" : "—"}</td>` : ""}
+      <td>${m.thinnerG != null ? esc(m.thinnerG) + "g" : m.thinnerPct != null ? esc(m.thinnerPct) + "%" : "—"}</td>
+      <td>${m.hardenerG != null ? esc(m.hardenerG) + "g" : m.hardenerPct != null ? esc(m.hardenerPct) + "%" : "—"}</td>
       ${hasLab ? `<td>${m.labSce || m.labSci ? `<span class="lab-line"><i class="labsw" style="background:${labToCss(m.labSce || m.labSci)}"></i>${esc(labText(m.labSce || m.labSci))}</span>` : "—"}</td>` : ""}
       <td>${pigmentTotal(m)}</td>
       <td><button type="button" class="mini-btn" data-recipe-preview="${mi}">예상색</button></td>
@@ -828,7 +837,7 @@
       return `<div class="mixgroup"><h4>${esc(layer)}
         <button class="plate-chip" data-layer-plate="${esc(layer)}" title="이 도수의 동판 — 클릭해서 변경">${plate ? "동판 " + esc(plate) : "동판 지정"}</button>
         ${plate ? `<span class="plate-pats">${((v.layerPatterns || {})[layer]) ? `<b class="cur">${esc(v.layerPatterns[layer])}</b>` : (platePatterns(plate).map((x) => `<b class="${x.id === p.id ? "cur" : ""}">${esc(x.label)}</b>`).join(" · ") || `<b class="cur">${esc(p.pattern.code)}</b>`)}</span>` : ""}
-        ${plate ? `<button class="plate-info" data-plate="${esc(plate)}" title="동판 정보">i</button>` : ""}
+        ${plate ? `<button class="plate-info" data-plate="${esc(plate)}" title="동판 정보" aria-label="동판 ${esc(plate)} 정보">i</button>` : ""}
         <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
     }).join("");
 
@@ -852,8 +861,8 @@
         </div>
 
         <div class="gallery">
-          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(p.id, images[0])}" alt="">` : (isNew ? '<div class="empty-new"><span>이미지는 저장 후 <b>편집</b>에서 추가합니다</span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
-          ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(p.id, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(imgUrl(p.id, im))}">`).join("")}</div>` : ""}
+          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(p.id, images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : (isNew ? '<div class="empty-new"><span>이미지는 저장 후 <b>편집</b>에서 추가합니다</span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
+          ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(p.id, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(imgUrl(p.id, im))}" alt="${esc(p.pattern.code + " " + vName(v))} 이미지 ${i + 1}">`).join("")}</div>` : ""}
           ${chips ? `<div class="vchips" style="margin-top:14px">${chips}</div>` : ""}
         </div>
 
@@ -1062,7 +1071,7 @@
         <h2>${esc(p.pattern.code)}</h2>
         <div class="pname">${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · "))}</div>
       </div>
-      ${v.images && v.images.length ? `<img class="p-img" src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div class="p-img"></div>'}
+      ${v.images && v.images.length ? `<img class="p-img" src="${imgUrl(p.id, v.images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : '<div class="p-img"></div>'}
       <div class="p-spec">
         <div><span>COLOR</span>${esc(vName(v))}</div>
         <div><span>ITEM</span>${esc(dash(labOf(p, v).item))}</div>
@@ -1115,7 +1124,7 @@
   function pageCompare(p, vars, idx, total, part, parts) {
     const letters = "ABCDEFGH";
     const cells = vars.map((v, i) => `<div class="cmp-cell">
-        ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="">` : '<div style="width:170mm;height:70mm;background:#efede8"></div>'}
+        ${v.images && v.images.length ? `<img src="${imgUrl(p.id, v.images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : '<div style="width:170mm;height:70mm;background:#efede8"></div>'}
         <span class="ab">${letters[i]}</span>
       </div>`).join("");
     const legend = vars.map((v, i) => `<div>
@@ -1294,7 +1303,9 @@
     $("#drawer-title").textContent = pid ? byId(pid).pattern.code + " 편집" : "새 시편";
     syncTabs();
     renderDrawer();
+    E.returnFocus = document.activeElement;
     $("#drawer").classList.add("on"); $("#drawer-scrim").classList.add("on");
+    $("#drawer-close").focus({ preventScroll: true });
   }
   function isDirty() {
     return !!(E.draft && E.origJson && JSON.stringify(E.draft) !== E.origJson);
@@ -1306,6 +1317,8 @@
     }
     $("#drawer").classList.remove("on"); $("#drawer-scrim").classList.remove("on");
     E.draft = null; E.origJson = null;
+    const rf = E.returnFocus; E.returnFocus = null;
+    if (rf && rf.isConnected) rf.focus({ preventScroll: true });
   }
   function syncTabs() { $$("#drawer-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === E.tab)); }
 
@@ -1510,10 +1523,10 @@
         <td><input data-mf="layer" value="${esc(m.layer || "")}" style="width:44px"></td>
         <td class="mix-set${m.plate ? "" : " empty"}" title="DB 키: ${esc(layerCodeOf(d, v, m.layer))} · ${esc(m.layer || "")} · ${esc(m.plate || "동판 없음")}">${m.plate ? esc(m.plate) : "동판 없음"}<i>${esc(layerCodeOf(d, v, m.layer))}</i></td>
         <td><input data-mf="batch" value="${esc(m.batch || "")}" style="width:72px"></td>
-        ${inkCols.map((c) => `<td><input data-mf="ink:${esc(c)}" value="${m.inks && m.inks[c] != null ? m.inks[c] : ""}" style="width:34px"></td>`).join("")}
-        ${showMatting ? `<td><input data-mf="mattingG" value="${m.mattingG != null ? m.mattingG : ""}" placeholder="${m.mattingG == null && m.mattingPct != null ? m.mattingPct + "%" : ""}" style="width:36px"></td>` : ""}
-        <td><input data-mf="thinnerG" value="${m.thinnerG != null ? m.thinnerG : ""}" placeholder="${m.thinnerG == null && m.thinnerPct != null ? m.thinnerPct + "%" : ""}" style="width:36px"></td>
-        <td><input data-mf="hardenerG" value="${m.hardenerG != null ? m.hardenerG : ""}" placeholder="${m.hardenerG == null && m.hardenerPct != null ? m.hardenerPct + "%" : ""}" style="width:36px"></td>
+        ${inkCols.map((c) => `<td><input data-mf="ink:${esc(c)}" value="${m.inks && m.inks[c] != null ? esc(m.inks[c]) : ""}" style="width:34px"></td>`).join("")}
+        ${showMatting ? `<td><input data-mf="mattingG" value="${m.mattingG != null ? esc(m.mattingG) : ""}" placeholder="${m.mattingG == null && m.mattingPct != null ? esc(m.mattingPct) + "%" : ""}" style="width:36px"></td>` : ""}
+        <td><input data-mf="thinnerG" value="${m.thinnerG != null ? esc(m.thinnerG) : ""}" placeholder="${m.thinnerG == null && m.thinnerPct != null ? esc(m.thinnerPct) + "%" : ""}" style="width:36px"></td>
+        <td><input data-mf="hardenerG" value="${m.hardenerG != null ? esc(m.hardenerG) : ""}" placeholder="${m.hardenerG == null && m.hardenerPct != null ? esc(m.hardenerPct) + "%" : ""}" style="width:36px"></td>
         <td class="lab-cell">${(() => {
           const sce = m.labSce, sci = m.labSci;
           if (!sce && !sci) return `<button class="lab-btn empty" data-lab="${mi}" title="LAB 값 입력">+ LAB</button>`;
@@ -1523,7 +1536,7 @@
         <td><button class="mini-btn" type="button" data-recipe-preview="${mi}">예상색</button></td>
         <td><select data-mf="result" style="width:74px">${Object.keys(RESULT_LABEL).map((k) => `<option value="${k}"${k === (m.result || "") ? " selected" : ""}>${RESULT_LABEL[k]}</option>`).join("")}</select></td>
         <td><input type="checkbox" data-mf="isReference" ${m.isReference ? "checked" : ""}></td>
-        <td class="act"><button class="mini-btn danger" data-delmix="${mi}">✕</button></td></tr>` +
+        <td class="act"><button class="mini-btn danger" data-delmix="${mi}" title="배합 삭제" aria-label="배합 삭제">✕</button></td></tr>` +
         (E.labOpen === mi ? `<tr class="lab-edit"><td colspan="${11 + inkCols.length + (showMatting ? 1 : 0)}">
           <div class="lab-grid">
             ${["sce", "sci"].map((k) => {
@@ -1531,9 +1544,9 @@
               return `<div class="lab-block">
                 <span class="lab-k">${k.toUpperCase()}</span>
                 <i class="labsw big" data-labsw="${mi}-${k}" style="background:${labToCss(lab) || "#eee"}"></i>
-                <label>L<input data-labf="${mi}:${k}.L" value="${lab.L != null ? lab.L : ""}" inputmode="decimal"></label>
-                <label>a<input data-labf="${mi}:${k}.a" value="${lab.a != null ? lab.a : ""}" inputmode="decimal"></label>
-                <label>b<input data-labf="${mi}:${k}.b" value="${lab.b != null ? lab.b : ""}" inputmode="decimal"></label>
+                <label>L<input data-labf="${mi}:${k}.L" value="${lab.L != null ? esc(lab.L) : ""}" inputmode="decimal"></label>
+                <label>a<input data-labf="${mi}:${k}.a" value="${lab.a != null ? esc(lab.a) : ""}" inputmode="decimal"></label>
+                <label>b<input data-labf="${mi}:${k}.b" value="${lab.b != null ? esc(lab.b) : ""}" inputmode="decimal"></label>
               </div>`;
             }).join("")}
             <button class="mini-btn" data-labclear="${mi}">LAB 지우기</button>
