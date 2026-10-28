@@ -12,6 +12,7 @@ LAB만 있어도 되고, 분광(400~700 nm, 10 nm, 반사율 0~1 또는 %)이 �
 """
 import itertools
 import math
+import time
 
 from . import colormath as cm
 from . import km
@@ -517,9 +518,11 @@ def _tone_note(tone, cov):
 
 
 def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60.0, under=None,
-              plate=None, hardener_pct=20.0, thinner_pct=30.0, matting_pct=0.0, top=5, tone=1.0):
+              plate=None, hardener_pct=20.0, thinner_pct=30.0, matting_pct=0.0, top=5, tone=1.0, time_limit=20.0):
     """목표색(LAB)에 가장 가까운 배합 후보. inks: 써도 되는 잉크 이름들.
-    tone: 목표를 잰 자리의 설계 망점 비율 (1 = 솔리드)."""
+    tone: 목표를 잰 자리의 설계 망점 비율 (1 = 솔리드).
+    time_limit: 잉크를 많이 고르면 조합 수가 크게 늘어난다 → 이 초가 지나면 그때까지 계산한 후보로 마친다
+    (적은 잉크 조합부터 계산하므로 남는 것은 큰 조합)."""
     if not inks:
         raise ModelError("쓸 수 있는 잉크를 하나 이상 고르세요")
     inks = list(dict.fromkeys(lib.registry.resolve(n, strict=True) for n in inks))
@@ -540,24 +543,30 @@ def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60
 
     results = []
     max_inks = max(1, min(int(max_inks), 4, len(inks)))
-    for size in range(1, max_inks + 1):
-        for combo in itertools.combinations(sorted(inks), size):
-            def grams(p):
-                e = [math.exp(min(30, max(-30, x))) for x in p]
-                tot = sum(e)
-                return {n: ink_total * x / tot for n, x in zip(combo, e)}
+    total = sum(math.comb(len(inks), k) for k in range(1, max_inks + 1))
+    start, done = time.monotonic(), 0
+    combos = (c for size in range(1, max_inks + 1) for c in itertools.combinations(sorted(inks), size))
+    for combo in combos:
+        size = len(combo)
+        def grams(p):
+            e = [math.exp(min(30, max(-30, x))) for x in p]
+            tot = sum(e)
+            return {n: ink_total * x / tot for n, x in zip(combo, e)}
 
-            def f(p):
-                return cm.delta_e2000(color(_with_extras(grams(p), base)), target)
+        def f(p):
+            return cm.delta_e2000(color(_with_extras(grams(p), base)), target)
 
-            p, _ = km.nelder_mead(f, [0.0] * size, step=1.0, iters=250, tol=1e-9) if size > 1 else ([0.0], None)
-            g = {k: round(v, 1) for k, v in grams(p).items() if round(v, 1) > 0}
-            rec = _with_extras(g, base)
-            lab = color(rec)
-            results.append({"inks": g, "dE": round(cm.delta_e2000(lab, target), 2),
-                            "lab": [round(x, 2) for x in lab], "hex": cm.lab_to_hex(lab),
-                            "diff": cm.describe(cm.lab_parts(target, lab)),
-                            "extras": {k: round(rec[k]["g"], 1) for k in ("hardener", "thinner", "matting") if rec[k]["g"]}})
+        p, _ = km.nelder_mead(f, [0.0] * size, step=1.0, iters=250, tol=1e-9) if size > 1 else ([0.0], None)
+        g = {k: round(v, 1) for k, v in grams(p).items() if round(v, 1) > 0}
+        rec = _with_extras(g, base)
+        lab = color(rec)
+        results.append({"inks": g, "dE": round(cm.delta_e2000(lab, target), 2),
+                        "lab": [round(x, 2) for x in lab], "hex": cm.lab_to_hex(lab),
+                        "diff": cm.describe(cm.lab_parts(target, lab)),
+                        "extras": {k: round(rec[k]["g"], 1) for k in ("hardener", "thinner", "matting") if rec[k]["g"]}})
+        done += 1
+        if done < total and time.monotonic() - start > time_limit:
+            break
     results.sort(key=lambda r: (r["dE"], len(r["inks"])))
     out, seen = [], []
     for r in results:          # 같은 잉크 구성은 하나만
@@ -569,8 +578,12 @@ def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60
         if len(out) >= top:
             break
     res = {"mode": mode, "space": space, "plate": t, "target_hex": cm.lab_to_hex(target), "candidates": out}
-    if _tone_note(tone, cov):
-        res["note"] = _tone_note(tone, cov)
+    notes = [_tone_note(tone, cov)] if _tone_note(tone, cov) else []
+    if done < total:
+        res["truncated"] = {"done": done, "total": total}
+        notes.append(f"시간 제한으로 조합 {total}개 중 {done}개만 계산 (잉크를 줄여 고르면 전부 계산)")
+    if notes:
+        res["note"] = " · ".join(notes)
     return res
 
 

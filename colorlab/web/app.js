@@ -380,6 +380,7 @@
           <div class="cl-actions">
             <button class="cl-btn ghost sm" data-topredict="${esc(JSON.stringify({ layer, inks: c.inks, pct, target: target.join(" "), under: under ? val("u.inks") : "", tone: body.tone }))}">예측으로</button>
             <button class="cl-btn ghost sm" data-copy="${esc(batchYaml(layer, c.inks, pct))}">일지용 복사</button></div></div></div>`).join("")}</div>
+      ${r.truncated ? `<p class="cl-empty">시간 제한으로 조합 ${r.truncated.total}개 중 ${r.truncated.done}개만 계산했어요 (적은 잉크 조합부터) — 쓸 잉크를 줄여 고르면 전부 계산합니다.</p>` : ""}
       ${r.candidates.length && r.candidates[0].dE > 2 ? `<p class="cl-empty">가장 가까운 후보도 ΔE ${r.candidates[0].dE.toFixed(1)} — 이 막두께로는 바탕이 비쳐서 목표에 닿기 어렵습니다. 신나를 줄여 막을 두껍게 하거나(동판 막두께 계수도 확인), 흰색 1도를 먼저 깔고 2도로 맞추는 방법(위 "2도 배합 고르기")을 검토해 보세요.</p>` : ""}
       ${noteBox(r)}</div>`;
     out.innerHTML = S.res.recommend;

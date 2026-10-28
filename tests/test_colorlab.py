@@ -555,6 +555,46 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(st, 200)
 
 
+class InputShapeTests(unittest.TestCase):
+    """모양이 틀린 입력은 서버 오류(500)가 아니라 입력 오류(400) + 배합 추천 시간 제한."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="lab-shape-")
+        self.ctx = {"data": self.dir, "backup": os.path.join(self.dir, "_backup"), "patterns": lambda: [], "worklog": None, "rev": ""}
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_bad_library_shapes_are_400(self):
+        bad_docs = [
+            {"inks": 5}, {"inks": [{"name": "A", "cal": [1]}]}, {"substrates": ["x"]},
+            {"plates": [{"lot": "L", "coverage": [1]}]}, {"settings": "x"}, {"settings": {"cards": [1]}},
+            {"fits": {"active": {"mode": "sci", "space": "xyz", "plates": {"L": {"thickness": 1, "tone_curve": [1, 2]}}}}},
+            {"transfers": [{"substrate": "S", "layer1": {"inks": {"A": 1}}, "layer2": "x", "measured": {"sci": [50, 0, 0]}}]},
+        ]
+        for doc in bad_docs:
+            code, r = api.handle("PUT", "/api/lab/library", {}, doc, self.ctx)
+            self.assertEqual(code, 400, (doc, r))
+        self.assertFalse(os.path.exists(api.lib_path(self.dir)))     # 아무것도 쓰지 않음
+
+    def test_bad_numbers_in_requests_are_400(self):
+        api.save_library(self.dir, self.ctx["backup"], synth.library(), "")
+        code, r = api.handle("POST", "/api/lab/recommend", {}, {"target": [50, 0, 0], "inks": ["WH"], "max_inks": "abc",
+                                                               "substrate": "D 2000@경면"}, self.ctx)
+        self.assertEqual(code, 400, r)
+
+    def test_recommend_stops_at_time_limit_with_partial_results(self):
+        lib = model.Library(synth.library())
+        rec = recipe({"WH": 20, "YE": 6, "RD": 3})
+        target = synth.true_color((72.0, -0.8, 1.5), rec)
+        r = model.recommend(lib, target, "D 2000@경면", ["WH", "YE", "RD", "BK", "BL"], ink_total=29, time_limit=0)
+        self.assertEqual(r["truncated"]["total"], 5 + 10 + 10)
+        self.assertEqual(r["truncated"]["done"], 1)
+        self.assertTrue(r["candidates"])
+        self.assertIn("시간 제한", r["note"])
+        self.assertNotIn("truncated", model.recommend(lib, target, "D 2000@경면", ["WH", "YE"], ink_total=29))
+
+
 class StoreTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="lab-test-")
