@@ -2313,14 +2313,26 @@ def local_ips() -> set:
 
 
 def port_free(port, host="127.0.0.1"):
+    """포트를 새로 쓸 수 있는지. 방금 끈 서버의 연결 흔적(TIME_WAIT)만 남은 포트는 '비어 있음'으로 본다
+    — 전에는 쓰던 서버를 끄고 바로 다시 켜면(.command) '다른 프로그램이 쓰고 있다'며 멈췄다.
+    (서버는 SO_REUSEADDR로 바인드하므로 TIME_WAIT는 막지 않는다. 실제로 듣고 있는 프로그램이 있으면 False)"""
     s = socket.socket()
     try:
         s.bind((host, port))
         return True
     except OSError:
-        return False
+        pass
     finally:
         s.close()
+    c = socket.socket()
+    c.settimeout(1)
+    try:
+        c.connect((host, port))
+        return False          # 누군가 이 포트에서 듣고 있다
+    except OSError:
+        return True           # 연결 거부 = 듣는 프로그램 없음, TIME_WAIT 흔적뿐
+    finally:
+        c.close()
 
 
 PORT = CFG.get("port", 8791)

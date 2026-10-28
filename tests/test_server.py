@@ -152,6 +152,27 @@ class Base(unittest.TestCase):
         return self.req("PUT", f"/api/patterns/{pid}", doc, h)
 
 
+class PortTests(unittest.TestCase):
+    """재시작 직후: 끈 서버의 TIME_WAIT 흔적은 '사용 중'이 아니고, 실제로 듣는 서버가 있으면 '사용 중'."""
+
+    def test_time_wait_is_free_but_listener_is_not(self):
+        srv = server.Server(("127.0.0.1", 0), server.Handler)
+        port = srv.server_address[1]
+        th = threading.Thread(target=srv.serve_forever, daemon=True)
+        th.start()
+        self.assertFalse(server.port_free(port))           # 듣고 있는 중
+        for _ in range(3):                                  # 서버가 먼저 닫는 연결 → 서버 쪽 TIME_WAIT
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", "/api/health", headers={"Host": "localhost"})
+            c.getresponse().read()
+            c.close()
+        srv.shutdown()
+        srv.server_close()
+        self.assertTrue(server.port_free(port))
+        again = server.Server(("127.0.0.1", port), server.Handler)   # 실제로 다시 켤 수 있다
+        again.server_close()
+
+
 class DemoModeTests(unittest.TestCase):
     """--demo는 임시 폴더만 쓴다: 썸네일·회사 rdp.db·작업일지가 실제 경로로 새지 않게."""
     NAMES = ("DATA", "PATTERNS", "IMAGES", "ORIG", "BACKUP", "TRASH", "PROPOSALS", "THUMBS", "UI_STATE",
