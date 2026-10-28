@@ -1,6 +1,13 @@
 /* RDP 시편 아카이브 — 이미지 자르기 */
-import { $, apiUpload, toast } from "./core.js";
+import { $, apiUpload, deriveId, toast } from "./core.js";
 import { E, renderDrawer } from "./editor.js";
+
+// 저장 전 새 시편의 사진은 저장할 때 쓸 파일 ID 폴더로 올린다 (편집기 저장과 같은 deriveId)
+function uploadId() {
+  const id = E.draft.id || deriveId(E.draft.project, E.draft.pattern.code);
+  if (!id) throw new Error("먼저 프로젝트와 패턴 코드를 입력하세요 (영문·숫자 포함)");
+  return id;
+}
 
 /* ---------------- crop ---------------- */
 export const C = { file: null, img: null, z: 1, cx: 0.5, cy: 0.5, slot: 1 };
@@ -89,7 +96,7 @@ async function commitUpload(res) {
 async function uploadCenter() {
   if (!E.draft) return;
   try {
-    const pid = E.draft.id || (E.draft.project + "-" + E.draft.pattern.code).replace(/[^\w.-]/g, "-");
+    const pid = uploadId();
     const vid = E.draft.variations[E.vIdx].id;
     const res = await apiUpload(pid, vid, C.slot, C.file, null);
     await commitUpload(res);
@@ -128,7 +135,7 @@ export function bindCrop() {
     const rect = cropRect();
     $("#crop-ok").disabled = true; $("#crop-ok").textContent = "업로드 중…";
     try {
-      const pid = E.draft.id || (E.draft.project + "-" + E.draft.pattern.code).replace(/[^\w.-]/g, "-");
+      const pid = uploadId();
       const vid = E.draft.variations[E.vIdx].id;
       const res = await apiUpload(pid, vid, C.slot, C.file, rect);
       $("#crop-modal").classList.remove("on");

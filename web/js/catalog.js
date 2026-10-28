@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vImg, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 
 /* ---------------- catalog ---------------- */
@@ -183,7 +183,9 @@ export async function saveNewPattern() {
   if (!d) return;
   if (!d.project) { toast("프로젝트를 입력하세요"); return; }
   if (!d.pattern.code) { toast("패턴 코드를 입력하세요"); return; }
-  const id = (d.project + "-" + d.pattern.code).replace(/[^\w.-]/g, "-");
+  // 파일 ID는 편집기·사진 업로드와 같은 규칙(deriveId) — 다르면 저장 전에 올린 사진이 다른 폴더로 갔다
+  const id = deriveId(d.project, d.pattern.code);
+  if (!id) { toast("프로젝트·패턴 코드에 영문이나 숫자가 하나는 있어야 해요 (파일 이름에 씁니다)"); return; }
   const exists = byId(id);
   if (exists) {
     if (confirm(`'${id}' 시편이 이미 있습니다.\n기존 시편을 열까요? (지금 작성한 내용은 저장되지 않습니다)`)) {
