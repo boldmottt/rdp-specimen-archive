@@ -63,14 +63,18 @@ export function startInline(el, pid, vid) {
   if (Array.isArray(cur)) cur = cur.join(", ");
   const prev = el.innerHTML;
   const multi = /note|remark/.test(rel);
+  const isDate = /(^|\.)date$/.test(rel);   // "v.date" → rel="date" 도 잡는다
   el.dataset.editing = "1";
-  el.innerHTML = multi ? '<textarea class="inline-input" rows="3"></textarea>' : '<input class="inline-input">';
+  el.innerHTML = multi ? '<textarea class="inline-input" rows="3"></textarea>' : (isDate ? '<input type="date" class="inline-input">' : '<input class="inline-input">');
   const inp = el.firstElementChild;
-  inp.value = cur == null ? "" : String(cur);
+  // date 입력기는 YYYY-MM-DD만 받는다 (예전에 점으로 적은 값도 받아 준다)
+  inp.value = isDate ? String(cur == null ? "" : cur).replace(/\./g, "-").slice(0, 10) : (cur == null ? "" : String(cur));
   if (path === "v.colorName") inp.placeholder = "컬러명 (비우면 컬러코드로 표시)";
   if (path === "v.colorCode") inp.placeholder = "컬러코드";
   inp.focus();
-  if (/label\.type$/.test(path) && inp.setSelectionRange) {
+  if (isDate) {
+    // date 입력기는 select()·setSelectionRange()를 지원하지 않는다
+  } else if (/label\.type$/.test(path) && inp.setSelectionRange) {
     const n = inp.value.length;
     inp.setSelectionRange(n, n);   // 접두어 뒤에 바로 숫자만 치도록 커서를 끝에
   } else if (inp.select) inp.select();

@@ -97,6 +97,7 @@ function fieldRow(label, key, opts) {
   const val = key.split(".").reduce((a, k) => (a == null ? "" : a[k]), E.draft) ?? "";
   const v = Array.isArray(val) ? val.join(", ") : val;
   if (o.type === "textarea") return `<div class="field-row"><label>${label}</label><textarea data-k="${key}" placeholder="${o.ph || ""}">${esc(v)}</textarea></div>`;
+  if (o.type === "date") return `<div class="field-row"><label>${label}</label><input type="date" data-k="${key}" value="${esc(String(v).replace(/\./g, "-").slice(0, 10))}"></div>`;
   if (o.type === "select") return `<div class="field-row"><label>${label}</label><select data-k="${key}">${o.options.map((x) => `<option value="${esc(x)}"${x === v ? " selected" : ""}>${esc(x || "—")}</option>`).join("")}</select></div>`;
   return `<div class="field-row"><label>${label}</label><input data-k="${key}" value="${esc(v)}" placeholder="${o.ph || ""}" ${o.mono ? 'style="font-family:var(--mono);font-size:12px"' : ""}></div>`;
 }
@@ -215,7 +216,7 @@ export function renderDrawer() {
         ${fieldRow("컬러명", "variations." + E.vIdx + ".colorName", { ph: "다크 브라운" })}
         ${fieldRow("컬러코드", "variations." + E.vIdx + ".colorCode", { ph: "K-1116S", mono: true })}
         ${fieldRow("상태", "variations." + E.vIdx + ".status", { ph: "가승인" })}
-        ${fieldRow("작업일", "variations." + E.vIdx + ".date", { ph: "2026-10-22" })}
+        ${fieldRow("작업일", "variations." + E.vIdx + ".date", { type: "date" })}
         ${fieldRow("Rev", "variations." + E.vIdx + ".rev", { ph: "0" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 샘플의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 공통값을 씁니다 (패턴 코드·이름은 공통)</span></div>

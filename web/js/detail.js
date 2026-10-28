@@ -348,6 +348,7 @@ export function renderDetail(pid, vid, override) {
           </section>
           <section class="sec"><h3>작업 정보</h3>
             <dl class="kv">
+              <dt>작업일자</dt><dd data-f="v.date" data-tip="이 샘플의 작업일 — 라벨 Date(Rev)·편집기 작업일과 같은 값">${esc(v && v.date ? fmtDate(v.date) : "—")}</dd>
               <dt>작업 장소</dt><dd data-f="work.place">${esc(dash(p.work.place))}</dd>
               <dt>작업자</dt><dd data-f="work.worker">${esc(dash(p.work.worker))}</dd>
               <dt>설비</dt><dd data-f="work.machine">${esc(dash(p.work.machine))}</dd>
