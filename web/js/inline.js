@@ -16,6 +16,12 @@ export async function inlineSave(pid, mutate) {
   return queueSave(pid, () => doInlineSave(pid, mutate));
 }
 
+// 그 시편의 인라인 저장이 끝날 때까지 기다린다 — 메모를 고치다 바로 [편집]을 누르면
+// 편집기가 저장 전 버전으로 열려, 편집기에서 저장할 때 내 저장과 '충돌'(409)이 났다
+export function inlineSettled(pid) {
+  return saveChain.get(pid) || Promise.resolve();
+}
+
 async function doInlineSave(pid, mutate) {
   const p = byId(pid);
   if (!p) return;

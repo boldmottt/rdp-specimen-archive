@@ -1,6 +1,6 @@
 /* RDP 시편 아카이브 — 시편 상세 · 배합표 · 예상색 */
 import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, dash, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
-import { inlineSave, startInline } from "./inline.js";
+import { inlineSave, inlineSettled, startInline } from "./inline.js";
 import { saveNewPattern } from "./catalog.js";
 import { showPlate } from "./plates.js";
 import { renderCart } from "./proposal.js";
@@ -382,7 +382,7 @@ export function renderDetail(pid, vid, override) {
     const addBtn = $("#addbtn");
     if (addBtn) addBtn.onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
     const editBtn = $("#editbtn");
-    if (editBtn) editBtn.onclick = () => openEditor(pid, v.id);
+    if (editBtn) editBtn.onclick = async () => { await inlineSettled(pid); openEditor(pid, v.id); };
     const meetBtn = $("#meetingbtn");
     if (meetBtn) meetBtn.onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
   }
