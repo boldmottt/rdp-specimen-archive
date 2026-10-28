@@ -147,6 +147,54 @@ class Base(unittest.TestCase):
         return self.req("PUT", f"/api/patterns/{pid}", doc, h)
 
 
+class DemoModeTests(unittest.TestCase):
+    """--demo는 임시 폴더만 쓴다: 썸네일·회사 rdp.db·작업일지가 실제 경로로 새지 않게."""
+    NAMES = ("DATA", "PATTERNS", "IMAGES", "ORIG", "BACKUP", "TRASH", "PROPOSALS", "THUMBS", "UI_STATE",
+             "CONFIG_PATH", "_CFG_MTIME")
+
+    def setUp(self):
+        self.saved = {k: getattr(server, k) for k in self.NAMES}
+        self.cfg, self.over, self.hosts = dict(server.CFG), dict(server.CFG_OVERRIDES), set(server.SAFE_HOSTS)
+        self.tmp, self.cfgdir = "", tempfile.mkdtemp(prefix="rdp-cfg-")
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(server, k, v)
+        server.CFG.clear()
+        server.CFG.update(self.cfg)
+        server.CFG_OVERRIDES.clear()
+        server.CFG_OVERRIDES.update(self.over)
+        server.SAFE_HOSTS.clear()
+        server.SAFE_HOSTS.update(self.hosts)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        shutil.rmtree(self.cfgdir, ignore_errors=True)
+
+    def test_demo_uses_only_temp_paths(self):
+        server.CFG.update(rdpDbPath="/real/company/rdp.db", worklogDir="/real/worklogs")
+        self.tmp = server.enter_demo_mode()
+        for k in self.NAMES[1:9]:
+            self.assertTrue(getattr(server, k).startswith(self.tmp + os.sep), k)
+        db = server.CFG["rdpDbPath"]
+        self.assertTrue(db.startswith(self.tmp + os.sep))
+        self.assertTrue(server.CFG["worklogDir"].endswith("sample-worklogs"))
+        cols = lambda con: [r[1] for r in con.execute("PRAGMA table_info(rdp_mixes)")]   # noqa: E731
+        con = sqlite3.connect(db)
+        got = cols(con)
+        con.close()
+        con = sqlite3.connect(":memory:")
+        con.execute(SCHEMA)
+        self.assertEqual(got, cols(con))            # 서버의 데모 DB = 테스트(실제) 스키마
+        con.close()
+        # config.json이 바뀌어 다시 읽어도 데모 값이 실제 경로로 돌아가지 않는다
+        server.CONFIG_PATH = os.path.join(self.cfgdir, "config.json")
+        with open(server.CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"rdpDbPath": "/real/company/rdp.db", "worklogDir": "/real/worklogs"}, f)
+        server._CFG_MTIME = None
+        server.Handler._maybe_reload_cfg(server.Handler.__new__(server.Handler))
+        self.assertEqual(server.CFG["rdpDbPath"], db)
+        self.assertTrue(server.CFG["worklogDir"].endswith("sample-worklogs"))
+
+
 class InkMappingTests(Base):
     def register(self, code="YE-D"):
         doc = {"inks": [{"name": "200YE-D", "short_name": "YE-D", "db_ink": code}]}

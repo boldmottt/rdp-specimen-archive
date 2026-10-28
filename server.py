@@ -112,6 +112,52 @@ def ensure_dirs():
         os.makedirs(d, exist_ok=True)
 
 
+# 실행하는 동안 고정할 설정 (데모 모드). config.json을 다시 읽어도 이 값이 이긴다.
+CFG_OVERRIDES = {}
+
+# rdp.db의 rdp_mixes 표 (서버가 읽고 쓰는 칸만, 실제 DB와 같은 UNIQUE 제약) — 데모용 빈 DB를 만들 때 쓴다
+RDP_SCHEMA = """CREATE TABLE IF NOT EXISTS rdp_mixes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, project TEXT, pattern_code TEXT,
+  plate TEXT, layer TEXT, batch_no TEXT, is_base INTEGER DEFAULT 0,
+  mt REAL, bk REAL, wh REAL, ye REAL, rd REAL, cl REAL, ye_d REAL,
+  matting_agent_pct REAL, matting_agent_g REAL, thinner_pct REAL, thinner_g REAL,
+  hardener_pct REAL, hardener_g REAL,
+  result TEXT, change_summary TEXT, notes TEXT, coating_code TEXT,
+  UNIQUE(project, pattern_code, plate, layer, batch_no))"""
+
+
+def enter_demo_mode() -> str:
+    """sample-data를 임시 폴더에 복사해서 그곳만 쓴다.
+    실제 데이터 폴더(썸네일 포함)·회사 rdp.db·작업일지는 건드리지 않는다 — DB 전송은 데모용 빈 DB로."""
+    global DATA, PATTERNS, IMAGES, ORIG, BACKUP, TRASH, PROPOSALS, THUMBS, UI_STATE
+    src = os.path.join(HERE, "sample-data")
+    tmp = tempfile.mkdtemp(prefix="rdp-demo-")
+    if os.path.isdir(src):
+        shutil.copytree(src, tmp, dirs_exist_ok=True)
+    DATA = tmp
+    PATTERNS = os.path.join(DATA, "patterns")
+    IMAGES = os.path.join(DATA, "images")
+    ORIG = os.path.join(DATA, "_orig")
+    BACKUP = os.path.join(DATA, "_backup")
+    TRASH = os.path.join(DATA, "_trash")
+    PROPOSALS = os.path.join(DATA, "proposals")
+    THUMBS = os.path.join(DATA, "_thumb")
+    UI_STATE = os.path.join(DATA, "_ui", "state.json")
+    db = os.path.join(DATA, "rdp-demo.db")
+    con = sqlite3.connect(db)
+    try:
+        con.execute(RDP_SCHEMA)
+        con.commit()
+    finally:
+        con.close()
+    CFG_OVERRIDES.update({"rdpDbPath": db,
+                          "worklogDir": os.path.join(HERE, "pccs", "sample-worklogs")})   # 익명 예시 일지
+    CFG.update(CFG_OVERRIDES)
+    from colorlab import synth   # 컬러연구소 합성 데모 라이브러리 (실측값 아님)
+    lab_api.save_library(DATA, BACKUP, synth.library(), "")
+    return tmp
+
+
 # ---------------------------------------------------------------- helpers
 _LOCKS = {}
 _LOCKS_GUARD = threading.Lock()
@@ -1479,6 +1525,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             new = {"dataRoot": CFG.get("dataRoot"), "port": CFG.get("port", 8791)}
             new.update(fresh)
+            new.update(CFG_OVERRIDES)   # 데모 모드의 임시 rdp.db·작업일지가 실제 경로로 돌아가지 않게
             # clear() 후 update()하면 다른 스레드가 잠깐 빈 CFG(=인증 꺼짐)를 볼 수 있다
             CFG.update(new)
             for k in [k for k in CFG if k not in new]:
@@ -2277,22 +2324,7 @@ if __name__ == "__main__":
     PORT = args.port
 
     if args.demo:
-        src = os.path.join(HERE, "sample-data")
-        tmp = tempfile.mkdtemp(prefix="rdp-demo-")
-        if os.path.isdir(src):
-            shutil.copytree(src, tmp, dirs_exist_ok=True)
-        DATA = tmp
-        PATTERNS = os.path.join(DATA, "patterns")
-        IMAGES = os.path.join(DATA, "images")
-        ORIG = os.path.join(DATA, "_orig")
-        BACKUP = os.path.join(DATA, "_backup")
-        TRASH = os.path.join(DATA, "_trash")
-        PROPOSALS = os.path.join(DATA, "proposals")
-        UI_STATE = os.path.join(DATA, "_ui", "state.json")
-        CFG["worklogDir"] = os.path.join(HERE, "pccs", "sample-worklogs")   # 익명 예시 일지
-        from colorlab import synth   # 컬러연구소 합성 데모 라이브러리 (실측값 아님)
-        lab_api.save_library(DATA, BACKUP, synth.library(), "")
-        print(f"[demo] {tmp}")
+        print(f"[demo] {enter_demo_mode()}  (데모용 빈 rdp.db · 예시 작업일지 — 실제 데이터는 건드리지 않음)")
 
     ensure_dirs()
 
