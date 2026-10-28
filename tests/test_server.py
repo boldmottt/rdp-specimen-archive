@@ -136,6 +136,11 @@ class Base(unittest.TestCase):
         con.close()
         return rows
 
+    def push(self, pid):
+        """화면처럼: 미리보기에서 받은 계획 지문(planHash)을 함께 보낸다."""
+        st, pv = self.req("GET", f"/api/rdp/push-preview/{pid}")
+        return self.req("POST", f"/api/rdp/push/{pid}", {"planHash": pv.get("planHash", "") if isinstance(pv, dict) else ""})
+
     def put(self, pid, doc, rev=None, rename_from=None, create=False):
         h = {}
         if rev:
@@ -522,7 +527,7 @@ class RenameDbTests(Base):
     def test_push_refused_after_rename(self):
         self.renamed()
         before = self.db_counts()
-        st, r = self.req("POST", "/api/rdp/push/P-W05")
+        st, r = self.push("P-W05")
         self.assertEqual(st, 409, r)
         self.assertEqual(self.db_counts(), before)
 
@@ -534,7 +539,7 @@ class RenameDbTests(Base):
         st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
         self.assertNotIn("blocked", r)
         self.assertEqual((len(r["updates"]), len(r["inserts"])), (1, 1))
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(st, 200, r)
         self.assertEqual((r["updated"], r["inserted"]), (1, 1))
         self.assertEqual(self.db_counts()[("P", "W01")], 7)
@@ -587,7 +592,7 @@ class PushTests(Base):
         self.db_insert("P", "W01", "1도", "B9", "26_001", bk=5.0, coating="K-2")
         st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
         self.assertEqual([(u["vid"], u["batch"]) for u in r["updates"]], [("v02", "B9")])
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(r["updated"], 1)
         con = sqlite3.connect(self.db)
         self.assertEqual(con.execute("SELECT bk FROM rdp_mixes WHERE batch_no='B9'").fetchone()[0], 20.0)
@@ -598,7 +603,7 @@ class PushTests(Base):
             {"id": "v01", "colorCode": "K-1", "mixes": []},
             {"id": "v02", "colorCode": "K-2", "mixes": [mix("1도", "B9", "26_001")]}])
         self.write_pattern(doc)
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(r["inserted"], 1)
         st, r = self.req("POST", "/api/rdp/sync/P-W01")
         self.assertEqual(st, 200, r)
@@ -650,7 +655,7 @@ class LayerPatternTests(Base):
 
     def test_insert_uses_layer_pattern_code(self):
         self.w01([mix("1도", "B1", "26_001"), mix("2도", "B2", "26_002")], {"2도": "M01"})
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual(st, 200, r)
         self.assertEqual(self.codes(), [("M01", "2도", "B2"), ("W01", "1도", "B1")])
 
@@ -663,7 +668,7 @@ class LayerPatternTests(Base):
         self.assertEqual([(m["from"], m["to"], m["batch"]) for m in r["moves"]], [("W01", "M01", "B2")])
         self.assertEqual(r["inserts"], [])
         self.assertEqual([u["batch"] for u in r["updates"]], ["B2"])
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual((r["moved"], r["updated"], r["inserted"]), (1, 1, 0))
         self.assertEqual(self.codes(), [("M01", "2도", "B2"), ("W01", "1도", "B1")])
         st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
@@ -683,7 +688,7 @@ class LayerPatternTests(Base):
         """W01이 2도를 M01 코드로 보낸 행은 M01 시편으로 딸려 가지 않는다."""
         self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
         self.write_pattern(pattern("P-M01", "P", "M01", [{"id": "v01", "colorCode": "K-9", "mixes": []}]))
-        self.req("POST", "/api/rdp/push/P-W01")
+        self.push("P-W01")
         self.db_insert("P", "M01", "2도", "B5", "26_002", coating="K-9")
         st, r = self.req("POST", "/api/rdp/sync/P-M01")
         self.assertEqual(st, 200, r)
@@ -703,7 +708,7 @@ class LayerPatternTests(Base):
     def test_changed_layer_code_moves_rows(self):
         """M01로 보낸 뒤 M02로 고치면 M01 행을 옮긴다 (중복 생성 X). 비우면 시편 코드로 되돌린다."""
         doc = self.w01([mix("2도", "B2", "26_002")], {"2도": "M01"})
-        self.req("POST", "/api/rdp/push/P-W01")
+        self.push("P-W01")
         self.assertEqual(self.codes(), [("M01", "2도", "B2")])
         rev = server.doc_rev(self.read_pattern("P-W01"))
         for want in ("M02", ""):
@@ -717,7 +722,7 @@ class LayerPatternTests(Base):
             st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
             self.assertEqual(r["inserts"], [], r)
             self.assertEqual([m["to"] for m in r["moves"]], [want or "W01"], r)
-            self.req("POST", "/api/rdp/push/P-W01")
+            self.push("P-W01")
             self.assertEqual(self.codes(), [(want or "W01", "2도", "B2")])
 
     def test_diff_uses_layer_code(self):
@@ -728,6 +733,44 @@ class LayerPatternTests(Base):
         self.assertEqual((r["same"] + len(r["changed"]), r["archiveOnly"], r["dbOnly"]), (1, [], []), r)
 
 
+class StalePushTests(Base):
+    """DB 전송은 미리보기에서 본 계획 그대로일 때만 — 그사이 시편·잉크 연결·DB가 바뀌면 409로 다시 보게."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1",
+                                                          "mixes": [mix("1도", "A", "26_001")]}]))
+
+    def preview(self):
+        st, pv = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(st, 200, pv)
+        return pv
+
+    def test_push_without_preview_is_refused(self):
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {})
+        self.assertEqual((st, r.get("stale")), (409, True), r)
+        self.assertEqual(self.db_counts(), {})
+
+    def test_doc_changed_after_preview_is_refused(self):
+        pv = self.preview()
+        d = self.read_pattern("P-W01")
+        d["variations"][0]["mixes"][0]["inks"] = {"BK": 99.0}   # 신규 행의 값은 미리보기에 안 보이므로 버전으로 잡는다
+        st, r = self.put("P-W01", d, rev=server.doc_rev(d))
+        self.assertEqual(st, 200, r)
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {"planHash": pv["planHash"]})
+        self.assertEqual((st, r.get("stale")), (409, True), r)
+        self.assertEqual(self.db_counts(), {})
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {"planHash": self.preview()["planHash"]})
+        self.assertEqual((st, r["inserted"]), (200, 1), r)
+
+    def test_db_changed_after_preview_is_refused(self):
+        pv = self.preview()                                                       # 신규 1건으로 봤는데
+        self.db_insert("P", "W01", "1도", "A", "26_001", bk=5.0, coating="K-1")   # 그사이 같은 키가 DB에 생김
+        st, r = self.req("POST", "/api/rdp/push/P-W01", {"planHash": pv["planHash"]})
+        self.assertEqual((st, r.get("stale")), (409, True), r)
+        self.assertEqual(sum(self.db_counts().values()), 1)
+
+
 class PlateMoveTests(Base):
     """DB 키에 동판이 들어간다 → 동판만 바꾼 배합은 새 행을 넣지 않고 옛 동판 행을 옮긴다 (같은 배합 두 줄 방지)."""
 
@@ -735,7 +778,7 @@ class PlateMoveTests(Base):
         super().setUp()
         self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [
             mix("1도", "A", "26_001"), mix("1도", "B", "26_001"), mix("2도", "A", "26_002")]}]))
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual((st, r["inserted"]), (200, 3), r)
 
     def rows(self):
@@ -759,7 +802,7 @@ class PlateMoveTests(Base):
         self.assertEqual(r["inserts"], [], r)
         self.assertEqual([(m["batch"], m["fromPlate"], m["toPlate"]) for m in r["moves"]], [("A", "26_001", "26_009")])
         self.assertEqual([u["batch"] for u in r["updates"]], ["A"])
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual((r["moved"], r["updated"], r["inserted"]), (1, 1, 0), r)
         self.assertEqual(self.rows(), [("1도", "A", "26_009", 12.0), ("1도", "B", "26_001", 10.0), ("2도", "A", "26_002", 10.0)])
         st, r = self.req("GET", "/api/rdp/push-preview/P-W01")
@@ -768,7 +811,7 @@ class PlateMoveTests(Base):
     def test_two_changes_before_push_move_the_original_row(self):
         self.save(lambda ms: ms[0].update(plate="26_005"))
         self.assertEqual(self.save(lambda ms: ms[0].update(plate="26_009"))[0]["plateFrom"], ["26_001", "26_005"])
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual((r["moved"], r["inserted"]), (1, 0), r)
         self.assertEqual([x[:3] for x in self.rows()][:2], [("1도", "A", "26_009"), ("1도", "B", "26_001")])
 
@@ -778,7 +821,7 @@ class PlateMoveTests(Base):
                 if m["layer"] == "1도":
                     m["plate"] = "26_009"
         self.save(change)
-        st, r = self.req("POST", "/api/rdp/push/P-W01")
+        st, r = self.push("P-W01")
         self.assertEqual((r["moved"], r["inserted"]), (2, 0), r)
         self.assertEqual([x[:3] for x in self.rows()], [("1도", "A", "26_009"), ("1도", "B", "26_009"), ("2도", "A", "26_002")])
 
@@ -817,11 +860,11 @@ class SharedBatchTests(Base):
         self.assertEqual(sorted(i["batch"] for i in r["inserts"]), ["C", "나", "다"])
         self.assertEqual([(x["vid"], x["batch"]) for x in r["shared"]], [("v02", "C")])
         self.assertEqual(r["skipped"], [])
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual((st, r["inserted"], r["failed"]), (200, 3, []))
         st, r = self.req("GET", "/api/rdp/push-preview/P-L1")   # 두 번째 보내기도 실패하지 않는다
         self.assertEqual((r["inserts"], r["updates"]), ([], []))
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual(st, 200, r)
 
     def test_shared_batch_different_values_is_flagged(self):
@@ -836,7 +879,7 @@ class SharedBatchTests(Base):
         st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
         self.assertEqual([i["batch"] for i in r["inserts"]], ["D"])
         self.assertIn("이미 있음", r["skipped"][0]["reason"])
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual((st, r["inserted"], r["failed"]), (200, 1, []))
 
     def test_code_move_onto_existing_key_does_not_fail_push(self):
@@ -847,7 +890,7 @@ class SharedBatchTests(Base):
         st, r = self.req("GET", "/api/rdp/push-preview/P-L1")
         self.assertEqual(r["moves"], [])
         self.assertIn("옮길 코드 M01", r["skipped"][0]["reason"])
-        st, r = self.req("POST", "/api/rdp/push/P-L1")
+        st, r = self.push("P-L1")
         self.assertEqual((st, r["inserted"]), (200, 1), r)
 
     def test_apply_push_survives_race_on_move(self):

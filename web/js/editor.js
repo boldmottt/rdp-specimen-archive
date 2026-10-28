@@ -101,6 +101,13 @@ function fieldRow(label, key, opts) {
   return `<div class="field-row"><label>${label}</label><input data-k="${key}" value="${esc(v)}" placeholder="${o.ph || ""}" ${o.mono ? 'style="font-family:var(--mono);font-size:12px"' : ""}></div>`;
 }
 
+// 미리보기는 서버에 저장된 시편으로 계산한다 — 편집기가 보고 있는 버전과 다르면(다른 탭·PC에서 저장) 보내지 않는다
+function staleDraft(pv) {
+  if (!pv.rev || !E.baseRev || pv.rev === E.baseRev) return false;
+  toast("다른 곳에서 이 시편이 바뀌었어요 — 편집기를 닫고 다시 열어 최신 내용을 확인한 뒤 보내세요");
+  return true;
+}
+
 function pushPanel(pv) {
   if (pv.ink_errors && pv.ink_errors.length) {
     return `<div class="push-panel"><div class="pp-blocked">${esc(pv.blocked)}</div><ul>${pv.ink_errors.map((x) => `<li>${esc(x.vid || "")} · ${esc(x.layer || "")} ${esc(x.batch || "-")}: ${esc(x.reason)}</li>`).join("")}</ul><div class="pp-actions"><button class="mini-btn" id="pp-cancel">닫기</button><a href="/lab/#/library" target="_blank" rel="noopener">컬러연구소에서 DB 연결 설정</a><button class="mini-btn" disabled>전체 전송 차단</button></div></div>`;
@@ -660,8 +667,8 @@ export function renderDrawer() {
       if (isDirty()) { toast("먼저 저장한 뒤 보내세요"); return; }
       pok.disabled = true; pok.textContent = "반영 중…";
       try {
-        const r = await fetch(`/api/rdp/push/${encodeURIComponent(d.id)}`, { method: "POST" }).then((x) => x.json());
-        if (!r.ok) throw new Error(r.error || "반영 실패");
+        // 미리보기에서 본 계획 그대로일 때만 서버가 쓴다 (그사이 시편·잉크 연결·DB가 바뀌면 409 → 새 미리보기)
+        const r = await apiPost(`/api/rdp/push/${encodeURIComponent(d.id)}`, { planHash: (E.push && E.push.planHash) || "" });
         E.push = null;
         renderDrawer();
         const nf = (r.failed || []).length;
@@ -669,6 +676,13 @@ export function renderDrawer() {
           + (nf ? ` · 실패 ${nf}건 (${(r.failed || []).map((f) => `${f.layer} ${f.batch}: ${f.reason}`).join(", ")})` : "")
           + (r.backup ? ` (백업 ${r.backup})` : ""));
       } catch (e) {
+        if (e.status === 409 && e.payload && e.payload.stale) {
+          toast(e.message);
+          try { E.push = await apiGet(`/api/rdp/push-preview/${encodeURIComponent(d.id)}`); } catch (e2) { E.push = null; }
+          if (E.push && staleDraft(E.push)) E.push = null;
+          renderDrawer();
+          return;
+        }
         toast("반영 실패: " + e.message);
         pok.disabled = false; pok.textContent = "DB에 반영";
       }
@@ -678,6 +692,7 @@ export function renderDrawer() {
       if (isDirty()) { toast("먼저 저장한 뒤 보내세요"); return; }
       try {
         const pv = await apiGet(`/api/rdp/push-preview/${encodeURIComponent(d.id)}`);
+        if (staleDraft(pv)) return;
         E.push = pv; renderDrawer();
       } catch (e) { toast("미리보기 실패: " + e.message); }
     };

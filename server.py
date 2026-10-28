@@ -886,6 +886,14 @@ def db_ink_signature(doc):
     return hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def plan_hash(plan, doc) -> str:
+    """미리보기에서 본 계획과 전송할 계획이 같은지 확인하는 지문.
+    계획(이동·수정·신규) + 잉크 연결이 반영된 DB용 문서 + 시편 버전 — 그사이 시편·잉크 연결·DB가 바뀌면 달라진다."""
+    core = {k: plan.get(k) or [] for k in ("updates", "inserts", "moves")}
+    core.update(ink=plan.get("ink_signature"), rev=doc_rev(doc))
+    return hashlib.sha256(json.dumps(core, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:32]
+
+
 def plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
     prepared, issues = db_document(doc)
     if issues:
@@ -1664,7 +1672,8 @@ class Handler(BaseHTTPRequestHandler):
                         doc = json.load(f)
                     old_rows, old_key = renamed_from_rows(doc)
                     plan = plan_push(doc, load_doc_rows(doc), old_rows, old_key, db_taken_keys(doc))
-                    return self.json({"ok": True, "dbPath": rdp_db_path(), **plan})
+                    return self.json({"ok": True, "dbPath": rdp_db_path(), **plan, "planHash": plan_hash(plan, doc),
+                                      "rev": doc_rev(doc)})
                 except Exception as e:
                     return self.error(400, str(e))
             if p.startswith("/api/rdp/diff/"):
@@ -1887,8 +1896,10 @@ class Handler(BaseHTTPRequestHandler):
                 pid = p[len("/api/rdp/push/"):].strip("/")
                 try:
                     safe_id(pid)
+                    body = json.loads(self.read_body() or b"{}")
                 except ValueError:
-                    return self.error(400, "id 형식 오류")
+                    return self.error(400, "id 또는 요청 형식 오류")
+                seen_hash = str(body.get("planHash") or "") if isinstance(body, dict) else ""
                 try:
                     with pid_lock(pid):
                         path = safe_join(PATTERNS, pid + ".json")
@@ -1903,6 +1914,11 @@ class Handler(BaseHTTPRequestHandler):
                                               "error": plan["blocked"]}, 409)
                         if not plan["updates"] and not plan["inserts"] and not plan.get("moves"):
                             return self.json({"ok": True, "updated": 0, "inserted": 0, "message": "반영할 변경이 없습니다"})
+                        # 사용자가 미리보기에서 본 것과 같은 계획일 때만 쓴다 (그사이 시편·잉크 연결·DB가 바뀌면 다시 보게)
+                        if seen_hash != plan_hash(plan, doc):
+                            return self.json({"ok": False, "stale": True,
+                                              "error": "미리보기 이후 시편·잉크 연결·DB가 바뀌었습니다 — 다시 미리보기 하세요"
+                                              if seen_hash else "DB 반영 전에 미리보기를 먼저 확인하세요"}, 409)
                         res = apply_push(project, code, doc, plan)
                         return self.json({"ok": True, **res, "skipped": len(plan["skipped"])})
                 except Exception as e:
