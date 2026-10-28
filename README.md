@@ -13,7 +13,7 @@
 ## 데이터 위치
 
 ```
-~/Library/CloudStorage/GoogleDrive-loo4leesk@gmail.com/내 드라이브/RDP-Archive/
+~/Library/CloudStorage/GoogleDrive-<내 계정>/내 드라이브/RDP-Archive/
 ├── patterns/<패턴ID>.json     패턴 1건 = 파일 1개 (전부 여기에)
 ├── images/<패턴ID>/v01.jpg   170:70 → 2400×988
 ├── _orig/<패턴ID>/            업로드 원본

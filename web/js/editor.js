@@ -165,9 +165,9 @@ export function renderDrawer() {
   let body = "";
   if (E.tab === "base") {
     body = `<div class="sec-label">패턴</div>
-        ${fieldRow("프로젝트", "project", { ph: "NX5a" })}
-        ${fieldRow("차종명", "projectName", { ph: "NX5a (투싼)" })}
-        ${fieldRow("고객", "client", { ph: "현대자동차" })}
+        ${fieldRow("프로젝트", "project", { ph: "PJ01" })}
+        ${fieldRow("차종명", "projectName", { ph: "PJ01 (차종명)" })}
+        ${fieldRow("고객", "client", { ph: "고객사" })}
         ${fieldRow("패턴 코드", "pattern.code", { ph: "WB7", mono: true })}
         ${fieldRow("영문명", "pattern.name", { ph: "Wood" })}
         ${fieldRow("한글명", "pattern.nameKo", { ph: "우드" })}
@@ -210,8 +210,8 @@ export function renderDrawer() {
         ${fieldRow("Rev", "variations." + E.vIdx + ".rev", { ph: "0" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 샘플의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 공통값을 씁니다 (패턴 코드·이름은 공통)</span></div>
-        ${fieldRow("Company", "variations." + E.vIdx + ".label.company", { ph: d.client || "현대자동차" })}
-        ${fieldRow("Project", "variations." + E.vIdx + ".label.project", { ph: d.project || "NX5a", mono: true })}
+        ${fieldRow("Company", "variations." + E.vIdx + ".label.company", { ph: d.client || "고객사" })}
+        ${fieldRow("Project", "variations." + E.vIdx + ".label.project", { ph: d.project || "PJ01", mono: true })}
         ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "Design Sample" })}
         ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "Padprint Layer 1" })}
         ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}

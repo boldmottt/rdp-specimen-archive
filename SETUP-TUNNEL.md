@@ -1,17 +1,20 @@
 # 외부 접속 구축 가이드 (Cloudflare Tunnel + Access)
 
-## 지금 구성 (2026-10-22 완료)
+## 구성 한눈에 보기
 
-| 항목 | 값 |
+> 이 저장소는 공개입니다. 실제 주소·터널 ID·허용 이메일·팀 도메인은 여기에 적지 마세요.
+> 실제 값은 `config.json`(저장소에 올라가지 않음)과 Cloudflare 대시보드에 있습니다 — 확인은 `python3 check_tunnel.py`.
+
+| 항목 | 예시 |
 |---|---|
-| 공개 주소 | `https://rdparchive.fyi` |
-| 터널 | `rdp-archive` (ID `2aedd753-41dc-49dd-9c53-8cd29e64168c`) → `http://localhost:8791` |
-| 인증 | Cloudflare Access · 정책 `Only Seokhee` (Allow · Emails `loo4leesk@gmail.com`) |
-| 팀 도메인 | `rdp-archive.cloudflareaccess.com` |
-| 터널 자동 시작 | `~/.cloudflared/rdp-archive.sh` + `~/Library/LaunchAgents/com.nifco.rdptunnel.plist` |
+| 공개 주소 | `https://rdp.내도메인.com` |
+| 터널 | `rdp-archive` → `http://localhost:8791` |
+| 인증 | Cloudflare Access · 정책 Allow · Emails `내 이메일` |
+| 팀 도메인 | `내팀이름.cloudflareaccess.com` |
+| 터널 자동 시작 | cloudflared 서비스 (아래 2단계) |
 | 앱 자동 시작 | `./install_launchagent.sh` (선택) |
 
-아래 원문 가이드는 다른 도메인으로 다시 구축할 때를 위한 참고용입니다.
+아래는 처음 구축하거나 다른 도메인으로 다시 구축할 때의 순서입니다.
 
 ---
 
@@ -31,8 +34,8 @@
 | 터널 생성 · 서비스 등록 | **대시보드에서 해야 함** |
 
 ```bash
-cd ~/.aside/artifacts/rdp-archive      # 앱 폴더 (실제 경로로)
-python3 check_tunnel.py                 # 준비 상태 점검
+cd <앱 폴더>                # 이 저장소를 받은 폴더
+python3 check_tunnel.py     # 준비 상태 점검
 ```
 
 ---
@@ -92,7 +95,7 @@ sudo /opt/homebrew/bin/cloudflared service install eyJhIjoi...   # 대시보드�
 ## 4. 앱에 주소 등록
 
 ```bash
-cd ~/.aside/artifacts/rdp-archive
+cd <앱 폴더>
 python3 setup_tunnel.py rdp.내도메인.com me@nifco.co.kr 내팀이름
 ```
 
@@ -131,7 +134,7 @@ python3 setup_tunnel.py rdp.내도메인.com me@nifco.co.kr 내팀이름
 ## 6. 재부팅해도 자동으로 켜지게 (선택)
 
 ```bash
-cd ~/.aside/artifacts/rdp-archive
+cd <앱 폴더>
 ./install_launchagent.sh
 ```
 
