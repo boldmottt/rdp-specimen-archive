@@ -1523,3 +1523,17 @@ class ColorTests(Base):
         st, r = self.req("GET", "/api/colors")
         self.assertEqual(st, 200, r)
         self.assertEqual([it["vid"] for it in r["items"]], ["v01"], "사진 없는 컬러는 빠진다")
+
+
+class TestSafety(Base):
+    """테스트가 '진짜 데이터 폴더'를 건드리지 않는지 스스로 확인한다.
+    2026-10-29 에 실제 폴더를 가리키는 서버에 테스트용 PUT 을 보내 _ui/state.json 을 날린 적이 있다.
+    그 사고는 테스트 코드가 아니라 사람이 낸 것이지만, 테스트가 그 방향으로 미끄러지는 것은 여기서 막는다."""
+
+    def test_data_paths_are_inside_temp_dir(self):
+        real_root = os.path.expanduser("~/Library/CloudStorage/GoogleDrive-loo4leesk@gmail.com/내 드라이브/RDP-Archive")
+        tmp = os.path.abspath(self.tmp)
+        for name in ("DATA", "PATTERNS", "IMAGES", "THUMBS", "ORIG", "BACKUP", "TRASH", "PROPOSALS", "UI_STATE"):
+            path = os.path.abspath(getattr(server, name))
+            self.assertTrue(path.startswith(tmp), f"{name} 가 임시 폴더 밖을 가리킨다: {path}")
+            self.assertFalse(path.startswith(os.path.abspath(real_root)), f"{name} 가 실제 데이터 폴더다: {path}")
