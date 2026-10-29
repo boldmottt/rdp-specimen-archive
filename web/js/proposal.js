@@ -1,7 +1,8 @@
 /* RDP 시편 아카이브 — 제안서 · 확정본 보관함 · 장바구니 바 */
-import { $, $$, App, apiGet, apiPost, byId, dash, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
+import { $, $$, App, apiGet, apiPost, byId, dash, esc, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
 import { labOf, layerPlate } from "./detail.js";
 import { rerender } from "./main.js";
+import { groupOrder, movePattern, moveColor, normalizeOrder } from "./cart-order.js";
 
 /* ---------------- 담긴 시편 ---------------- */
 function cartItems() {
@@ -297,6 +298,7 @@ export function renderProposal() {
         <label class="chk-inline" title="켜면 각 페이지에 '제안 포인트' 칸이 생깁니다"><input type="checkbox" id="f-comments"${App.prop.showComments ? raw(" checked") : ""}> 제안 포인트</label>
         <div class="grow"></div>
         <span id="pstatus">${statusHTML(m)}</span>
+        <button class="btn-line" id="porder" title="담긴 시편의 순서를 바꿉니다">순서</button>
         <button class="btn-line" id="parchive">보관함</button>
         <button class="btn-line" id="psnapshot">확정 저장</button>
         <button class="btn-dark" id="pprint">인쇄 / PDF</button>
@@ -307,6 +309,7 @@ export function renderProposal() {
   $("#pback").onclick = () => (location.hash = "");
   $("#parchive").onclick = () => (location.hash = "#/proposals");
   $("#pprint").onclick = () => window.print();
+  $("#porder").onclick = openOrderDialog;
   $("#psnapshot").onclick = saveSnapshot;
   $("#psnapshot").disabled = snapBusy;
   const bindField = (id, key) => {
@@ -557,4 +560,86 @@ export function renderCart() {
       <button class="btn-light" id="mkprop">제안서 만들기</button></div>`);
   $("#clearcart").onclick = () => { App.cart = []; resetPropIdentity(); saveLS(); renderCart(); rerender(); };
   $("#mkprop").onclick = () => (location.hash = "#/proposal");
+}
+
+/* ---------------- 순서 조정 대화상자 ----------------
+ * 제안서 순서 = 장바구니 배열 순서다(cart-order.js 규칙).
+ * 시트 위에 버튼을 얹으면 인쇄 규격을 건드릴 위험이 있어, 대화상자를 body 에 붙여 시트와 분리한다.
+ * 이동할 때마다 App.cart 를 바꾸고 → 저장 → 시트를 다시 그리고 → 이 대화상자만 갱신한다(초점 유지).
+ */
+function orderDialogNode() {
+  let dlg = document.getElementById("order-dlg");
+  if (!dlg) {
+    dlg = document.createElement("dialog");
+    dlg.id = "order-dlg";
+    dlg.className = "order-dialog";
+    document.body.appendChild(dlg);
+  }
+  return dlg;
+}
+
+function orderRowsHTML() {
+  const groups = groupOrder(App.cart);
+  if (!groups.length) return `<p class="ord-empty">담긴 시편이 없습니다.</p>`;
+  return groups.map((g, gi) => {
+    const p = byId(g.pid);
+    const code = (p && p.pattern && p.pattern.code) || g.pid;
+    const last = gi === groups.length - 1;
+    const colors = g.vids.map((vid, ci) => {
+      const v = p && (p.variations || []).find((x) => x.id === vid);
+      const nm = v ? (v.colorName || v.colorCode || vid) : vid;
+      return `<div class="ord-col">
+          <span class="ord-nm">${esc(nm)}</span>
+          <button type="button" data-k="col:${g.pid}:${vid}:up"${ci === 0 ? " disabled" : ""} aria-label="${esc(nm)} 위로">↑</button>
+          <button type="button" data-k="col:${g.pid}:${vid}:down"${ci === g.vids.length - 1 ? " disabled" : ""} aria-label="${esc(nm)} 아래로">↓</button>
+        </div>`;
+    }).join("");
+    return `<div class="ord-pat">
+        <div class="ord-head">
+          <b>${esc(code)}</b><span class="ord-n">${g.vids.length}색</span>
+          <button type="button" data-k="pat:${g.pid}:up"${gi === 0 ? " disabled" : ""} aria-label="${esc(code)} 위로">↑</button>
+          <button type="button" data-k="pat:${g.pid}:down"${last ? " disabled" : ""} aria-label="${esc(code)} 아래로">↓</button>
+          <button type="button" class="ord-top" data-k="pat:${g.pid}:top"${gi === 0 ? " disabled" : ""}>맨 위로</button>
+        </div>
+        ${colors}
+      </div>`;
+  }).join("");
+}
+
+function openOrderDialog() {
+  const dlg = orderDialogNode();
+  dlg.innerHTML = `<form method="dialog">
+      <h3>제안서 순서</h3>
+      <p class="ord-hint">패턴을 옮기면 그 컬러들이 함께 움직입니다. 컬러는 같은 패턴 안에서만 옮길 수 있습니다.</p>
+      <div class="ord-list" id="ord-list">${orderRowsHTML()}</div>
+      <div class="ord-actions"><button type="submit" class="btn-dark">닫기</button></div>
+    </form>`;
+  bindOrder(dlg);
+  if (!dlg.open) dlg.showModal();
+}
+
+function bindOrder(dlg) {
+  dlg.querySelectorAll("[data-k]").forEach((btn) => {
+    btn.onclick = () => {
+      const key = btn.dataset.k;
+      const parts = key.split(":");
+      const kind = parts[0];
+      const pid = parts[1];
+      if (kind === "pat") {
+        const dir = parts[2];                         // up | down | top
+        App.cart = movePattern(App.cart, pid, dir === "top" ? "top" : (dir === "up" ? -1 : 1));
+      } else {
+        const vid = parts[2], dir = parts[3];         // col:<pid>:<vid>:<up|down>
+        App.cart = moveColor(App.cart, pid, vid, dir === "up" ? -1 : 1);
+      }
+      App.cart = normalizeOrder(App.cart);      // 패턴별 연속 유지
+      saveLS();
+      renderProposal();                          // 시트를 즉시 다시 그린다
+      const d = orderDialogNode();
+      d.querySelector("#ord-list").innerHTML = orderRowsHTML();
+      bindOrder(d);
+      const again = d.querySelector(`[data-k="${key}"]`);   // 같은 버튼으로 초점 복귀
+      if (again) again.focus();
+    };
+  });
 }
