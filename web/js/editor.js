@@ -5,6 +5,7 @@ import { addInkTag, bindRecipePreviews, inkInfo, inkLabel, inkOrder, inkPool, la
 import { renderCart } from "./proposal.js";
 // 태그 자동완성 — 기존 태그를 골라 넣게 한다 (web/js/search.js)
 import { bindTagInput } from "./search.js";
+import { valueCounts, canonical, isNewValue } from "./facets.js";
 import { startCrop } from "./crop.js";
 import { rerender } from "./main.js";
 
@@ -179,7 +180,11 @@ export function renderDrawer() {
     body = `<div class="sec-label">패턴</div>
         ${fieldRow("프로젝트", "project", { ph: "PJ01" })}
         ${fieldRow("차종명", "projectName", { ph: "PJ01 (차종명)" })}
-        ${fieldRow("고객", "client", { ph: "고객사" })}
+        <div class="field-row"><label>고객</label>
+          <input data-k="client" list="client-list" value="${esc(d.client || "")}" placeholder="고객사" autocomplete="off">
+          <datalist id="client-list">${valueCounts(App.patterns, (pp) => pp.client).map((x) => `<option value="${esc(x.val)}">`).join("")}</datalist>
+        </div>
+        <div class="field-note" id="client-note" hidden>기존에 없는 고객사입니다 — 그대로 저장하면 새 값이 됩니다.</div>
         ${fieldRow("패턴 코드", "pattern.code", { ph: "WB7", mono: true })}
         ${fieldRow("영문명", "pattern.name", { ph: "Wood" })}
         ${fieldRow("한글명", "pattern.nameKo", { ph: "우드" })}
@@ -370,6 +375,22 @@ export function renderDrawer() {
   }
 
   $("#drawer-body").innerHTML = body;
+  // 고객사: 기존 값이면 자동완성 후보, 없으면 안내(저장은 막지 않는다)
+  {
+    const clientInput = $('#drawer-body [data-k="client"]');
+    if (clientInput) {
+      const known = valueCounts(App.patterns, (pp) => pp.client).map((x) => x.val);
+      const note = $("#client-note");
+      const upd = () => { if (note) note.hidden = !isNewValue(clientInput.value, known); };
+      clientInput.addEventListener("input", upd);
+      clientInput.addEventListener("change", () => {
+        const fixed = canonical(clientInput.value, known);   // hyundai → HYUNDAI
+        if (fixed !== clientInput.value) clientInput.value = fixed;
+        upd();
+      });
+      upd();
+    }
+  }
   // 태그 입력칸에 자동완성(기존 태그 + 지금 초안 태그). 입력칸은 fieldRow 가 data-k 로 만든다.
   if (E.tab === "base") bindTagInput($('#drawer-body [data-k="pattern.tags"]'), App.patterns.concat([E.draft]));
   if (E.tab === "mixes") {
