@@ -1531,9 +1531,9 @@ class TestSafety(Base):
     그 사고는 테스트 코드가 아니라 사람이 낸 것이지만, 테스트가 그 방향으로 미끄러지는 것은 여기서 막는다."""
 
     def test_data_paths_are_inside_temp_dir(self):
-        real_root = os.path.expanduser("~/Library/CloudStorage/GoogleDrive-loo4leesk@gmail.com/내 드라이브/RDP-Archive")
+        # 실제 데이터 폴더 경로를 여기 적지 않는다 — 이 저장소는 공개라 계정·경로가 그대로 노출된다.
+        # "테스트가 만든 임시 폴더 밖을 가리키면 실패" 만으로 같은 보호가 된다.
         tmp = os.path.abspath(self.tmp)
         for name in ("DATA", "PATTERNS", "IMAGES", "THUMBS", "ORIG", "BACKUP", "TRASH", "PROPOSALS", "UI_STATE"):
             path = os.path.abspath(getattr(server, name))
             self.assertTrue(path.startswith(tmp), f"{name} 가 임시 폴더 밖을 가리킨다: {path}")
-            self.assertFalse(path.startswith(os.path.abspath(real_root)), f"{name} 가 실제 데이터 폴더다: {path}")
