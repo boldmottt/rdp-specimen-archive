@@ -4,6 +4,7 @@ import { inlineSave, inlineSettled, startInline } from "./inline.js";
 import { saveNewPattern } from "./catalog.js";
 import { showPlate } from "./plates.js";
 import { renderCart } from "./proposal.js";
+import { workOf, workSource } from "./work.js";
 import { openEditor } from "./editor.js";
 
 /* ---------------- detail ---------------- */
@@ -349,9 +350,16 @@ export function renderDetail(pid, vid, override) {
           <section class="sec"><h3>작업 정보</h3>
             <dl class="kv">
               <dt>작업일자</dt><dd data-f="v.date" data-tip="이 샘플의 작업일 — 라벨 Date(Rev)·편집기 작업일과 같은 값">${esc(v && v.date ? fmtDate(v.date) : "—")}</dd>
-              <dt>작업 장소</dt><dd data-f="work.place">${esc(dash(p.work.place))}</dd>
-              <dt>작업자</dt><dd data-f="work.worker">${esc(dash(p.work.worker))}</dd>
-              <dt>설비</dt><dd data-f="work.machine">${esc(dash(p.work.machine))}</dd>
+              ${[["작업 장소", "place"], ["작업자", "worker"], ["설비", "machine"]].map(([label, key]) => {
+                // 컬러가 덮어쓴 값이면 「컬러」 배지 + 공통값을 title 로. 클릭하면 그 자리(컬러 값)를 고친다.
+                const src = workSource(p, v, key);
+                const val = workOf(p, v)[key];
+                const base = (p.work || {})[key];
+                const tip = src === "color" ? `공통값: ${base || "—"}` : "";
+                const f = src === "color" ? `v.work.${key}` : `work.${key}`;
+                return `<dt>${label}${src === "color" ? ' <span class="lab-own" title="이 컬러만 다른 값">컬러</span>' : ""}</dt>` +
+                  `<dd data-f="${f}"${tip ? ` data-tip="${esc(tip)}"` : ""}>${esc(dash(val))}</dd>`;
+              }).join("")}
               <dt>양산 일정</dt><dd data-f="work.sop">${esc(dash(p.work.sop))}</dd>
               <dt>엠보</dt><dd data-f="work.emboss">${esc(dash(p.work.emboss))}</dd>
               <dt>패드</dt><dd data-f="work.pad">${esc(dash(p.work.pad))}</dd>

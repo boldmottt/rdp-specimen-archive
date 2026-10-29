@@ -3,6 +3,7 @@ import { $, $$, App, apiGet, apiPost, byId, dash, esc, html, raw, imgUrl, resetP
 import { labOf, layerPlate } from "./detail.js";
 import { rerender } from "./main.js";
 import { groupOrder, movePattern, moveColor, normalizeOrder } from "./cart-order.js";
+import { workOf } from "./work.js";
 
 /* ---------------- 담긴 시편 ---------------- */
 function cartItems() {
@@ -77,6 +78,7 @@ function liveModel(withSource) {
         const same = v.sameAs ? (p.variations || []).find((x) => x.id === v.sameAs) : null;
         return Object.assign({
           id: v.id, name: vName(v), colorName: v.colorName || "", colorCode: v.colorCode || "",
+          work: workOf(p, v),                 // 컬러별 유효 작업정보(확정본 원본에만)
           images: (v.images || []).slice(0, 1),
           item: lab.item || "", type: lab.type || "", remark: remarkLine(p, v),
           comment: comments[p.id + "::" + v.id] || "",

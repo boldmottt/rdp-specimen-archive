@@ -134,3 +134,16 @@ test("모든 컬러 범위는 예전처럼 전체", () => {
   const d = doc();
   assert.equal(applySpec(d, { status: "합격" }, scopeVids("all", undefined)), 2);
 });
+
+test("CSV — workOf 를 넘기면 작업정보 4열이 붙고, 안 넘기면 예전 그대로", () => {
+  const p = { project: "P", pattern: { code: "G-1" }, work: { place: "미성통상", worker: "김동훈" },
+    variations: [{ id: "a" }, { id: "b", work: { place: "API" } }] };
+  const wf = (pp, v) => ({ ...pp.work, ...(v.work || {}) });      // 실제 workOf 와 같은 모양
+  const withWork = csvRows([p], null, null, wf);
+  assert.equal(withWork[0].length, CSV_HEAD.length + 4);
+  assert.deepEqual(withWork[0].slice(-4), ["작업장소", "작업자", "설비", "수량"]);
+  const col = withWork[0].length - 4;               // 작업장소 열
+  assert.equal(withWork[1][col], "미성통상", "v01 은 공통값 상속");
+  assert.equal(withWork[2][col], "API", "v02 는 컬러 덮어쓰기");
+  assert.equal(csvRows([p], null, null)[0].length, CSV_HEAD.length, "인자 없으면 예전과 같다");
+});

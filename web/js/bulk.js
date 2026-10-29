@@ -12,6 +12,7 @@
  */
 import { $, App, apiPut, byId, clone, esc, markSaved, revOf, toast, vName } from "./core.js";
 import { applySpec, BULK_HINT, csvRows, csvText, scopeVids } from "./bulk-rules.js";
+import { workOf } from "./work.js";
 
 let lastPick = -1;          // Shift 범위 선택의 시작점 (지금 보이는 순서 기준)
 
@@ -171,7 +172,7 @@ export function openBulkDialog(rerender, hitsOf) {
 
 /** 지금 목록(검색에 걸린 것)을 CSV 로 내려받는다. vidsOf(pid) = 걸린 컬러 id */
 export function downloadCsv(list, vidsOf) {
-  const rows = csvRows(list, vidsOf, vName);
+  const rows = csvRows(list, vidsOf, vName, workOf);   // 컬러별 유효 작업정보까지 내보낸다
   if (rows.length <= 1) { toast("내보낼 시편이 없습니다"); return; }
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");

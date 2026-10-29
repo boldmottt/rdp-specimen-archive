@@ -85,19 +85,26 @@ export const CSV_HEAD = ["프로젝트", "패턴코드", "패턴명", "컬러코
  * 표 행 만들기. vidsOf(pid) 는 "지금 걸린 컬러 id 배열" — 담기와 같은 범위를 쓴다.
  * vName 은 컬러 표시 이름(코드 or 이름)을 만드는 함수(core.js 의 vName)를 넘긴다.
  */
-export function csvRows(patterns, vidsOf, vName) {
-  const rows = [CSV_HEAD.slice()];
+export function csvRows(patterns, vidsOf, vName, workOf) {
+  // workOf 를 넘기면 작업정보 4열이 뒤에 붙는다(컬러별 유효값). 안 넘기면 예전과 완전히 같다.
+  const head = workOf ? CSV_HEAD.concat(["작업장소", "작업자", "설비", "수량"]) : CSV_HEAD.slice();
+  const rows = [head];
   (patterns || []).forEach((p) => {
     const hit = new Set((vidsOf ? vidsOf(p.id) : null) || (p.variations || []).map((v) => v.id));
     (p.variations || []).forEach((v) => {
       if (!hit.has(v.id)) return;
       const plates = Object.entries(v.layerPlates || {}).map(([k, x]) => `${k}=${x}`).join(" / ")
         || (p.work.plate || []).join(" / ");
-      rows.push([
+      const base = [
         p.project, p.pattern.code, [p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" "),
         v.colorCode, vName ? vName(v) : (v.colorName || v.colorCode), v.status, v.date, v.rev,
         plates, (v.mixes || []).length, (p.pattern.tags || []).join(", "), v.note,
-      ]);
+      ];
+      if (workOf) {
+        const w = workOf(p, v) || {};
+        base.push(w.place || "", w.worker || "", w.machine || "", w.volume || "");
+      }
+      rows.push(base);
     });
   });
   return rows;
