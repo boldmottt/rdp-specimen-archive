@@ -13,6 +13,8 @@ import { bestVar, deLabel } from "./color-rules.js";
    HITS 가 담기(#selall)·빼기(#selnone)·CSV 의 범위다 — 예전에는 color: 로 컬러 하나만 걸러도
    그 패턴의 모든 컬러가 담겼다(버그). 이제 걸린 컬러만 들어간다. */
 export const HITS = new Map();
+/* 색 정렬 중일 때 카드별 "가장 가까운 컬러" — 렌더 단계에서만 쓰고 문서(p)는 건드리지 않는다 */
+const BEST = new Map();
 
 function filtered() {
   // 기준색이 없으면 '색 가까운 순'은 아무 순서나 된다 → 최근순으로 되돌린다
@@ -29,6 +31,10 @@ function filtered() {
     HITS.set(p.id, vids);
     return true;
   });
+  BEST.clear();
+  if (sortMode === "color" && App.de) {
+    list.forEach((p) => { const b = bestVar(p.id, HITS.get(p.id), App.de); if (b) BEST.set(p.id, b); });
+  }
   return list.sort((a, b) => {
     if (sortMode === "code") return (a.project + a.pattern.code).localeCompare(b.project + b.pattern.code);
     // 색 가까운 순: 그 카드에서 '검색에 걸린 컬러' 중 기준색과 가장 가까운 ΔE 로 줄 세운다
@@ -83,6 +89,12 @@ async function paintRefDots() {
       const it = m.get(el.dataset.pid + "/" + (el.dataset.ref || ""));
       const c = it && it.colors && it.colors[0];
       if (c) { el.style.background = c.hex; el.classList.add("has"); }
+    });
+    // 색 정렬 배지의 '이 컬러' 견본
+    $$(".de-badge .this").forEach((el) => {
+      const it = m.get(el.dataset.pid + "/" + (el.dataset.vid || ""));
+      const c = it && it.colors && it.colors[0];
+      if (c && /^#[0-9a-f]{6}$/i.test(c.hex || "")) el.style.background = c.hex;
     });
   } catch (e) { /* 색을 못 읽어도 목록은 그대로 */ }
 }
@@ -148,8 +160,11 @@ function showVar(card, p, v) {
 
 function cardHTML(p) {
   const vars = p.variations || [];
-  const vid = p._sel || (vars[0] && vars[0].id);
+  // 색 정렬 중에는 '기준색과 가장 가까운 컬러'를 보여 준다. 커서를 올린 칩(p._sel)이 있으면 그게 우선.
+  const best = App.sort === "color" && App.de ? BEST.get(p.id) : null;
+  const vid = p._sel || (best && best.vid) || (vars[0] && vars[0].id);
   const v = varOf(p, vid) || vars[0];
+  const showBest = !!(best && v && best.vid === v.id);
   const picked = v && inCart(p.id, v.id);
   const nm = p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "";
   const title = html`<span class="c-code">${p.pattern.code}</span><span class="c-name">${[nm, p.pattern.nameKo].filter(Boolean).join(" ") || ""}</span>`;
@@ -160,7 +175,7 @@ function cardHTML(p) {
   const dot = (x) => (x.images && x.images.length ? html`<span class="vdot" data-src="${thumbUrl(p.id, x.images[0], 120)}"></span>` : raw('<span class="vdot"></span>'));
   const chips = vars.length > 1
     ? html`${vars.map((x) => html`
-      <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}" data-sel="${x.id}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
+      <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}${best && best.vid === x.id ? " best" : ""}" data-sel="${x.id}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
         ${dot(x)}
         <span class="nm">${vName(x)}</span>
       </button>`)}<button class="vchip vchip-all" data-all="1" title="이 패턴의 모든 컬러를 한 번에">${vars.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${vars.length}색`}</button>`
@@ -180,6 +195,11 @@ function cardHTML(p) {
       <a class="media" href="${href}" aria-label="${alt} 상세 보기">
         ${cardMedia(p, v)}
         ${p.project ? html`<div class="badge">${p.project}</div>` : ""}
+        ${showBest ? html`<span class="de-badge" title="사진에서 뽑은 대표색 기준 — 측색값과 다를 수 있습니다">
+            <i class="sw ref" style="background:${App.refColor && /^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
+            <i class="sw this" data-pid="${p.id}" data-vid="${v.id}"></i>
+            <span class="de-num">ΔE ${best.de.toFixed(1)}</span>${best.de <= 5 ? html`<b>${deLabel(best.de)}</b>` : ""}
+          </span>` : ""}
       </a>
       <div class="card-body">
         <div class="card-title">${title}</div>

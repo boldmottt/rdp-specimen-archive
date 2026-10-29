@@ -585,6 +585,18 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .card .pick.on{background:var(--ink);border-color:var(--ink)}
 .card.sel{box-shadow:0 0 0 2px var(--ink)}
 
+/* 색 정렬 배지 — 사진 위 왼쪽 아래. 기준색 · 이 컬러 견본 + ΔE (사진 기준임을 title 로 알린다) */
+.de-badge{position:absolute;left:10px;bottom:10px;display:inline-flex;align-items:center;gap:5px;
+  padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.93);backdrop-filter:blur(6px);
+  font-size:10.5px;font-weight:600;letter-spacing:.02em;color:var(--ink);pointer-events:none;
+  box-shadow:0 1px 6px rgba(0,0,0,.12)}
+.de-badge .sw{width:11px;height:11px;border-radius:50%;display:inline-block;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
+.de-badge .sw.ref{margin-right:-3px}
+.de-badge .de-num{font-family:var(--mono);font-weight:600}
+.de-badge b{font-weight:600;color:var(--ink-2)}
+.vchip.best{box-shadow:inset 0 0 0 1.5px var(--ink)}
+
 /* 기준색 스와치(카드) — 사진에서 뽑은 대표색. 누르면 그 색이 정렬 기준이 된다 */
 .refdot{width:15px;height:15px;border-radius:50%;border:1px solid var(--line-2);background:transparent;
   cursor:pointer;padding:0;margin-left:auto;flex:none}
