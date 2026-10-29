@@ -3,6 +3,8 @@ import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clo
 import { renderCatalog } from "./catalog.js";
 import { addInkTag, bindRecipePreviews, inkInfo, inkLabel, inkOrder, inkPool, labOf, labText, labToCss, layerCodeOf, layerPlate, loadInkCatalog, mixTable, platePatterns, setLayerPlate, syncLayerPlates } from "./detail.js";
 import { renderCart } from "./proposal.js";
+// 태그 자동완성 — 기존 태그를 골라 넣게 한다 (web/js/search.js)
+import { bindTagInput } from "./search.js";
 import { startCrop } from "./crop.js";
 import { rerender } from "./main.js";
 
@@ -368,6 +370,8 @@ export function renderDrawer() {
   }
 
   $("#drawer-body").innerHTML = body;
+  // 태그 입력칸에 자동완성(기존 태그 + 지금 초안 태그). 입력칸은 fieldRow 가 data-k 로 만든다.
+  if (E.tab === "base") bindTagInput($('#drawer-body [data-k="pattern.tags"]'), App.patterns.concat([E.draft]));
   if (E.tab === "mixes") {
     const variation = d.variations[E.vIdx];
     const source = variation.sameAs ? d.variations.find((x) => x.id === variation.sameAs) : variation;
