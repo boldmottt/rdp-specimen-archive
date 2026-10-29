@@ -888,3 +888,7 @@ a.prop-status.ok:hover{background:#fff}
   .arch-date{align-items:flex-start;flex-direction:row;gap:8px;flex-wrap:wrap}
 }
 @media print{.prop-status{display:none}}
+
+/* 편집기 안내 링크 (예: 작업일은 「작업」에서 수정) */
+.link-btn{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.link-btn:hover{color:var(--ink-2)}

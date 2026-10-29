@@ -192,12 +192,38 @@ function workModeButtons() {
     </div>`;
 }
 
+/** 'YYYY.MM.DD' · 'YYYY-MM-DD' → date 입력이 먹는 YYYY-MM-DD */
+function dateInputValue(raw) {
+  const t = String(raw || "").trim().replace(/\./g, "-").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : "";
+}
+
+/** 작업일자는 데이터상 컬러별(v.date) — 공통 모드에서는 한 번에, 이 컬러 모드에서는 그 컬러만. */
+function workDateRow() {
+  const vars = E.draft.variations || [];
+  const v = vars[E.vIdx] || {};
+  if (E.workMode === "var") {
+    return `<div class="field-row"><label>작업일자</label>
+        <input type="date" data-k="variations.${E.vIdx}.date" value="${esc(dateInputValue(v.date))}"></div>`;
+  }
+  const vals = vars.map((x) => dateInputValue(x.date)).filter(Boolean);
+  const uniq = Array.from(new Set(vals));
+  const same = uniq.length <= 1;
+  const shown = same ? (uniq[0] || "") : "";
+  return `<div class="field-row"><label>작업일자</label>
+      <input type="date" id="work-date-all" value="${esc(shown)}" placeholder="${same ? "" : "컬러마다 다름"}"></div>
+    <div class="field-note" id="work-date-note">${same
+      ? (shown ? `컬러 ${vars.length}개 모두 적용` : "아직 없음 — 넣으면 모든 컬러에 들어갑니다")
+      : `컬러마다 다름 — 값을 넣으면 컬러 ${vars.length}개가 모두 바뀝니다`}</div>`;
+}
+
 function workRows() {
   const d = E.draft;
   const v = (d.variations || [])[E.vIdx] || {};
   const base = d.work || {};
   const over = v.work || {};
   const head = workModeButtons();
+  const dateRow = workDateRow();
 
   if (E.workMode === "var") {
     const rows = WORK_VAR_KEYS.map((k) => {
@@ -214,7 +240,7 @@ function workRows() {
     const fixed = WORK_PATTERN_KEYS.filter((k) => k !== "plate").map((k) => `<div class="field-row is-locked">
         <label>${WORK_LABELS[k] || k}</label><input value="${esc(base[k] || "")}" disabled>
       </div>`).join("");
-    return `${head}<p class="wm-hint">비우면 공통값을 씁니다. 아래 항목은 패턴 공통입니다.</p>${rows}${fixed}
+    return `${head}${dateRow}<p class="wm-hint">비우면 공통값을 씁니다. 아래 항목은 패턴 공통입니다.</p>${rows}${fixed}
       <div class="field-row is-locked"><label>동판</label><input value="${esc((base.plate || []).join(", "))}" disabled></div>`;
   }
 
@@ -224,6 +250,7 @@ function workRows() {
     return n ? `<div class="field-note">컬러 ${n}개는 다른 값</div>` : "";
   };
   return `${head}
+    ${dateRow}
     ${fieldRow("작업 장소", "work.place")}${note("place")}
     ${fieldRow("작업자", "work.worker")}${note("worker")}
     ${fieldRow("설비", "work.machine")}${note("machine")}
@@ -278,7 +305,8 @@ export function renderDrawer() {
         ${fieldRow("컬러명", "variations." + E.vIdx + ".colorName", { ph: "다크 브라운" })}
         ${fieldRow("컬러코드", "variations." + E.vIdx + ".colorCode", { ph: "K-1116S", mono: true })}
         ${fieldRow("상태", "variations." + E.vIdx + ".status", { ph: "가승인" })}
-        ${fieldRow("작업일", "variations." + E.vIdx + ".date", { type: "date" })}
+        <div class="field-row is-locked"><label>작업일</label><input value="${esc(String(v.date || "").slice(0, 10))}" disabled></div>
+        <div class="field-note"><button type="button" class="link-btn" id="goto-work-date">작업일은 「작업」에서 수정 →</button></div>
         ${fieldRow("Rev", "variations." + E.vIdx + ".rev", { ph: "0" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 샘플의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 공통값을 씁니다 (패턴 코드·이름은 공통)</span></div>
@@ -434,6 +462,33 @@ export function renderDrawer() {
     E.workMode = b.dataset.workmode;
     renderDrawer();
   }));
+  // 공통 모드 작업일자 — 같은 값이면 그대로 보여 주고, 고치면 모든 컬러에 적용
+  {
+    const all = $("#work-date-all");
+    if (all) all.onchange = () => {
+      const val = dateInputValue(all.value);
+      const vars = E.draft.variations || [];
+      if (!val) return;   // 비우면 아무것도 바꾸지 않는다
+      const uniq = Array.from(new Set(vars.map((x) => dateInputValue(x.date)).filter(Boolean)));
+      if (uniq.length > 1 && !confirm(`컬러 ${vars.length}개의 작업일자가 모두 ${val} 로 바뀝니다. 계속할까요?`)) {
+        all.value = ""; return;
+      }
+      vars.forEach((x) => { x.date = val; });
+      const note = $("#work-date-note");
+      if (note) note.textContent = `컬러 ${vars.length}개 모두 적용`;
+      toast(`작업일자를 컬러 ${vars.length}개에 적용했습니다`);
+    };
+  }
+  // 베리에이션 탭의 안내 링크 → 작업 섹션 '이 컬러만' 모드로 이동 + 초점
+  {
+    const go = $("#goto-work-date");
+    if (go) go.onclick = () => {
+      E.tab = "base"; E.workMode = "var";
+      syncTabs(); renderDrawer();
+      const el = $(`#drawer-body [data-k="variations.${E.vIdx}.date"]`);
+      if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "center" }); }
+    };
+  }
   $$("#drawer-body [data-clearwork]").forEach((b) => (b.onclick = () => {
     const v = (E.draft.variations || [])[E.vIdx];
     if (!v || !v.work) return;
