@@ -575,6 +575,33 @@ textarea.inline-input{min-height:64px;resize:vertical}
 @media screen and (max-width:500px){.recipe-form{grid-template-columns:1fr}.recipe-preview{padding:16px}}
 @media print{.recipe-preview{display:none!important}}
 
+/* 카드 선택 체크 — 오른쪽 위(왼쪽 위 .badge 와 겹치지 않게). 호버·선택일 때만 보인다 */
+.card .pick{position:absolute;right:10px;top:10px;z-index:3;width:24px;height:24px;border-radius:7px;
+  border:1px solid rgba(255,255,255,.9);background:rgba(20,20,20,.35);color:#fff;font-size:12px;line-height:1;
+  cursor:pointer;opacity:.42;transition:.15s;backdrop-filter:blur(4px)}
+.card:hover .pick,.card .pick.on,.card .pick:focus-visible{opacity:1}
+.card .pick.on{background:var(--ink);border-color:var(--ink)}
+.card.sel{box-shadow:0 0 0 2px var(--ink)}
+
+/* 선택 바 — 툴바 아래 sticky (하단 cartbar 와 겹치지 않게) */
+.selbar{position:sticky;top:54px;z-index:6;display:flex;align-items:center;gap:8px;margin:-2px 0 10px;
+  padding:8px 12px;border:1px solid var(--ink);border-radius:10px;background:var(--surface)}
+.selbar b{font-size:12.5px}
+.selbar .selhint{font-size:11px;color:var(--ink-3);margin-left:auto}
+
+/* 일괄 편집 대화상자 */
+.bulk-dialog{width:min(560px,94vw);border:1px solid var(--line-2);border-radius:14px;padding:0}
+.bulk-dialog form{padding:18px 20px 16px}
+.bulk-dialog h3{margin:0 0 6px;font-size:15px}
+.bulk-hint{margin:0 0 14px;font-size:11.5px;color:var(--ink-3);line-height:1.5}
+.bulk-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.bulk-grid label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--ink-2)}
+.bulk-grid input{padding:7px 9px;border:1px solid var(--line-2);border-radius:7px;font-size:12.5px;background:var(--surface)}
+.bulk-scope{display:flex;gap:14px;align-items:center;margin:14px 0 6px;font-size:12px;color:var(--ink-2)}
+.bulk-scope span{color:var(--ink-3);font-size:11.5px}
+.bulk-pv{margin:6px 0 14px;font-size:12px;color:var(--ink-2)}
+.bulk-actions{display:flex;justify-content:flex-end;gap:8px}
+
 /* 저장된 검색(스마트 폴더) 줄 */
 .sfbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 10px}
 .sfbar .tb-lbl{font-size:11px;letter-spacing:.08em;color:var(--ink-3);margin-right:2px}

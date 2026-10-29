@@ -3,6 +3,8 @@ import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fm
 import { renderCart } from "./proposal.js";
 // 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
 import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, QUERY_HELP } from "./search.js";
+// 선택·일괄 편집·CSV (규칙은 bulk-rules.js, 화면은 bulk.js). 서로 import 하지 않고 데이터를 넘긴다.
+import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk.js";
 
 /* ---------------- catalog ---------------- */
 /* 검색 결과: 지금 조건에 남은 시편 목록. 동시에 HITS 에 "패턴별로 남은 컬러 id" 를 채운다.
@@ -100,7 +102,12 @@ function cardHTML(p) {
       </button>` : "");
   const href = `#/p/${encodeURIComponent(p.id)}${v ? "/" + encodeURIComponent(v.id) : ""}`;
   const alt = [p.pattern.code, v ? vName(v) : ""].filter(Boolean).join(" ");
-  return String(html`<article class="card${picked ? " picked" : ""}" data-pid="${p.id}">
+  // 선택 체크는 .media(링크) 밖에 둔다 — 안에 두면 누를 때 상세로 넘어간다.
+  // 위치는 오른쪽 위: 왼쪽 위(.badge, left:10px)와 겹치지 않게.
+  const sel = App.sel.has(p.id);
+  return String(html`<article class="card${picked ? " picked" : ""}${sel ? " sel" : ""}" data-pid="${p.id}">
+      <button class="pick${sel ? " on" : ""}" data-pick="${p.id}" aria-pressed="${sel ? "true" : "false"}"
+        title="선택 (Shift 범위 · Cmd/Ctrl 하나씩)">✓</button>
       <a class="media" href="${href}" aria-label="${alt} 상세 보기">
         ${cardMedia(p, v)}
         ${p.project ? html`<div class="badge">${p.project}</div>` : ""}
@@ -164,11 +171,13 @@ export function renderCatalog() {
         <button class="tool" id="selall" title="지금 조건에 걸린 컬러만 제안서에 담기">${list.reduce((a, p) => a + (HITS.get(p.id) || []).length, 0)}개 담기</button>
         <button class="tool" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
         <button class="tool" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
+        <button class="tool" id="csv" title="지금 목록을 CSV로 내려받기 (엑셀)">CSV</button>
         <div class="selwrap"><select id="sort" aria-label="정렬">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
         </select></div>
       </div>
+      ${selectionBarHTML()}
       ${sfbar}
       ${tagbar}
       ${list.length ? `<div class="grid">${list.map(cardHTML).join("")}</div>`
@@ -235,6 +244,13 @@ export function renderCatalog() {
     App.cart = App.cart.filter((c) => !(HITS.get(c.pid) || []).includes(c.vid));
     saveLS(); renderCatalog(); renderCart();
   };
+  // 선택(패턴 단위) · 일괄 편집 · CSV
+  bindPicks(list.map((p) => p.id), renderCatalog);
+  const csvBtn = $("#csv");
+  if (csvBtn) csvBtn.onclick = () => downloadCsv(list, (pid) => HITS.get(pid));
+  const bulkBtn = $("#bulk-open");
+  if (bulkBtn) bulkBtn.onclick = () => openBulkDialog(renderCatalog, (pid) => HITS.get(pid));
+
   const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
   const sa = $("#syncall");
   if (sa) sa.onclick = async () => {
