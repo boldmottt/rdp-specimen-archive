@@ -259,6 +259,10 @@ export function renderCatalog() {
   const totalVar = App.patterns.reduce((a, p) => a + (p.variations || []).length, 0);
   const totalMix = App.patterns.reduce((a, p) => a + (p.variations || []).reduce((b, v) => b + (v.mixes || []).length, 0), 0);
 
+  // 결과 줄(B)에 쓸 값 — 지금 조건에 남은 컬러 수, 전부 담겨 있는지
+  const hitCount = list.reduce((a, p) => a + (HITS.get(p.id) || []).length, 0);
+  const allIn = hitCount > 0 && list.every((p) => (HITS.get(p.id) || []).every((vid) => inCart(p.id, vid)));
+
   // 저장된 검색(스마트 폴더) 줄 — 지금 조건을 이름 붙여 저장한다.
   //   폴더를 바꿀 때만 saveSmart() 로 서버에 보낸다(장바구니 저장이 남의 목록을 덮지 않게).
   const sfbar = (() => {
@@ -295,17 +299,30 @@ export function renderCatalog() {
           <div class="stat"><b>${totalMix}</b><span>배합</span></div>
         </div>
       </section>
-      <div class="toolbar">${chips}<div class="spacer"></div>
-        <button class="tool" id="selall" title="지금 조건에 걸린 컬러만 제안서에 담기">${list.reduce((a, p) => a + (HITS.get(p.id) || []).length, 0)}개 담기</button>
-        <button class="tool" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
-        <button class="tool" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
-        <button class="tool" id="csv" title="지금 목록을 CSV로 내려받기 (엑셀)">CSV</button>
-        <button class="tool" id="boardbtn" title="지금 프로젝트의 컬러 보드 보기">컬러 보드</button>
-        <div class="selwrap"><select id="sort" aria-label="정렬">
-          <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
-          <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
-          <option value="color"${App.sort === "color" ? " selected" : ""}${App.refColor ? "" : " disabled"}>색 가까운 순${App.refColor ? "" : " (◎ 먼저)"}</option>
-        </select></div>
+      <div class="toolbar">
+        <div class="projrow">${chips}</div>
+        <div class="resbar">
+          <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
+          ${App.project !== "all" ? `<a class="tool board-link" id="boardbtn" href="#/board/${encodeURIComponent(App.project)}" title="지금 프로젝트의 컬러 보드">${esc(App.project)} 컬러 보드 →</a>` : ""}
+          <div class="seg" role="radiogroup" aria-label="정렬">
+            ${[["recent", "최근"], ["code", "코드"], ["color", "색"]].map(([v, label]) => {
+              const off = v === "color" && !App.refColor;
+              return `<label class="segbtn${App.sort === v ? " on" : ""}${off ? " off" : ""}"${off ? ' title="카드의 ◎로 기준색을 고르세요"' : ""}>
+                <input type="radio" name="sort" value="${v}"${App.sort === v ? " checked" : ""}${off ? " disabled" : ""}>${label}</label>`;
+            }).join("")}
+          </div>
+          <button class="tool" id="selall" title="지금 조건에 걸린 컬러만 제안서에 담기·빼기">${allIn ? `${hitCount}개 빼기` : `${hitCount}개 담기`}</button>
+          <div class="more">
+            <button class="tool" id="morebtn" aria-haspopup="true" aria-expanded="false" aria-label="더보기">⋯</button>
+            <div class="menu" id="moremenu" hidden>
+              <button type="button" data-act="csv">CSV로 내보내기</button>
+              <button type="button" data-act="sync">DB 동기화</button>
+              <button type="button" data-act="none">결과 빼기 (${hitCount}개)</button>
+              ${App.project === "all" ? `<button type="button" data-act="board">컬러 보드 (프로젝트 선택)</button>` : ""}
+              <button type="button" data-act="help">검색 문법</button>
+            </div>
+          </div>
+        </div>
       </div>
       ${selectionBarHTML()}
       ${sfbar}
@@ -363,24 +380,73 @@ export function renderCatalog() {
       saveSmart(); renderCatalog();
     };
   });
-  const btnAll = $("#selall");
-  if (btnAll) btnAll.onclick = () => {
+  // ---- 결과 줄(B) 동작: 담기 토글 · 더보기 메뉴 · 정렬 세그먼트
+  const addAll = () => {
     filtered();                                   // HITS 를 지금 조건으로 다시 채운다
     App.patterns.forEach((p) => (HITS.get(p.id) || []).forEach((vid) => {
       if (!inCart(p.id, vid)) App.cart.push({ pid: p.id, vid });
     }));
     saveLS(); renderCatalog(); renderCart();
   };
-  const btnNone = $("#selnone");
-  if (btnNone) btnNone.onclick = () => {
+  const removeAll = () => {
     filtered();
     App.cart = App.cart.filter((c) => !(HITS.get(c.pid) || []).includes(c.vid));
     saveLS(); renderCatalog(); renderCart();
   };
-  // 선택(패턴 단위) · 일괄 편집 · CSV
+  const btnAll = $("#selall");
+  // 결과가 전부 담겨 있으면 같은 버튼이 '빼기'가 된다(같은 대상의 반대 동작이라 토글로 합침)
+  if (btnAll) btnAll.onclick = () => (allIn ? removeAll() : addAll());
+
+  async function doSyncAll() {
+    if (!confirm("RDP-DB의 배합을 모든 시편에 반영할까요?\n(기존 배합 수치는 DB 값으로 갱신되고, 메모는 유지됩니다)")) return;
+    try {
+      const r = await fetch("/api/rdp/sync-all", { method: "POST" }).then((x) => x.json());
+      if (!r || r.ok === false) throw new Error(r && r.error ? r.error : "동기화 실패");
+      const fresh = await apiGet("/api/patterns");
+      App.patterns = (fresh.patterns || []).map(normalizeDoc);
+      renderCatalog();
+      toast(`동기화 완료 · ${r.patterns}개 시편 / 추가 ${r.added} · 갱신 ${r.updated}`);
+    } catch (e) { toast("동기화 실패: " + e.message); }
+  }
+
+  const moreBtn = $("#morebtn");
+  const moreMenu = $("#moremenu");
+  if (moreBtn && moreMenu) {
+    moreBtn.onclick = (e) => {
+      e.stopPropagation();
+      const willOpen = moreMenu.hidden;
+      moreMenu.hidden = !willOpen;
+      moreBtn.setAttribute("aria-expanded", String(willOpen));
+    };
+    // 바깥을 누르거나 Esc 면 닫힌다(한 번만 등록)
+    if (!document._moreMenuBound) {
+      document.addEventListener("click", (e) => {
+        const m = document.getElementById("moremenu"), b = document.getElementById("morebtn");
+        if (!m || m.hidden) return;
+        if (b && (b === e.target || b.contains(e.target))) return;
+        if (m.contains(e.target)) return;
+        m.hidden = true; if (b) b.setAttribute("aria-expanded", "false");
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const m = document.getElementById("moremenu"), b = document.getElementById("morebtn");
+        if (m && !m.hidden) { m.hidden = true; if (b) b.setAttribute("aria-expanded", "false"); }
+      });
+      document._moreMenuBound = true;
+    }
+    moreMenu.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => {
+      moreMenu.hidden = true; moreBtn.setAttribute("aria-expanded", "false");
+      const act = b.dataset.act;
+      if (act === "csv") downloadCsv(list, (pid) => HITS.get(pid));
+      else if (act === "none") removeAll();
+      else if (act === "help") toast(QUERY_HELP, 6500);
+      else if (act === "sync") doSyncAll();
+      else if (act === "board") toast("프로젝트를 먼저 고르세요 — 프로젝트 칩을 누르면 보드 링크가 생깁니다");
+    }));
+  }
+
+  // 선택(패턴 단위) · 일괄 편집
   bindPicks(list.map((p) => p.id), renderCatalog);
-  const csvBtn = $("#csv");
-  if (csvBtn) csvBtn.onclick = () => downloadCsv(list, (pid) => HITS.get(pid));
   const bulkBtn = $("#bulk-open");
   if (bulkBtn) bulkBtn.onclick = () => openBulkDialog(renderCatalog, (pid) => HITS.get(pid));
 
@@ -390,35 +456,13 @@ export function renderCatalog() {
     e.preventDefault(); e.stopPropagation();
     setRefColor(el.dataset.pid, el.dataset.ref).catch((err) => toast(err.message || "색을 읽지 못했습니다"));
   }));
-  const boardBtn = $("#boardbtn");
-  if (boardBtn) boardBtn.onclick = () => {
-    if (App.project === "all") { toast("프로젝트를 먼저 고르세요"); return; }
-    location.hash = "#/board/" + encodeURIComponent(App.project);
-  };
 
-  const sel = $("#sort");
-  if (sel) sel.onchange = (e) => {
-    if (e.target.value === "color" && !App.refColor) {
-      toast("카드의 ◎ 를 먼저 눌러 기준색을 잡아 주세요");
-      e.target.value = App.sort;
-      return;
-    }
-    App.sort = e.target.value;
+  // 정렬 세그먼트(라디오) — 화살표 키 이동은 브라우저가 해 준다
+  $$('input[name="sort"]').forEach((r) => (r.onchange = () => {
+    if (r.value === "color" && !App.refColor) { toast("카드의 ◎를 먼저 눌러 기준색을 잡아 주세요"); return; }
+    App.sort = r.value;
     renderCatalog();
-  };
-  const sa = $("#syncall");
-  if (sa) sa.onclick = async () => {
-    if (!confirm("RDP-DB의 배합을 모든 시편에 반영할까요?\n(기존 배합 수치는 DB 값으로 갱신되고, 메모는 유지됩니다)")) return;
-    sa.disabled = true; sa.textContent = "동기화 중…";
-    try {
-      const r = await fetch("/api/rdp/sync-all", { method: "POST" }).then((x) => x.json());
-      if (!r || r.ok === false) throw new Error(r && r.error ? r.error : "동기화 실패");
-      const fresh = await apiGet("/api/patterns");
-      App.patterns = (fresh.patterns || []).map(normalizeDoc);
-      renderCatalog();
-      toast(`동기화 완료 · ${r.patterns}개 시편 / 추가 ${r.added} · 갱신 ${r.updated}`);
-    } catch (e) { toast("동기화 실패: " + e.message); sa.disabled = false; sa.textContent = "DB 동기화"; }
-  };
+  }));
   $$("[data-sel]").forEach((el) => {
     const card = el.closest(".card");
     const p = byId(card.dataset.pid);
