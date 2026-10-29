@@ -39,6 +39,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 from pccs import api as pccs_api   # 작업일지(PCCS3) — PyYAML이 없어도 import는 된다
 from colorlab import api as lab_api   # 컬러연구소 — 측색 라이브러리 · 색 예측
+from colorlab import colormath as cm   # 대표색(사진) → LAB · ΔE2000
 
 try:
     from PIL import Image, ImageOps
@@ -1684,6 +1685,113 @@ def thumb_width(w) -> int:
     return next((x for x in THUMB_WIDTHS if x >= w), THUMB_WIDTHS[-1])
 
 
+# ---------------------------------------------------------------- 대표색(사진) · 색으로 찾기
+# 주의: 사진에서 뽑은 색이라 조명·무늬·그림자에 따라 측색값과 다르다. 화면에서 '사진 기준'이라고 밝힌다.
+COLORS_VER = 1        # 계산법·캐시 형식이 바뀌면 올린다(옛 캐시가 무효가 된다)
+
+
+def _srgb8_to_lab(rgb):
+    """8비트 sRGB → CIELAB. colorlab.colormath 는 '선형' RGB(0~1)를 받는다."""
+    lin = []
+    for c in rgb:
+        v = c / 255.0
+        lin.append(v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4)
+    return [round(x, 2) for x in cm.rgb_lin_to_lab(tuple(lin))]
+
+
+def ensure_thumb(pid, name, w=240):
+    """축소본 경로를 돌려준다(없으면 만든다).
+    serve_thumb 과 같은 캐시 규칙(_thumb/<pid>/<w>-<name>)을 쓴다 — 대표색을 뽑을 때
+    원본(2400px)을 열면 첫 호출이 느려지므로 이미 만들어 둔 축소본을 쓴다."""
+    safe_id(pid)
+    if not IMAGE_NAME_RE.match(name or ""):
+        raise ValueError("이미지 이름이 올바르지 않습니다")
+    w = thumb_width(w)
+    src = safe_join(IMAGES, pid, name)
+    if not os.path.isfile(src):
+        raise FileNotFoundError(name)
+    dst_dir = safe_join(THUMBS, pid)
+    dst = os.path.join(dst_dir, f"{w}-{name}")
+    if not (os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src)):
+        from PIL import Image
+        os.makedirs(dst_dir, exist_ok=True)
+        with Image.open(src) as im:
+            im = im.convert("RGB")
+            h = max(1, round(w * im.height / im.width))
+            im = im.resize((w, h), Image.LANCZOS)
+            tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"
+            im.save(tmp, "JPEG", quality=82, optimize=True)
+            os.replace(tmp, dst)
+    return dst, src
+
+
+def image_colors(pid, name, top=3):
+    """사진 대표색 상위 top개: [{lab:[L,a,b], hex, share}].
+    _thumb/<pid>/<name>.colors.json 에 캐시하고 원본 mtime 으로 무효화한다."""
+    thumb, src = ensure_thumb(pid, name, 240)
+    mt = os.path.getmtime(src)
+    cache = os.path.join(os.path.dirname(thumb), (name or "") + ".colors.json")
+    try:
+        with open(cache, encoding="utf-8") as f:
+            c = json.load(f)
+        if isinstance(c, dict) and c.get("v") == COLORS_VER and c.get("mtime") == mt and isinstance(c.get("colors"), list):
+            return c["colors"]
+    except Exception:
+        pass
+    from PIL import Image
+    with Image.open(thumb) as im:
+        q = im.convert("RGB").quantize(colors=8, method=Image.MEDIANCUT)
+    pal = q.getpalette() or []
+    counts = sorted((q.getcolors() or []), key=lambda x: -x[0])
+    total = sum(n for n, _ in counts) or 1
+    out = []
+    for n, idx in counts[:top]:
+        rgb = tuple(pal[idx * 3: idx * 3 + 3]) if len(pal) >= idx * 3 + 3 else (0, 0, 0)
+        lab = _srgb8_to_lab(rgb)
+        out.append({"lab": lab, "hex": "#%02x%02x%02x" % rgb, "share": round(n / total, 3)})
+    try:
+        atomic_write(cache, json.dumps({"v": COLORS_VER, "mtime": mt, "colors": out},
+                                       ensure_ascii=False).encode("utf-8"))
+    except Exception as e:
+        print(f"[warn] 대표색 캐시를 쓰지 못했습니다 {pid}/{name}: {e}")
+    return out
+
+
+def parse_lab_ref(raw):
+    """?ref=L,a,b → [L,a,b]. 없으면 None, 형식이 틀리면 ValueError."""
+    if not raw:
+        return None
+    try:
+        lab = [float(x) for x in str(raw).split(",")]
+    except ValueError:
+        raise ValueError("ref 는 'L,a,b' 형식이어야 합니다")
+    if len(lab) != 3 or not all(math.isfinite(x) for x in lab):
+        raise ValueError("ref 는 'L,a,b' 형식이어야 합니다")
+    return lab
+
+
+def all_colors(ref=None):
+    """모든 컬러(베리에이션)의 첫 사진 대표색. ref 가 있으면 대표색 기준 ΔE2000 도 함께."""
+    docs, _ = load_all()
+    items = []
+    for d in docs:
+        for v in d.get("variations") or []:
+            if not isinstance(v, dict):
+                continue
+            imgs = v.get("images") or []
+            if not imgs:
+                continue
+            try:
+                cols = image_colors(d["id"], imgs[0])
+            except (OSError, ValueError):
+                continue
+            it = {"pid": d["id"], "vid": v.get("id"), "file": imgs[0], "colors": cols}
+            if ref and cols:
+                it["de"] = round(cm.delta_e2000(ref, cols[0]["lab"]), 2)
+            items.append(it)
+    return items
+
+
 # ---------------------------------------------------------------- 여러 PC 감지
 # 같은 드라이브 폴더를 두 PC의 서버가 함께 쓰면 잠금이 PC마다 따로라 저장이 엇갈릴 수 있다.
 # 서버마다 1분에 한 번 _ui/servers/<PC>-<포트>.json에 '살아 있음'을 남기고, 다른 PC 것이 최근이면 알린다.
@@ -2070,6 +2178,23 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/patterns":
                 pats, errs = load_all()
                 return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
+            if p == "/api/colors":
+                qs = parse_qs(urlparse(self.path).query)
+                try:
+                    ref = parse_lab_ref((qs.get("ref") or [""])[0])
+                except ValueError as e:
+                    return self.error(400, str(e))
+                return self.json({"ok": True, "items": all_colors(ref)})
+            if p.startswith("/api/color/"):
+                parts = p[len("/api/color/"):].strip("/").split("/")
+                if len(parts) != 2:
+                    return self.error(400, "경로는 /api/color/<시편>/<파일> 입니다")
+                try:
+                    return self.json({"ok": True, "colors": image_colors(parts[0], parts[1])})
+                except ValueError as e:
+                    return self.error(400, str(e))
+                except FileNotFoundError:
+                    return self.error(404, "이미지 없음")
             if p.startswith("/api/thumb/"):
                 tp = p[len("/api/thumb/"):].strip("/").split("/")
                 if len(tp) != 2:

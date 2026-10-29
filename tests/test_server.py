@@ -1460,3 +1460,66 @@ class UiStateTests(Base):
         self.assertEqual(got[0]["name"], "정상")
         self.assertEqual(got[0]["sort"], "recent")
         self.assertEqual(len(got[0]["q"]), 300)
+
+
+class ColorTests(Base):
+    """사진 대표색(/api/color) 과 색으로 찾기(/api/colors). PNG 로 만든다 — JPEG 압축 노이즈로
+    양자화 결과가 흔들리지 않게."""
+
+    def img(self, rgb, pid="P-W01", name="a.png"):
+        from PIL import Image
+        os.makedirs(os.path.join(server.IMAGES, pid), exist_ok=True)
+        path = os.path.join(server.IMAGES, pid, name)
+        im = Image.new("RGB", (600, 250), rgb)          # 240 축소본이 1배 이상이 되게(픽셀 뭉개짐 방지)
+        im.paste((20, 20, 20), (0, 0, 150, 250))        # 25% 검정
+        im.save(path)
+        return path
+
+    def test_dominant_color_and_cache(self):
+        path = self.img((200, 30, 30))
+        st, r = self.req("GET", "/api/color/P-W01/a.png")
+        self.assertEqual(st, 200, r)
+        top = r["colors"][0]
+        self.assertGreater(top["share"], 0.5)
+        self.assertGreater(top["lab"][1], 40)                       # 빨강 → a* 큼
+        self.assertTrue(os.path.isfile(os.path.join(server.THUMBS, "P-W01", "a.png.colors.json")))
+        # 두 번째 호출은 캐시 — 원본을 다시 열지 않는다
+        with mock.patch.object(server.Image, "open", side_effect=AssertionError("cache miss")):
+            st, r2 = self.req("GET", "/api/color/P-W01/a.png")
+        self.assertEqual(st, 200)
+        self.assertEqual(r2["colors"], r["colors"])
+        # 원본이 바뀌면 다시 계산한다
+        from PIL import Image
+        Image.new("RGB", (600, 250), (30, 30, 200)).save(path)
+        t = os.path.getmtime(path) + 5
+        os.utime(path, (t, t))
+        st, r3 = self.req("GET", "/api/color/P-W01/a.png")
+        self.assertEqual(st, 200)
+        self.assertLess(r3["colors"][0]["lab"][2], -20)             # 파랑 → b* 작음
+
+    def test_missing_and_bad_names(self):
+        self.assertEqual(self.req("GET", "/api/color/P-W01/none.png")[0], 404)
+        self.assertEqual(self.req("GET", "/api/color/P-W01/a.gif")[0], 400)
+        self.assertEqual(self.req("GET", "/api/color/onlyone")[0], 400)
+        self.assertEqual(self.req("GET", "/api/colors?ref=1,2")[0], 400)
+        self.assertEqual(self.req("GET", "/api/colors?ref=a,b,c")[0], 400)
+
+    def test_colors_sorted_by_reference(self):
+        self.img((200, 30, 30), "P-R1")
+        self.img((128, 128, 128), "P-G1")
+        for pid in ("P-R1", "P-G1"):
+            self.write_pattern({"id": pid, "project": "P", "pattern": {"code": pid},
+                                "variations": [{"id": "v01", "images": ["a.png"]}]})
+        red = server._srgb8_to_lab((210, 40, 40))
+        st, r = self.req("GET", "/api/colors?ref=" + ",".join(str(x) for x in red))
+        self.assertEqual(st, 200, r)
+        de = {it["pid"]: it["de"] for it in r["items"]}
+        self.assertLess(de["P-R1"], de["P-G1"], "빨강 기준이면 빨강이 가깝고 무채색이 멀다")
+
+    def test_colors_lists_every_variation_with_image(self):
+        self.img((200, 30, 30), "P-M1")
+        self.write_pattern({"id": "P-M1", "project": "P", "pattern": {"code": "P-M1"},
+                            "variations": [{"id": "v01", "images": ["a.png"]}, {"id": "v02", "images": []}]})
+        st, r = self.req("GET", "/api/colors")
+        self.assertEqual(st, 200, r)
+        self.assertEqual([it["vid"] for it in r["items"]], ["v01"], "사진 없는 컬러는 빠진다")
