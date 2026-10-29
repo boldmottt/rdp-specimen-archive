@@ -3,12 +3,14 @@ import { $, $$, App, apiGet, esc, loadLS, normalizeDoc, toast } from "./core.js"
 import { renderCatalog } from "./catalog.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
+import { renderBoard } from "./board.js";
 import { E, closeEditor, newDoc, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
 /* ---------------- router ---------------- */
 export function rerender() {
   const h = location.hash.replace(/^#/, "");
+  document.body.classList.remove("board-mode");   // 컬러 보드 전용 인쇄 규칙은 이 화면에서만
   const nav = $("#navhome");
   if (nav) nav.style.display = h ? "" : "none";
   if (h === "/new") {
@@ -19,6 +21,8 @@ export function rerender() {
     const parts = h.slice(3).split("/");
     renderDetail(decodeURIComponent(parts[0]), parts[1] ? decodeURIComponent(parts[1]) : null);
     renderCart();
+  } else if (h.indexOf("/board/") === 0) {
+    renderBoard(decodeURIComponent(h.slice("/board/".length)));
   } else if (h === "/proposal") {
     renderProposal();
   } else if (h === "/proposals") {

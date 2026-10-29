@@ -24,6 +24,14 @@ function filtered() {
   });
   return list.sort((a, b) => {
     if (App.sort === "code") return (a.project + a.pattern.code).localeCompare(b.project + b.pattern.code);
+    // 색 가까운 순: 그 카드에서 '검색에 걸린 컬러' 중 기준색과 가장 가까운 ΔE 로 줄 세운다
+    if (App.sort === "color" && App.de) {
+      const key = (p) => Math.min(999, ...(HITS.get(p.id) || []).map((vid) => {
+        const d = App.de.get(p.id + "/" + vid);
+        return d == null ? 999 : d;
+      }));
+      return key(a) - key(b);
+    }
     if (App.sort === "recent") {
       const key = (p) => {
         const d = (p.variations || []).map((v) => v.date).filter(Boolean).sort().pop();
@@ -46,6 +54,40 @@ function toggleTag(tag) {
   const has = tokenize(App.q).some(isThisTag);
   App.q = has ? withoutToken(App.q, isThisTag)
     : ((App.q || "").trim() ? App.q.trim() + " " : "") + tagToken(tag);
+}
+
+/* ---------------- 색(사진 대표색) ----------------
+ * 색은 사진에서 뽑은 값이라 측색값과 다르다. 정렬용 참고로만 쓴다(화면에도 그렇게 알린다).
+ * /api/colors 는 컬러마다 첫 사진의 대표색을 돌려준다. 한 번 받아 App.colors 에 캐시한다. */
+async function ensureColors() {
+  if (App.colors) return App.colors;
+  const r = await apiGet("/api/colors");
+  App.colors = new Map((r.items || []).map((it) => [it.pid + "/" + it.vid, it]));
+  return App.colors;
+}
+
+async function paintRefDots() {
+  try {
+    const m = await ensureColors();
+    $$(".refdot").forEach((el) => {
+      const it = m.get(el.dataset.pid + "/" + (el.dataset.ref || ""));
+      const c = it && it.colors && it.colors[0];
+      if (c) { el.style.background = c.hex; el.classList.add("has"); }
+    });
+  } catch (e) { /* 색을 못 읽어도 목록은 그대로 */ }
+}
+
+async function setRefColor(pid, vid) {
+  const m = await ensureColors();
+  const it = m.get(pid + "/" + (vid || ""));
+  const c = it && it.colors && it.colors[0];
+  if (!c) { toast("이 컬러에는 사진이 없어 기준으로 쓸 수 없습니다"); return; }
+  App.refColor = { pid, vid, lab: c.lab, hex: c.hex };
+  const r = await apiGet("/api/colors?ref=" + c.lab.join(","));
+  App.de = new Map((r.items || []).map((x) => [x.pid + "/" + x.vid, x.de]));
+  App.sort = "color";
+  renderCatalog();
+  toast(`기준색 ${c.hex} (사진 기준) — 측색값이 아니라 근사입니다`, 4000);
 }
 
 /* 태그 칩을 눌렀을 때: 검색창 값도 같이 맞추고 목차를 다시 그린다 */
@@ -114,7 +156,8 @@ function cardHTML(p) {
       </a>
       <div class="card-body">
         <div class="card-title">${title}</div>
-        <div class="card-meta">${meta}</div>
+        <div class="card-meta">${meta}<button class="refdot" data-pid="${p.id}" data-ref="${v ? v.id : ""}"
+          title="이 컬러를 기준색으로 삼아 '색 가까운 순' 정렬">◎</button></div>
         <div class="vchips">${chips}</div>
       </div>
     </article>`);
@@ -172,9 +215,11 @@ export function renderCatalog() {
         <button class="tool" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
         <button class="tool" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
         <button class="tool" id="csv" title="지금 목록을 CSV로 내려받기 (엑셀)">CSV</button>
+        <button class="tool" id="boardbtn" title="지금 프로젝트의 컬러 보드 보기">컬러 보드</button>
         <div class="selwrap"><select id="sort" aria-label="정렬">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
+          <option value="color"${App.sort === "color" ? " selected" : ""}>색 가까운 순</option>
         </select></div>
       </div>
       ${selectionBarHTML()}
@@ -250,6 +295,18 @@ export function renderCatalog() {
   if (csvBtn) csvBtn.onclick = () => downloadCsv(list, (pid) => HITS.get(pid));
   const bulkBtn = $("#bulk-open");
   if (bulkBtn) bulkBtn.onclick = () => openBulkDialog(renderCatalog, (pid) => HITS.get(pid));
+
+  // 기준색(사진 대표색) — 카드의 ◎ 를 누르면 그 컬러가 기준이 되고 '색 가까운 순'으로 바뀐다
+  paintRefDots();
+  $$(".refdot").forEach((el) => (el.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    setRefColor(el.dataset.pid, el.dataset.ref).catch((err) => toast(err.message || "색을 읽지 못했습니다"));
+  }));
+  const boardBtn = $("#boardbtn");
+  if (boardBtn) boardBtn.onclick = () => {
+    if (App.project === "all") { toast("프로젝트를 먼저 고르세요"); return; }
+    location.hash = "#/board/" + encodeURIComponent(App.project);
+  };
 
   const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
   const sa = $("#syncall");

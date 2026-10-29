@@ -583,6 +583,37 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .card .pick.on{background:var(--ink);border-color:var(--ink)}
 .card.sel{box-shadow:0 0 0 2px var(--ink)}
 
+/* 기준색 스와치(카드) — 사진에서 뽑은 대표색. 누르면 그 색이 정렬 기준이 된다 */
+.refdot{width:15px;height:15px;border-radius:50%;border:1px solid var(--line-2);background:transparent;
+  cursor:pointer;padding:0;margin-left:auto;flex:none}
+.refdot.has{border-color:rgba(0,0,0,.18);box-shadow:inset 0 0 0 1px rgba(255,255,255,.5)}
+.refdot:hover{outline:2px solid var(--ink-2);outline-offset:1px}
+
+/* 컬러 보드 (#/board/<프로젝트>) */
+.board .bd-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:6px 0 18px}
+.board .bd-head h1{font-size:20px;margin:0}
+.board .bd-sub{font-size:12px;color:var(--ink-3)}
+.board .bd-tools{margin-left:auto;display:flex;gap:10px;align-items:center;font-size:12px}
+.board .bd-ref{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2)}
+.board .bd-ref i{width:12px;height:12px;border-radius:50%;display:inline-block;border:1px solid var(--line-2)}
+.bd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:14px}
+.bd-cell{display:flex;flex-direction:column;gap:3px;font-size:12px}
+.bd-sw{height:74px;border-radius:8px;border:1px solid var(--line-2);print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.bd-cell b{font-size:13px}
+.bd-cell .bd-name{color:var(--ink-2)}
+.bd-cell .bd-code{color:var(--ink-3);font-family:var(--mono);font-size:11px}
+.bd-cell .bd-de{color:var(--ink-3);font-size:11px}
+.bd-empty{color:var(--ink-3);font-size:13px}
+
+/* 컬러 보드 인쇄 — 이 화면에서만 건다(제안서 인쇄 규칙과 섞이지 않게 body.board-mode 로 범위 제한) */
+@media print{
+  body.board-mode .topbar,body.board-mode .cartbar,body.board-mode .noprint{display:none!important}
+  body.board-mode .wrap{padding:0;max-width:none}
+  body.board-mode .bd-grid{grid-template-columns:repeat(4,1fr);gap:8mm}
+  body.board-mode .bd-sw{height:22mm;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  body.board-mode .bd-head h1{font-size:15pt}
+}
+
 /* 선택 바 — 툴바 아래 sticky (하단 cartbar 와 겹치지 않게) */
 .selbar{position:sticky;top:54px;z-index:6;display:flex;align-items:center;gap:8px;margin:-2px 0 10px;
   padding:8px 12px;border:1px solid var(--ink);border-radius:10px;background:var(--surface)}
