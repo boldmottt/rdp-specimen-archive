@@ -38,4 +38,4 @@ jobs:
           for f in colorlab/web/app.js pccs/web/app.js; do npx --yes acorn@8.12.1 --ecma2022 --silent "$f"; done
       # 검색 문법은 화면 없이 규칙만 검사한다 (web/js/search.js — 순수 함수)
       - name: 화면 규칙 단위 테스트 (검색 문법 · 일괄 편집 · CSV)
-        run: node --test tests/search.test.mjs tests/bulk.test.mjs tests/ui-sync.test.mjs
+        run: node --test tests/search.test.mjs tests/bulk.test.mjs tests/ui-sync.test.mjs tests/color-rules.test.mjs

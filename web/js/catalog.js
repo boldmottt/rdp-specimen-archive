@@ -5,6 +5,8 @@ import { renderCart } from "./proposal.js";
 import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, QUERY_HELP } from "./search.js";
 // 선택·일괄 편집·CSV (규칙은 bulk-rules.js, 화면은 bulk.js). 서로 import 하지 않고 데이터를 넘긴다.
 import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk.js";
+// 색 정렬에서 "가장 가까운 컬러"를 고르는 규칙 — 정렬 키와 카드 표시가 같은 함수를 쓴다
+import { bestVar, deLabel } from "./color-rules.js";
 
 /* ---------------- catalog ---------------- */
 /* 검색 결과: 지금 조건에 남은 시편 목록. 동시에 HITS 에 "패턴별로 남은 컬러 id" 를 채운다.
@@ -31,10 +33,8 @@ function filtered() {
     if (sortMode === "code") return (a.project + a.pattern.code).localeCompare(b.project + b.pattern.code);
     // 색 가까운 순: 그 카드에서 '검색에 걸린 컬러' 중 기준색과 가장 가까운 ΔE 로 줄 세운다
     if (sortMode === "color" && App.de) {
-      const key = (p) => Math.min(999, ...(HITS.get(p.id) || []).map((vid) => {
-        const d = App.de.get(p.id + "/" + vid);
-        return d == null ? 999 : d;
-      }));
+      // 카드에 보여 줄 컬러(bestVar)와 같은 값으로 줄을 세운다 — 표시와 순서가 어긋나지 않게
+      const key = (p) => { const b = bestVar(p.id, HITS.get(p.id), App.de); return b ? b.de : 999; };
       return key(a) - key(b);
     }
     if (sortMode === "recent") {
