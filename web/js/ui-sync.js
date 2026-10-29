@@ -43,7 +43,8 @@ export function createUiSync({ send, fetchState, getBody, onAdopt, onRev }) {
           // 다른 곳에서 먼저 바꿨다 → 서버 것을 받아들이고, 장바구니만 다시 보낸다
           dirty = false;
           const state = await fetchState();
-          onAdopt(state || {});
+          // 서버 목록을 실제로 받았을 때만 받아들인다 — 빈 응답으로 덮어쓰면 폴더가 지워진다.
+          if (state && Array.isArray(state.smartFolders)) onAdopt(state);
           again = true;
         } else if (r.status >= 200 && r.status < 300) {
           if (withFolders) onRev(r.json);

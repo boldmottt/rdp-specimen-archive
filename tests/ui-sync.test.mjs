@@ -139,3 +139,30 @@ test("②-2 adoptMessage — 버려진 폴더가 있으면 이름이 들어간�
   const m4 = adoptMessage(["a", "b", "c", "d"]);
   assert.ok(m4.includes("외 1개"), m4);
 });
+
+test("②-3 409 인데 서버 상태를 못 받으면 받아들이지 않는다(onAdopt 0회, 전송 2회)", { timeout: 4000 }, async () => {
+  const calls = [];
+  const adopted = [];
+  const sync = createUiSync({
+    send: (body) => new Promise((resolve) => {
+      calls.push({ body, done: false, settle: (st) => resolve({ status: st, json: st === 200 ? { ok: true, state: { smartFoldersRev: 5 } } : null }) });
+    }),
+    fetchState: async () => ({}),                       // 서버가 아무것도 못 줬다
+    getBody: (withFolders) => (withFolders ? { smartFolders: [{ id: "mine" }] } : { cart: [] }),
+    onAdopt: (s) => adopted.push(s),
+    onRev: () => {},
+  });
+  const answer = async (st) => {
+    await new Promise((r) => setTimeout(r, 0));
+    const c = calls.find((x) => !x.done);
+    c.done = true; c.settle(st);
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  sync.markDirty();
+  const p = sync.push();
+  await answer(409);
+  assert.equal(adopted.length, 0, "빈 상태로 덮어쓰지 않는다");
+  assert.equal(calls.length, 2, "장바구니 재전송은 그대로 한다");
+  await answer(200);
+  await p;
+});
