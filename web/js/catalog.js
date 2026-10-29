@@ -259,6 +259,13 @@ export function renderCatalog() {
   const totalVar = App.patterns.reduce((a, p) => a + (p.variations || []).length, 0);
   const totalMix = App.patterns.reduce((a, p) => a + (p.variations || []).reduce((b, v) => b + (v.mixes || []).length, 0), 0);
 
+  // 좁히기 줄(C) 접힘 상태 — 좁은 화면에서만 접힌다. 상태는 localStorage 한 키에만 둔다.
+  let filtersOpen = false;
+  try { filtersOpen = localStorage.getItem("rdp.filtersOpen") === "1"; } catch (e) {}
+  // 필터 ▾ 옆 숫자 = 저장된 검색 수 + 지금 검색에 걸린 태그 수
+  const tagOnCount = parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).length;
+  const filterCount = (App.smartFolders || []).length + tagOnCount;
+
   // 결과 줄(B)에 쓸 값 — 지금 조건에 남은 컬러 수, 전부 담겨 있는지
   const hitCount = list.reduce((a, p) => a + (HITS.get(p.id) || []).length, 0);
   const allIn = hitCount > 0 && list.every((p) => (HITS.get(p.id) || []).every((vid) => inCart(p.id, vid)));
@@ -273,8 +280,13 @@ export function renderCatalog() {
         `<b class="sf-name" title="눌러서 적용 · 두 번 눌러 이름 바꾸기">${esc(f.name)}</b>` +
         `<button class="sf-del" title="저장된 검색 지우기" aria-label="${esc(f.name)} 지우기">×</button></span>`;
     }).join("");
-    return `<div class="sfbar"><span class="tb-lbl">저장</span>${chips}` +
-      `<button class="tool mini" id="sf-save" title="지금 검색 조건을 이름 붙여 저장">＋ 현재 조건 저장</button></div>`;
+    // 저장할 조건이 없으면 버튼도 없다(검색어도 프로젝트 선택도 없을 때)
+    const canSave = !!(App.q || "").trim() || App.project !== "all";
+    const saveBtn = canSave
+      ? `<button class="tool mini" id="sf-save" title="지금 검색 조건을 이름 붙여 저장">☆ 현재 조건 저장</button>`
+      : "";
+    if (!chips && !saveBtn) return "";
+    return `<div class="sfbar"><span class="tb-lbl">저장</span>${chips}${saveBtn}</div>`;
   })();
 
   // 태그 칩 줄 — 지금 프로젝트 범위에서 많이 쓴 태그부터. 누르면 #태그 가 검색창에 들어간다.
@@ -320,6 +332,7 @@ export function renderCatalog() {
             }).join("")}
           </div>
           <button class="tool" id="selall" title="지금 조건에 걸린 컬러만 제안서에 담기·빼기">${allIn ? `${hitCount}개 빼기` : `${hitCount}개 담기`}</button>
+          <button class="tool filtertoggle" id="filtertoggle" aria-controls="filterbar" aria-expanded="${filtersOpen ? "true" : "false"}" title="저장된 검색과 태그 펼치기">필터 ▾${filterCount ? ` ${filterCount}` : ""}</button>
           <div class="more">
             <button class="tool" id="morebtn" aria-haspopup="true" aria-expanded="false" aria-label="더보기">⋯</button>
             <div class="menu" id="moremenu" hidden>
@@ -333,8 +346,7 @@ export function renderCatalog() {
         </div>
       </div>
       ${selectionBarHTML()}
-      ${sfbar}
-      ${tagbar}
+      <div class="filterbar${filtersOpen ? " open" : ""}" id="filterbar">${sfbar}${tagbar}</div>
       ${list.length ? `<div class="grid">${list.map(cardHTML).join("")}</div>`
       : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
@@ -452,6 +464,16 @@ export function renderCatalog() {
       else if (act === "board") toast("프로젝트를 먼저 고르세요 — 프로젝트 칩을 누르면 보드 링크가 생깁니다");
     }));
   }
+
+  // 좁히기 줄 접기/펼치기 (좁은 화면 전용 — CSS 가 760 이하에서만 숨긴다)
+  const ftog = $("#filtertoggle");
+  if (ftog) ftog.onclick = () => {
+    const bar = $("#filterbar");
+    const open = !bar.classList.contains("open");
+    bar.classList.toggle("open", open);
+    ftog.setAttribute("aria-expanded", String(open));
+    try { localStorage.setItem("rdp.filtersOpen", open ? "1" : "0"); } catch (e) {}
+  };
 
   // 선택(패턴 단위) · 일괄 편집
   bindPicks(list.map((p) => p.id), renderCatalog);

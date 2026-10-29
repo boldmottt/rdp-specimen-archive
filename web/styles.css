@@ -703,6 +703,17 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .bulk-pv{margin:6px 0 14px;font-size:12px;color:var(--ink-2)}
 .bulk-actions{display:flex;justify-content:flex-end;gap:8px}
 
+/* 좁히기 줄(C) — 저장된 검색과 태그를 한 줄로. 좁은 화면에서는 '필터 ▾'로 접는다 */
+.filterbar{min-width:0}
+.filtertoggle{display:none}
+@media screen and (max-width:760px){
+  .filtertoggle{display:inline-flex}
+  .filterbar{display:none;flex:1 1 100%}
+  .filterbar.open{display:block}
+  .filterbar .sfbar{margin:2px 0 8px}
+  .filterbar .tagbar{margin:0 0 10px}
+}
+
 /* 저장된 검색(스마트 폴더) 줄 */
 .sfbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 10px}
 .sfbar .tb-lbl{font-size:11px;letter-spacing:.08em;color:var(--ink-3);margin-right:2px}
