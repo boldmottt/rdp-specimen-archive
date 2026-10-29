@@ -56,7 +56,7 @@ test("autoFacets — 종류별 값과 개수", () => {
   assert.deepEqual(byKind.client.values.map((v) => `${v.val}:${v.n}`), ["현대자동차:1", "HYUNDAI:1"]);
   // 작업장소는 컬러 단위로 센다(A 는 두 컬러 모두 공통값 미성통상 → 2)
   assert.deepEqual(byKind.place.values.map((v) => `${v.val}:${v.n}`), ["미성통상:2", "API:1"]);
-  assert.deepEqual(byKind.layers.values.map((v) => v.val), ["1도"]);
+  assert.deepEqual(byKind.layers.values.map((v) => `${v.val}:${v.n}`), ["1도:2", "2도:1"]);
 });
 
 test("autoFacets — 빈 값과 미정은 칩을 만들지 않는다", () => {
