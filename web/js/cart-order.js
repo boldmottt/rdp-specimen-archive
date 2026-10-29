@@ -70,3 +70,38 @@ export function moveColor(cart, pid, vid, delta) {
 export function normalizeOrder(cart) {
   return flatten(groupOrder(cart));
 }
+
+/** 패턴을 원하는 자리(index)로 — 범위 밖이면 끝에 붙인다 */
+export function movePatternTo(cart, pid, index) {
+  const g = groupOrder(cart);
+  const i = g.findIndex((x) => x.pid === pid);
+  if (i < 0) return copy(cart);
+  const [x] = g.splice(i, 1);
+  const to = Math.max(0, Math.min(Number(index) || 0, g.length));
+  g.splice(to, 0, x);
+  return flatten(g);
+}
+
+/** 컬러를 같은 패턴 안에서 원하는 자리로(패턴 밖으로는 못 나간다) */
+export function moveColorTo(cart, pid, vid, index) {
+  const g = groupOrder(cart);
+  const grp = g.find((x) => x.pid === pid);
+  if (!grp) return copy(cart);
+  const i = grp.vids.indexOf(vid);
+  if (i < 0) return copy(cart);
+  const [v] = grp.vids.splice(i, 1);
+  const to = Math.max(0, Math.min(Number(index) || 0, grp.vids.length));
+  grp.vids.splice(to, 0, v);
+  return flatten(g);
+}
+
+/**
+ * 패턴을 키 순으로 정렬한다. 컬러 순서는 그대로.
+ * @param keyOf (pid) => 문자열
+ */
+export function sortPatterns(cart, keyOf) {
+  const g = groupOrder(cart);
+  const keyed = g.map((grp, i) => ({ grp, i, k: String(keyOf ? keyOf(grp.pid) : grp.pid) }));
+  keyed.sort((a, b) => a.k.localeCompare(b.k, "ko") || a.i - b.i);   // 같은 키는 원래 순서 유지
+  return flatten(keyed.map((x) => x.grp));
+}
