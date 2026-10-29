@@ -2,11 +2,13 @@
 import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 // 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
-import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, QUERY_HELP } from "./search.js";
+import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fieldToken, hasToken, QUERY_HELP } from "./search.js";
 // 선택·일괄 편집·CSV (규칙은 bulk-rules.js, 화면은 bulk.js). 서로 import 하지 않고 데이터를 넘긴다.
 import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk.js";
 // 색 정렬에서 "가장 가까운 컬러"를 고르는 규칙 — 정렬 키와 카드 표시가 같은 함수를 쓴다
 import { bestVar, deLabel, baseVid, badgeFor } from "./color-rules.js";
+import { autoFacets } from "./facets.js";
+import { workOf } from "./work.js";
 
 /* ---------------- catalog ---------------- */
 /* 검색 결과: 지금 조건에 남은 시편 목록. 동시에 HITS 에 "패턴별로 남은 컬러 id" 를 채운다.
@@ -265,8 +267,10 @@ export function renderCatalog() {
   let filtersOpen = false;
   try { filtersOpen = localStorage.getItem("rdp.filtersOpen") === "1"; } catch (e) {}
   // 필터 ▾ 옆 숫자 = 저장된 검색 수 + 지금 검색에 걸린 태그 수
-  const tagOnCount = parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).length;
-  const filterCount = (App.smartFolders || []).length + tagOnCount;
+  const activeTerms = parseQuery(App.q).terms.filter((t) => !t.neg);
+  const tagOnCount = activeTerms.filter((t) => t.key === "tag").length;
+  const autoOnCount = activeTerms.filter((t) => ["client", "place", "code", "layers", "plate", "color", "status"].includes(t.key)).length;
+  const filterCount = (App.smartFolders || []).length + tagOnCount + autoOnCount;
 
   // 결과 줄(B)에 쓸 값 — 지금 조건에 남은 컬러 수, 전부 담겨 있는지
   const hitCount = list.reduce((a, p) => a + (HITS.get(p.id) || []).length, 0);
@@ -292,14 +296,31 @@ export function renderCatalog() {
   })();
 
   // 태그 칩 줄 — 지금 프로젝트 범위에서 많이 쓴 태그부터. 누르면 #태그 가 검색창에 들어간다.
+  // 자동 태그 — 필드 값에서 계산한 것(저장하지 않음). 직접 단 태그와 구분선으로 나눈다.
+  const autoRows = autoFacets(App.patterns, workOf, 6);
+
   const tagbar = (() => {
     const tags = tagCounts(App.patterns, App.project).slice(0, 20);
-    if (!tags.length) return "";
+    if (!tags.length && !autoRows.length) return "";
     const on = new Set(parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val));
-    return `<div class="tagbar"><span class="tb-lbl">태그</span>${
+    return `<div class="tagbar">${tags.length ? '<span class="tb-lbl">태그</span>' : ""}${
       tags.map(([t, n]) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(t)}<span class="n">${n}</span></button>`).join("")
-    }<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
+    }${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
   })();
+
+  function autoTagHTML() {
+    if (!autoRows.length) return "";
+    const sep = tagCounts(App.patterns, App.project).length ? `<span class="tb-sep" aria-hidden="true"></span>` : "";
+    return sep + autoRows.map((row) => {
+      const chips = row.values.map((v) => {
+        const tok = fieldToken(row.kind, v.val);
+        const on = hasToken(App.q, tok);
+        return `<button class="chip auto${on ? " on" : ""}" data-auto="${esc(tok)}"
+          title="${esc(row.label)} ${esc(v.val)} — 눌러서 거르기(자동 태그, 저장되지 않음)">${esc(v.val)}<span class="n">${v.n}</span></button>`;
+      }).join("");
+      return `<span class="auto-group"><span class="auto-lbl">${esc(row.label)}</span>${chips}</span>`;
+    }).join("");
+  }
 
   $("#view").innerHTML = `<div class="wrap">
       <section class="hero">
@@ -366,6 +387,14 @@ export function renderCatalog() {
   paintDots();
   $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
   $$("[data-tag]").forEach((el) => (el.onclick = () => { toggleTag(el.dataset.tag); syncSearch(); }));
+  // 자동 태그 칩: 값 토큰(client:"현대자동차" 등)을 넣었다 뺐다 한다
+  $$("[data-auto]").forEach((el) => (el.onclick = () => {
+    const tok = el.dataset.auto;
+    App.q = hasToken(App.q, tok)
+      ? withoutToken(App.q, (t) => t.raw === tok)
+      : ((App.q || "").trim() ? App.q.trim() + " " : "") + tok;
+    syncSearch();
+  }));
   const qhelp = $("#qhelp");
   if (qhelp) qhelp.onclick = () => toast(QUERY_HELP, 6500);
 

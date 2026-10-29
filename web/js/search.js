@@ -35,7 +35,7 @@ export const VAR_KEYS = new Set(["plate", "color", "status", "place", "layers"])
 
 /* 토큰 자르기. -제외 / #태그 / @프로젝트 / "따옴표" 를 붙여 쓸 수 있다.
    raw 는 토큰을 다시 지울 때(칩 토글) 원문을 그대로 되살리기 위해 남긴다. */
-const TOK_RE = /(-?)([#@]?)("[^"]*"|\S+)/g;
+const TOK_RE = /(-?)([#@]?)([A-Za-z_]+:)?("[^"]*"|\S+)/g;
 export function tokenize(raw) {
   const s = String(raw == null ? "" : raw);
   const out = [];
@@ -43,9 +43,10 @@ export function tokenize(raw) {
   let m;
   while ((m = TOK_RE.exec(s)) !== null) {
     if (!m[0]) break;                       // 0길이 매치 방어
-    let body = m[3];
+    let body = m[4];
     if (body.length > 1 && body[0] === '"' && body[body.length - 1] === '"') body = body.slice(1, -1);
-    out.push({ neg: m[1] === "-", sigil: m[2] || "", text: body, raw: m[0] });
+    const prefix = m[3] ? m[3].slice(0, -1).toLowerCase() : "";   // client: 같은 접두
+    out.push({ neg: m[1] === "-", sigil: m[2] || "", prefix, text: body, raw: m[0] });
   }
   return out;
 }
@@ -55,7 +56,8 @@ export function parseQuery(raw) {
   const terms = [], notText = [], words = [];
   tokenize(raw).forEach((t) => {
     let key = "", val = t.text;
-    if (t.sigil === "#") key = "tag";
+    if (t.prefix) key = t.prefix;            // client:"값" 처럼 접두를 먼저 떼어낸 경우
+    else if (t.sigil === "#") key = "tag";
     else if (t.sigil === "@") key = "project";
     else {
       const m = KEYED.exec(t.text);

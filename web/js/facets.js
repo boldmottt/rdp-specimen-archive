@@ -72,7 +72,8 @@ export function autoFacets(patterns, workOf, topPerKind = 6) {
         let val = "";
         if (kind === "code") {
           const code = String((p.pattern || {}).code || "");
-          val = code.includes("-") ? code.split("-")[0] : code.slice(0, 3);
+          const m = code.match(/^[A-Za-z]+/);        // 앞의 영문자만 = 계열(G/M …)
+          val = m ? m[0] : "";
         } else {
           val = (p.client || (p.label || {}).company || "");
         }

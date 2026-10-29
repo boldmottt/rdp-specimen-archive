@@ -767,6 +767,14 @@ textarea.inline-input{min-height:64px;resize:vertical}
   .filterbar .tagbar{margin:0 0 10px}
 }
 
+/* 자동 태그(파생) — 직접 단 태그와 구분선으로 나누고, 점선 테두리로 '지울 수 없음'을 표시 */
+.tagbar .tb-sep{width:1px;height:18px;background:var(--line-2);margin:0 8px}
+.auto-group{display:inline-flex;align-items:center;gap:6px;margin-right:8px}
+.auto-lbl{font-size:10.5px;letter-spacing:.06em;color:var(--ink-3);margin-right:2px}
+.chip.auto{border-style:dashed;font-size:12px}
+.chip.auto.on{background:var(--ink);color:#fff;border-style:solid}
+.chip.auto .n{opacity:.7}
+
 /* 저장된 검색(스마트 폴더) 줄 */
 .sfbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 10px}
 .sfbar .tb-lbl{font-size:11px;letter-spacing:.08em;color:var(--ink-3);margin-right:2px}

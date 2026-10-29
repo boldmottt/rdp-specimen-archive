@@ -149,3 +149,9 @@ test("fieldToken — 공백이 있으면 따옴표로 감싼다", () => {
   assert.equal(fieldToken("client", "현대자동차"), "client:현대자동차");
   assert.equal(fieldToken("place", "미성 통상"), 'place:"미성 통상"');
 });
+
+test("key: 로 따옴표 값도 한 토큰으로 처리한다", () => {
+  const Q = parseQuery('client:"Other Motors"');
+  assert.deepEqual(Q.terms, [{ key: "client", val: "other motors", neg: false }]);
+  assert.equal(Q.text, "", "따옴표 값이 본문 검색으로 새지 않는다");
+});
