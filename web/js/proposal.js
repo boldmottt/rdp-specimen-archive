@@ -2,8 +2,15 @@
 import { $, $$, App, apiGet, apiPost, byId, dash, esc, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
 import { labOf, layerPlate } from "./detail.js";
 import { rerender } from "./main.js";
-import { groupOrder, movePattern, moveColor, normalizeOrder } from "./cart-order.js";
+import { groupOrder, movePattern, moveColor, normalizeOrder, movePatternTo, moveColorTo, sortPatterns } from "./cart-order.js";
+import { createHistory, sameItems } from "./order-history.js";
 import { workOf } from "./work.js";
+
+/* ---------------- 순서 레일 상태 ---------------- */
+let railOpen = true;
+try { railOpen = localStorage.getItem("rdp.orderRail") !== "0"; } catch (e) {}
+const orderHistory = createHistory(20);
+let lastCart = [];          // 항목 구성이 바뀌면 되돌리기 기록을 비운다
 
 /* ---------------- 담긴 시편 ---------------- */
 function cartItems() {
@@ -186,7 +193,7 @@ function coverSheet(m, ctx) {
 
 function pageSingle(m, ctx, it, v, idx, total) {
   const pt = it.pattern;
-  return html`<section class="sheet s-page">
+  return html`<section class="sheet s-page" data-pid="${it.pattern.id}">
       <div class="p-head"><div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div></div>
       <div class="p-title">
         <span>PATTERN</span>
@@ -217,7 +224,7 @@ function pageCompare(m, ctx, it, vars, idx, total, part, parts) {
     const txt = uniq.length === 1 ? uniq[0] : vals.map((x, i) => `${letters[i]} ${x || "—"}`).join(" · ");
     return html`<div><span>${k.toUpperCase()}</span>${txt}</div>`;
   });
-  return html`<section class="sheet s-page">
+  return html`<section class="sheet s-page" data-pid="${it.pattern.id}">
       <div class="p-head"><div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div></div>
       <div class="p-title">
         <span>PATTERN</span>
@@ -300,18 +307,24 @@ export function renderProposal() {
         <label class="chk-inline" title="켜면 각 페이지에 '제안 포인트' 칸이 생깁니다"><input type="checkbox" id="f-comments"${App.prop.showComments ? raw(" checked") : ""}> 제안 포인트</label>
         <div class="grow"></div>
         <span id="pstatus">${statusHTML(m)}</span>
-        <button class="btn-line" id="porder" title="담긴 시편의 순서를 바꿉니다">순서</button>
+        <button class="btn-line" id="porder" aria-controls="order-rail" aria-expanded="${railOpen ? "true" : "false"}" title="순서 레일 접기/펴기">순서</button>
         <button class="btn-line" id="parchive">보관함</button>
         <button class="btn-line" id="psnapshot">확정 저장</button>
         <button class="btn-dark" id="pprint">인쇄 / PDF</button>
       </div></div>
-      <div class="wrap">${raw(sheetsHTML(m, liveCtx))}</div>`);
+      <div class="prop-layout">
+        <aside class="order-rail${railOpen ? "" : " is-hidden"}" id="order-rail" aria-label="제안서 순서">${raw(railHTML())}</aside>
+        <div class="wrap">${raw(sheetsHTML(m, liveCtx))}</div>
+      </div>`);
 
   const refreshStatus = () => { const el = $("#pstatus"); if (el) el.innerHTML = String(statusHTML(liveModel(false))); };
   $("#pback").onclick = () => (location.hash = "");
   $("#parchive").onclick = () => (location.hash = "#/proposals");
   $("#pprint").onclick = () => window.print();
-  $("#porder").onclick = openOrderDialog;
+  // 항목 구성이 바뀌었으면(담기·빼기) 되돌리기 기록을 비운다 — 이미 뺀 항목이 되살아나지 않게
+  if (!sameItems(lastCart, App.cart)) { orderHistory.clear(); lastCart = App.cart.map((c) => ({ ...c })); }
+  bindRail();
+  $("#porder").onclick = toggleRail;
   $("#psnapshot").onclick = saveSnapshot;
   $("#psnapshot").disabled = snapBusy;
   const bindField = (id, key) => {
@@ -564,84 +577,260 @@ export function renderCart() {
   $("#mkprop").onclick = () => (location.hash = "#/proposal");
 }
 
-/* ---------------- 순서 조정 대화상자 ----------------
- * 제안서 순서 = 장바구니 배열 순서다(cart-order.js 규칙).
- * 시트 위에 버튼을 얹으면 인쇄 규격을 건드릴 위험이 있어, 대화상자를 body 에 붙여 시트와 분리한다.
- * 이동할 때마다 App.cart 를 바꾸고 → 저장 → 시트를 다시 그리고 → 이 대화상자만 갱신한다(초점 유지).
+/* ---------------- 순서 레일 ----------------
+ * 모달 대신 시트 옆에 사진 목록을 상시 둔다(보면서 고친다). 넓은 화면 sticky · 중간은 서랍 · 좁으면 전체 화면.
+ * 인쇄에서는 .order-rail 을 숨긴다(시트 안에는 아무것도 넣지 않는다).
  */
-function orderDialogNode() {
-  let dlg = document.getElementById("order-dlg");
-  if (!dlg) {
-    dlg = document.createElement("dialog");
-    dlg.id = "order-dlg";
-    dlg.className = "order-dialog";
-    document.body.appendChild(dlg);
-  }
-  return dlg;
+function railThumb(p, vid, cls) {
+  const v = p && (p.variations || []).find((x) => x.id === vid);
+  const n = v && v.images && v.images.length ? v.images[0] : "";
+  return n ? `<img class="${cls}" src="${imgUrl(p.id, n)}" alt="" loading="lazy">` : `<span class="${cls} or-no"></span>`;
 }
 
-function orderRowsHTML() {
+function railRowsHTML() {
   const groups = groupOrder(App.cart);
-  if (!groups.length) return `<p class="ord-empty">담긴 시편이 없습니다.</p>`;
+  if (!groups.length) return `<p class="or-empty">담긴 시편이 없습니다.</p>`;
   return groups.map((g, gi) => {
     const p = byId(g.pid);
-    const code = (p && p.pattern && p.pattern.code) || g.pid;
-    const last = gi === groups.length - 1;
-    const colors = g.vids.map((vid, ci) => {
+    const code = (p && p.pattern.code) || g.pid;
+    const cols = g.vids.map((vid, ci) => {
       const v = p && (p.variations || []).find((x) => x.id === vid);
       const nm = v ? (v.colorName || v.colorCode || vid) : vid;
-      return `<div class="ord-col">
-          <span class="ord-nm">${esc(nm)}</span>
-          <button type="button" data-k="col:${g.pid}:${vid}:up"${ci === 0 ? " disabled" : ""} aria-label="${esc(nm)} 위로">↑</button>
-          <button type="button" data-k="col:${g.pid}:${vid}:down"${ci === g.vids.length - 1 ? " disabled" : ""} aria-label="${esc(nm)} 아래로">↓</button>
+      return `<div class="or-col" data-kind="col" data-pid="${g.pid}" data-vid="${vid}" data-index="${ci}">
+          <button type="button" class="or-grip" data-grip="col" aria-label="${esc(nm)} 손잡이">⠿</button>
+          ${railThumb(p, vid, "or-th or-th-sm")}
+          <span class="or-nm">${esc(nm)}</span>
+          <button type="button" class="or-more" data-more="col" aria-label="${esc(nm)} 더보기">⋯</button>
         </div>`;
     }).join("");
-    return `<div class="ord-pat">
-        <div class="ord-head">
-          <b>${esc(code)}</b><span class="ord-n">${g.vids.length}색</span>
-          <button type="button" data-k="pat:${g.pid}:up"${gi === 0 ? " disabled" : ""} aria-label="${esc(code)} 위로">↑</button>
-          <button type="button" data-k="pat:${g.pid}:down"${last ? " disabled" : ""} aria-label="${esc(code)} 아래로">↓</button>
-          <button type="button" class="ord-top" data-k="pat:${g.pid}:top"${gi === 0 ? " disabled" : ""}>맨 위로</button>
+    return `<div class="or-pat" data-kind="pat" data-pid="${g.pid}" data-index="${gi}">
+        <div class="or-head">
+          <button type="button" class="or-grip" data-grip="pat" aria-label="${esc(code)} 손잡이">⠿</button>
+          ${railThumb(p, g.vids[0], "or-th")}
+          <b class="or-code">${esc(code)}</b>
+          <span class="or-page" data-page-for="${g.pid}"></span>
+          <span class="or-n">${g.vids.length}색</span>
+          <button type="button" class="or-more" data-more="pat" aria-label="${esc(code)} 더보기">⋯</button>
         </div>
-        ${colors}
+        ${cols}
       </div>`;
   }).join("");
 }
 
-function openOrderDialog() {
-  const dlg = orderDialogNode();
-  dlg.innerHTML = `<form method="dialog">
-      <h3>제안서 순서</h3>
-      <p class="ord-hint">패턴을 옮기면 그 컬러들이 함께 움직입니다. 컬러는 같은 패턴 안에서만 옮길 수 있습니다.</p>
-      <div class="ord-list" id="ord-list">${orderRowsHTML()}</div>
-      <div class="ord-actions"><button type="submit" class="btn-dark">닫기</button></div>
-    </form>`;
-  bindOrder(dlg);
-  if (!dlg.open) dlg.showModal();
+function railHTML() {
+  const groups = groupOrder(App.cart);
+  return `<div class="or-top">
+      <span class="or-title">순서<small>${groups.length}개 패턴 · 자동 저장</small></span>
+      <select id="or-sort" aria-label="순서 정렬">
+        <option value="">정렬…</option>
+        <option value="code">코드순</option>
+        <option value="proj">프로젝트→코드순</option>
+      </select>
+    </div>
+    <div class="or-undo" id="or-undo">${orderHistory.canUndo() ? `방금 순서 변경 · <button type="button" id="or-undo-btn">되돌리기</button>` : ""}</div>
+    <div class="or-list" id="or-list">${railRowsHTML()}</div>`;
 }
 
-function bindOrder(dlg) {
-  dlg.querySelectorAll("[data-k]").forEach((btn) => {
-    btn.onclick = () => {
-      const key = btn.dataset.k;
-      const parts = key.split(":");
-      const kind = parts[0];
-      const pid = parts[1];
-      if (kind === "pat") {
-        const dir = parts[2];                         // up | down | top
-        App.cart = movePattern(App.cart, pid, dir === "top" ? "top" : (dir === "up" ? -1 : 1));
-      } else {
-        const vid = parts[2], dir = parts[3];         // col:<pid>:<vid>:<up|down>
-        App.cart = moveColor(App.cart, pid, vid, dir === "up" ? -1 : 1);
-      }
-      App.cart = normalizeOrder(App.cart);      // 패턴별 연속 유지
-      saveLS();
-      renderProposal();                          // 시트를 즉시 다시 그린다
-      const d = orderDialogNode();
-      d.querySelector("#ord-list").innerHTML = orderRowsHTML();
-      bindOrder(d);
-      const again = d.querySelector(`[data-k="${key}"]`);   // 같은 버튼으로 초점 복귀
-      if (again) again.focus();
+function toggleRail() {
+  railOpen = !railOpen;
+  try { localStorage.setItem("rdp.orderRail", railOpen ? "1" : "0"); } catch (e) {}
+  renderProposal();
+  const btn = $("#porder");
+  if (btn) btn.setAttribute("aria-expanded", String(railOpen));
+}
+
+/** 순서를 바꾸는 모든 조작의 공통 통로 — 기록 → 적용 → 저장 → 다시 그리기 */
+function applyOrder(next) {
+  orderHistory.push(App.cart);
+  App.cart = next;
+  saveLS();
+  renderProposal();
+}
+
+function bindRail() {
+  const rail = $("#order-rail");
+  if (!rail || rail.classList.contains("is-hidden")) return;
+
+  // 쪽 번호 — 실제 시트 위치에서 계산(커버 제외)
+  const pages = Array.from(document.querySelectorAll(".sheet.s-page"));
+  $$("[data-page-for]", rail).forEach((el) => {
+    const i = pages.findIndex((pg) => pg.dataset.pid === el.dataset.pageFor);
+    el.textContent = i >= 0 ? `${i + 1}쪽` : "";
+  });
+
+  // 행 클릭 → 그 시트로 스크롤 + 잠깐 테두리
+  $$(".or-head, .or-col", rail).forEach((row) => {
+    row.onclick = (e) => {
+      if (e.target.closest(".or-more") || e.target.closest(".or-grip")) return;
+      const pid = row.closest("[data-kind]")?.dataset.pid || row.dataset.pid;   // .or-head 는 부모에 있다
+      const pg = document.querySelector(`.sheet[data-pid="${CSS.escape(pid)}"]`);
+      if (!pg) return;
+      pg.scrollIntoView({ block: "start", behavior: "smooth" });
+      pg.classList.add("ord-flash");
+      setTimeout(() => pg.classList.remove("ord-flash"), 1200);
     };
+  });
+
+  // ⋯ 메뉴 — 맨 위로 / 맨 아래로
+  $$(".or-more", rail).forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      $$(".or-menu", rail).forEach((m) => m.remove());
+      const row = btn.closest("[data-kind]");
+      const isPat = row.dataset.kind === "pat";
+      const menu = document.createElement("div");
+      menu.className = "or-menu";
+      menu.innerHTML = isPat
+        ? `<button type="button" data-act="top">맨 위로</button><button type="button" data-act="bottom">맨 아래로</button>`
+        : `<button type="button" data-act="ctop">맨 위로</button><button type="button" data-act="cbottom">맨 아래로</button>`;
+      row.appendChild(menu);
+      menu.querySelector('[data-act="top"]')?.addEventListener("click", () => applyOrder(movePatternTo(App.cart, row.dataset.pid, 0)));
+      menu.querySelector('[data-act="bottom"]')?.addEventListener("click", () => applyOrder(movePatternTo(App.cart, row.dataset.pid, 999)));
+      menu.querySelector('[data-act="ctop"]')?.addEventListener("click", () => applyOrder(moveColorTo(App.cart, row.dataset.pid, row.dataset.vid, 0)));
+      menu.querySelector('[data-act="cbottom"]')?.addEventListener("click", () => applyOrder(moveColorTo(App.cart, row.dataset.pid, row.dataset.vid, 999)));
+      setTimeout(() => {
+        const close = () => { menu.remove(); document.removeEventListener("click", close); };
+        document.addEventListener("click", close);
+      }, 0);
+    };
+  });
+
+  // 정렬
+  const sel = $("#or-sort");
+  if (sel) sel.onchange = () => {
+    if (!sel.value) return;
+    const keyOf = (pid) => {
+      const p = byId(pid);
+      const code = (p && p.pattern.code) || pid;
+      return sel.value === "proj" ? `${(p && p.project) || ""} ${code}` : code;
+    };
+    applyOrder(sortPatterns(App.cart, keyOf));
+  };
+
+  bindRailDrag(rail);
+  bindRailKeys();
+
+  // 되돌리기
+  const undoBtn = $("#or-undo-btn");
+  if (undoBtn) undoBtn.onclick = () => {
+    const prev = orderHistory.undo();
+    if (!prev) return;
+    App.cart = prev;
+    saveLS();
+    renderProposal();
+  };
+}
+
+/* 인쇄해도 레일이 나오지 않게 — 화면용 grid 래퍼도 인쇄에서는 블록으로 */
+
+/* ---------------- 레일 드래그 · 키보드 ----------------
+ * 손잡이(⠿)에서만 끌기 시작한다(Pointer Events). 행 본문을 밀면 그냥 스크롤된다.
+ * 놓을 때 한 번만 반영해 시트를 한 번만 다시 그린다.
+ * 키보드: 손잡이에 초점 → Space 로 집기 → ↑↓ 로 이동 → Space 로 놓기, Esc 로 되돌리기.
+ */
+/* 키보드 조작은 문서 캡처 단계에서 받는다 — 앱 전역 Esc(목차로 나가기)보다 먼저 잡아야 하기 때문 */
+function bindRailKeys() {
+  if (document._railKeysBound) return;
+  document._railKeysBound = true;
+  let grab = null;      // {pid, vid, kind}
+
+  document.addEventListener("keydown", (e) => {
+    const grip = e.target && e.target.closest ? e.target.closest(".or-grip") : null;
+    if (!grip) return;
+    const row = grip.closest("[data-kind]");
+    if (!row) return;
+    const pid = row.dataset.pid, vid = row.dataset.vid, kind = row.dataset.kind;
+
+    // 일부 환경(자동화·일부 IME)은 Space 를 key="" code="Space" 로 보낸다 — 둘 다 받는다
+    const isSpace = e.key === " " || e.key === "Spacebar" || e.code === "Space";
+    if (isSpace || e.key === "Enter") {
+      e.preventDefault(); e.stopPropagation();
+      if (!grab) {
+        grab = { pid, vid, kind };
+        orderHistory.push(App.cart);           // Esc 로 되돌릴 수 있게 집을 때 한 번만 기록
+        row.classList.add("is-dragging");
+      } else {
+        grab = null;
+        row.classList.remove("is-dragging");
+      }
+      return;
+    }
+    if (!grab) return;
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation();
+      const d = e.key === "ArrowUp" ? -1 : 1;
+      App.cart = kind === "pat" ? movePattern(App.cart, grab.pid, d) : moveColor(App.cart, grab.pid, grab.vid, d);
+      App.cart = normalizeOrder(App.cart);
+      saveLS(); renderProposal();
+      const again = document.querySelector(`.or-pat[data-pid="${CSS.escape(grab.pid)}"] .or-grip[data-grip="${grab.kind}"]`);
+      if (again) { again.focus(); again.closest("[data-kind]").classList.add("is-dragging"); }
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      grab = null;
+      const prev = orderHistory.undo();
+      if (prev) { App.cart = prev; saveLS(); renderProposal(); }
+    }
+  }, true);
+}
+
+function bindRailDrag(rail) {
+  let drag = null;
+
+  const idxOf = (el) => Number(el?.dataset?.index ?? -1);
+  const dropIndex = (e, kind) => {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const row = el && el.closest(kind === "pat" ? ".or-pat" : ".or-pat");
+    if (!row) return null;
+    if (kind === "col" && row.dataset.pid !== drag.pid) return null;   // 컬러는 패턴 밖으로 못 나간다
+    const target = el.closest(".or-col");
+    const idx = kind === "col" && target && target.dataset.pid === drag.pid
+      ? idxOf(target)
+      : idxOf(row) + (kind === "pat" ? 0 : 0);
+    return { idx, row };
+  };
+
+  $$(".or-grip", rail).forEach((grip) => {
+    const row = grip.closest("[data-kind]");
+    const kind = row.dataset.kind;
+
+    grip.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      drag = { pid: row.dataset.pid, vid: row.dataset.vid, kind, el: row };
+      row.classList.add("is-dragging");
+      grip.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+    });
+
+    grip.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      $$(".or-drop", rail).forEach((x) => x.classList.remove("or-drop"));
+      const hit = dropIndex(e, kind);
+      if (hit && hit.row) hit.row.classList.add("or-drop");
+      drag.hit = hit;
+    });
+
+    grip.addEventListener("pointerup", (e) => {
+      if (!drag) return;
+      const { pid, vid } = drag;
+      const hit = drag.hit || dropIndex(e, kind);
+      row.classList.remove("is-dragging");
+      $$(".or-drop", rail).forEach((x) => x.classList.remove("or-drop"));
+      drag = null;
+      if (!hit || hit.idx < 0) return;
+      if (kind === "pat") applyOrder(movePatternTo(App.cart, pid, hit.idx));
+      else applyOrder(moveColorTo(App.cart, pid, vid, hit.idx));
+      const again = document.querySelector(`.or-grip[data-grip="${kind}"][aria-label]`);
+      if (again) again.focus();
+    });
+
+    grip.addEventListener("pointercancel", () => {
+      if (!drag) return;
+      drag.el.classList.remove("is-dragging");
+      $$(".or-drop", rail).forEach((x) => x.classList.remove("or-drop"));
+      drag = null;
+    });
+
   });
 }

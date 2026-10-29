@@ -111,6 +111,54 @@ body.prop-mode .appnav{display:none}
 /* 입력 칸 아래 안내 (고객사 새 값 등) */
 .field-note{font-size:11px;color:var(--warn);margin:-4px 0 8px}
 
+.or-pat.is-dragging{opacity:.55}
+.or-pat.or-drop{box-shadow:inset 0 0 0 2px var(--ink)}
+
+/* 제안서 순서 레일 — 시트 옆에 상시(넓은 화면 sticky / 중간은 서랍 / 좁으면 전체 화면) */
+.prop-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;align-items:start}
+.prop-layout:has(.order-rail.is-hidden){grid-template-columns:minmax(0,1fr)}
+.order-rail{position:sticky;top:76px;max-height:calc(100vh - 96px);overflow:auto;border:1px solid var(--line);
+  border-radius:12px;background:var(--surface);padding:10px 10px 12px}
+.order-rail.is-hidden{display:none}
+.or-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.or-title{font-size:12px;font-weight:600;display:flex;flex-direction:column;line-height:1.3}
+.or-title small{font-weight:400;font-size:10.5px;color:var(--ink-3)}
+.or-top select{margin-left:auto;font-size:11.5px;padding:4px 6px;border:1px solid var(--line-2);border-radius:7px;background:var(--surface)}
+.or-undo{font-size:11px;color:var(--ink-3);min-height:16px;margin-bottom:6px}
+.or-undo button{border:0;background:none;color:var(--ink);text-decoration:underline;cursor:pointer;font-size:11px;padding:0 2px}
+.or-empty{font-size:12px;color:var(--ink-3)}
+.or-pat{border:1px solid var(--line);border-radius:10px;padding:6px 8px;margin-bottom:6px;background:var(--surface)}
+.or-head{display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer}
+.or-head b{font-family:var(--mono);font-weight:600}
+.or-page{font-size:10.5px;color:var(--ink-3)}
+.or-n{margin-left:auto;font-size:10.5px;color:var(--ink-3)}
+.or-grip{cursor:grab;color:var(--line-2);font-size:12px;line-height:1;user-select:none;touch-action:none;border:0;background:none;padding:0 2px}
+.or-grip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
+.or-th{width:48px;height:20px;object-fit:cover;border-radius:5px;background:var(--bg);flex:none}
+.or-th-sm{width:32px;height:14px}
+.or-no{display:inline-block;background:repeating-linear-gradient(45deg,#efede8,#efede8 4px,#e9e7e1 4px,#e9e7e1 8px)}
+.or-col{display:flex;align-items:center;gap:6px;padding:4px 0 0 10px;font-size:11.5px;color:var(--ink-2);cursor:pointer}
+.or-col .or-nm{margin-right:auto}
+.or-more{border:0;background:none;color:var(--ink-3);cursor:pointer;font-size:13px;line-height:1;padding:2px 4px}
+.or-menu{position:relative;display:flex;gap:4px;padding:4px 0 0}
+.or-menu button{border:1px solid var(--line-2);background:var(--surface);border-radius:7px;font-size:11px;padding:3px 7px;cursor:pointer}
+@media screen{.sheet.ord-flash{outline:3px solid var(--ink);outline-offset:-3px;border-radius:6px}}
+@media screen and (max-width:1079px){
+  .prop-layout{grid-template-columns:minmax(0,1fr)}
+  .order-rail{position:fixed;right:0;top:0;bottom:0;width:300px;max-height:none;border-radius:0;z-index:70;
+    box-shadow:-16px 0 30px -22px rgba(0,0,0,.5)}
+}
+@media screen and (max-width:760px){
+  .order-rail{left:0;width:100vw;z-index:80}
+}
+@media print{
+  .order-rail{display:none!important}
+  .prop-layout{display:block!important}
+}
+
+/* 입력 칸 아래 안내 (고객사 새 값 등) */
+.field-note{font-size:11px;color:var(--warn);margin:-4px 0 8px}
+
 /* 제안서 순서 대화상자 */
 .order-dialog{width:min(520px,94vw);border:1px solid var(--line-2);border-radius:14px;padding:0}
 .order-dialog form{padding:18px 20px 16px}
