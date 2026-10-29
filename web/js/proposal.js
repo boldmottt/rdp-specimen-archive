@@ -645,18 +645,81 @@ function renderKeepView() {
   const y = window.scrollY;
   const railEl = document.getElementById("order-rail");
   const railTop = railEl ? railEl.scrollTop : 0;
+  const active = document.activeElement;
+  const key = active && active.dataset ? active.dataset.k || active.dataset.grip || "" : "";
+
   renderProposal();
-  const r2 = document.getElementById("order-rail");
-  if (r2) r2.scrollTop = railTop;
-  window.scrollTo({ top: y, behavior: "instant" });
+
+  const restore = () => {
+    const r2 = document.getElementById("order-rail");
+    if (r2) r2.scrollTop = railTop;
+    window.scrollTo({ top: y, behavior: "instant" });
+  };
+  // 다시 그린 직후에는 높이가 아직 확정되지 않아 scrollTo 가 위로 잘린다.
+  //  → 즉시 · 다음 프레임 · 잠깐 뒤(이미지 로드) 세 번 시도한다.
+  restore();
+  requestAnimationFrame(restore);
+  setTimeout(restore, 60);
+  setTimeout(restore, 240);
+
+  // 손잡이 초점도 되돌린다(키보드로 이어서 옮길 수 있게)
+  if (key) {
+    const again = document.querySelector(`.or-grip[data-grip="${CSS.escape(key)}"]`);
+    if (again) again.focus({ preventScroll: true });
+  }
 }
 
-/** 순서를 바꾸는 모든 조작의 공통 통로 — 기록 → 적용 → 저장 → 다시 그리기 */
+/* 순서만 바뀌었을 때는 페이지를 다시 그리지 않고 DOM 노드만 옮긴다.
+   다시 그리면(innerHTML) 스크롤이 0 이 되고 이미지도 다시 물어오기 때문에, 아래쪽 항목을 고칠 때마다
+   화면이 튀었다. 시트 내용은 순서와 무관하므로 노드를 재배치하는 것만으로 충분하다. */
+function applyOrderInPlace() {
+  const groups = groupOrder(App.cart);
+  const sheets = document.querySelector(".sheets");
+  const list = document.querySelector("#or-list");
+  if (!sheets || !list) { renderKeepView(); return; }
+
+  groups.forEach((g) => {
+    const pid = CSS.escape(g.pid);
+    Array.from(sheets.querySelectorAll(`.sheet[data-pid="${pid}"]`)).forEach((el) => sheets.appendChild(el));   // 시트(패턴 페이지들) 순서
+    const row = list.querySelector(`.or-pat[data-pid="${pid}"]`);
+    if (!row) return;
+    list.appendChild(row);                                                                                      // 레일 행 순서
+    g.vids.forEach((vid) => {
+      const c = row.querySelector(`.or-col[data-vid="${CSS.escape(vid)}"]`);
+      if (c) row.appendChild(c);                                                                                // 컬러 행 순서
+    });
+  });
+
+  // 쪽 번호 다시 계산
+  const pages = Array.from(document.querySelectorAll(".sheet.s-page"));
+  $$("[data-page-for]", list).forEach((el) => {
+    const i = pages.findIndex((pg) => pg.dataset.pid === el.dataset.pageFor);
+    el.textContent = i >= 0 ? `${i + 1}쪽` : "";
+  });
+  // 되돌리기 표시 갱신
+  const undo = $("#or-undo");
+  if (undo) undo.innerHTML = orderHistory.canUndo() ? `방금 순서 변경 · <button type="button" id="or-undo-btn">되돌리기</button>` : "";
+  const undoBtn = $("#or-undo-btn");
+  if (undoBtn) undoBtn.onclick = doUndo;
+}
+
+/** 순서를 바꾸는 모든 조작의 공통 통로 — 기록 → 적용 → 저장 → (다시 그리지 않고) 반영 */
 function applyOrder(next) {
   orderHistory.push(App.cart);
   App.cart = next;
   saveLS();
-  renderKeepView();
+  applyOrderInPlace();
+}
+
+/** 되돌리기 — 항목 구성이 그대로면 DOM 만 옮긴다(스크롤 유지) */
+function doUndo() {
+  const prev = orderHistory.undo();
+  if (!prev) return;
+  const same = sameItems(prev, App.cart);
+  App.cart = prev;
+  saveLS();
+  if (same && document.querySelector(".sheets")) applyOrderInPlace();
+  else renderKeepView();      // 항목이 달라졌으면 전체를 다시 그린다
 }
 
 function bindRail() {
@@ -728,13 +791,7 @@ function bindRail() {
 
   // 되돌리기
   const undoBtn = $("#or-undo-btn");
-  if (undoBtn) undoBtn.onclick = () => {
-    const prev = orderHistory.undo();
-    if (!prev) return;
-    App.cart = prev;
-    saveLS();
-    renderKeepView();
-  };
+  if (undoBtn) undoBtn.onclick = doUndo;
 }
 
 /* 인쇄해도 레일이 나오지 않게 — 화면용 grid 래퍼도 인쇄에서는 블록으로 */
@@ -787,7 +844,7 @@ function bindRailKeys() {
       const d = e.key === "ArrowUp" ? -1 : 1;
       App.cart = kind === "pat" ? movePattern(App.cart, grab.pid, d) : moveColor(App.cart, grab.pid, grab.vid, d);
       App.cart = normalizeOrder(App.cart);
-      saveLS(); renderKeepView();
+      saveLS(); applyOrderInPlace();
       const again = document.querySelector(`.or-pat[data-pid="${CSS.escape(grab.pid)}"] .or-grip[data-grip="${grab.kind}"]`);
       if (again) { again.focus(); again.closest("[data-kind]").classList.add("is-dragging"); }
       return;
