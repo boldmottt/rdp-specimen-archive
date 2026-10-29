@@ -11,7 +11,7 @@
  * 데이터는 PUT 저장이라 서버 _backup 에 이전 파일이 남는다(자동 백업).
  */
 import { $, App, apiPut, byId, clone, esc, markSaved, revOf, toast, vName } from "./core.js";
-import { applySpec, BULK_HINT, csvRows, csvText } from "./bulk-rules.js";
+import { applySpec, BULK_HINT, csvRows, csvText, scopeVids } from "./bulk-rules.js";
 
 let lastPick = -1;          // Shift 범위 선택의 시작점 (지금 보이는 순서 기준)
 
@@ -47,24 +47,24 @@ export function selectionBarHTML() {
     `<span class="selhint">Shift 로 범위 · Cmd/Ctrl 로 하나씩</span></div>`;
 }
 
-/* 지금 조건에서 각 시편에 적용될 컬러 범위. catalog.js 가 HITS 를 넘겨준다. */
-function scopeVids(scope, pid, hitsOf) {
-  if (scope !== "hits") return null;                    // 모든 컬러
-  const hit = hitsOf ? hitsOf(pid) : null;
-  return Array.isArray(hit) ? new Set(hit) : null;
-}
 
-/** 바뀔 내용만 미리 계산한다(저장은 하지 않음) */
+/** 바뀔 내용만 미리 계산한다(저장은 하지 않음).
+ *  hidden: 지금 목록에 없어서 컬러 항목이 적용되지 않는 선택 시편 수 —
+ *  검색을 바꾼 뒤 예전에 체크한 시편이 조용히 바뀌던 문제를 막고, 화면에도 알린다. */
 function plan(spec, hitsOf) {
   const out = [];
+  let hidden = 0;
   App.sel.forEach((pid) => {
     const p = byId(pid);
     if (!p) return;
+    const hit = hitsOf ? hitsOf(pid) : null;
+    if (spec.scope === "hits" && !Array.isArray(hit)) hidden++;
     const doc = clone(p);
     delete doc._file; delete doc._mtime; delete doc._sel;
-    const n = applySpec(doc, spec, scopeVids(spec.scope, pid, hitsOf));
+    const n = applySpec(doc, spec, scopeVids(spec.scope, hit));
     if (n) out.push({ p, doc, n });
   });
+  out.hidden = hidden;                    // 배열에 속성으로 붙여 호출부에서 읽는다(반환 모양 유지)
   return out;
 }
 
@@ -117,9 +117,12 @@ export function openBulkDialog(rerender, hitsOf) {
   const pv = () => {
     const ps = plan(read(), hitsOf);
     const changed = ps.reduce((a, x) => a + x.n, 0);
+    const hidden = ps.hidden ? ` · 선택한 ${ps.hidden}개는 지금 목록에 없어 컬러 항목은 빠집니다` : "";
     $("#bulk-pv").textContent = ps.length
-      ? `${ps.length}개 시편 · ${changed}칸이 바뀝니다`
-      : "바뀌는 칸이 없습니다 (값을 적어 주세요)";
+      ? `${ps.length}개 시편 · ${changed}칸이 바뀝니다${hidden}`
+      : (ps.hidden
+        ? `선택한 ${ps.hidden}개 시편이 지금 목록에 없습니다 — 검색을 지우거나 '모든 컬러'를 고르세요`
+        : "바뀌는 칸이 없습니다 (값을 적어 주세요)");
   };
   f.oninput = pv;
   pv();
@@ -133,6 +136,7 @@ export function openBulkDialog(rerender, hitsOf) {
     go.disabled = true;
     go.textContent = "저장 중…";
     const fails = [];
+    const failedPids = [];
     let ok = 0;
     // 패턴당 PUT 1회, 순차. 저장할 때마다 rev 가 올라가므로 반드시 응답의 새 rev 를 반영한다.
     for (const { p, doc } of ps) {
@@ -146,13 +150,16 @@ export function openBulkDialog(rerender, hitsOf) {
         App.sel.delete(p.id);
         ok++;
       } catch (e) {
+        failedPids.push(p.id);
         fails.push(`${p.pattern.code}: ${e.status === 409 ? "다른 곳에서 먼저 저장됨 — 새로고침 후 다시" : e.message}`);
       }
     }
     dlg.close();
     if (fails.length) {
+      // 실패한 시편만 다시 선택 — 패턴 코드 앞부분 비교(startsWith)는 G-51208 이 성공한
+      // G-51208-T1 까지 잡으므로, 실패한 pid 로 정확히 비교한다.
       App.sel.clear();
-      ps.forEach((x) => { if (fails.some((m) => m.startsWith(x.p.pattern.code))) App.sel.add(x.p.id); });
+      failedPids.forEach((pid) => App.sel.add(pid));
       alert(`${ok}건 반영, ${fails.length}건 실패\n\n${fails.join("\n")}`);
     } else {
       toast(`${ok}건 반영`);

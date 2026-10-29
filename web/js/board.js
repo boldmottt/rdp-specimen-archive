@@ -7,7 +7,11 @@
  * 인쇄: body.board-mode 일 때만 규칙을 건다(제안서 인쇄와 섞이지 않게).
  *   색 견본은 배경색이라 브라우저 기본 설정으로는 인쇄되지 않는다 → print-color-adjust: exact 필요.
  */
-import { $, App, apiGet, esc, html, vName } from "./core.js";
+import { $, App, apiGet, html, vName } from "./core.js";
+
+/* html 템플릿은 값을 자동으로 이스케이프한다 — 여기서 esc() 를 또 씌우면 &가 &amp; 로 두 번 바뀐다.
+   색 견본은 값이 #rrggbb 일 때만 배경으로 쓴다(이상한 값이 style 로 들어가지 않게). */
+const hexOf = (c) => (c && /^#[0-9a-f]{6}$/i.test(c.hex || "") ? c.hex : "#eee");
 
 export async function renderBoard(proj) {
   document.body.classList.remove("prop-mode");
@@ -26,20 +30,23 @@ export async function renderBoard(proj) {
     const c = it && it.colors && it.colors[0];
     const de = it && it.de != null ? html`<span class="bd-de">ΔE ${it.de}</span>` : "";
     return html`<div class="bd-cell">
-        <div class="bd-sw" style="background:${c ? esc(c.hex) : "#eee"}"></div>
-        <b>${esc(v.colorCode || vName(v))}</b>
-        <span class="bd-name">${esc(v.colorName || "")}</span>
-        <span class="bd-code">${esc(p.pattern.code)}</span>
+        <div class="bd-sw" style="background:${hexOf(c)}"></div>
+        <b>${v.colorCode || vName(v)}</b>
+        <span class="bd-name">${v.colorName || ""}</span>
+        <span class="bd-code">${p.pattern.code}</span>
         ${de}
       </div>`;
   }));
 
+  // 색을 받는 동안 사용자가 다른 화면으로 갔으면 그리지 않는다(뒤늦게 목차를 덮어쓰던 문제)
+  if (!location.hash.startsWith("#/board/")) return;
+
   $("#view").innerHTML = String(html`<div class="wrap board">
       <div class="bd-head">
-        <h1>${esc(proj || "프로젝트")} 컬러 보드</h1>
+        <h1>${proj || "프로젝트"} 컬러 보드</h1>
         <span class="bd-sub">${pats.length}개 시편 · ${cells.length}개 컬러 · 사진에서 뽑은 대표색(참고용)</span>
         <span class="bd-tools noprint">
-          ${App.refColor ? html`<span class="bd-ref">기준 <i style="background:${esc(App.refColor.hex)}"></i>${esc(App.refColor.hex)}</span>` : ""}
+          ${App.refColor ? html`<span class="bd-ref">기준 <i style="background:${hexOf(App.refColor)}"></i>${App.refColor.hex}</span>` : ""}
           <button class="tool" id="bd-print">인쇄</button>
         </span>
       </div>

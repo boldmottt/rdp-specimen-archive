@@ -13,6 +13,8 @@ import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk
 export const HITS = new Map();
 
 function filtered() {
+  // 기준색이 없으면 '색 가까운 순'은 아무 순서나 된다 → 최근순으로 되돌린다
+  if (App.sort === "color" && !App.refColor) App.sort = "recent";
   const Q = parseQuery(App.q);
   HITS.clear();
   const list = App.patterns.filter((p) => {
@@ -190,7 +192,7 @@ export function renderCatalog() {
 
   // 태그 칩 줄 — 지금 프로젝트 범위에서 많이 쓴 태그부터. 누르면 #태그 가 검색창에 들어간다.
   const tagbar = (() => {
-    const tags = tagCounts(App.patterns, App.project).slice(0, 18);
+    const tags = tagCounts(App.patterns, App.project).slice(0, 20);
     if (!tags.length) return "";
     const on = new Set(parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val));
     return `<div class="tagbar"><span class="tb-lbl">태그</span>${
@@ -219,7 +221,7 @@ export function renderCatalog() {
         <div class="selwrap"><select id="sort" aria-label="정렬">
           <option value="recent"${App.sort === "recent" ? " selected" : ""}>최근 작업순</option>
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
-          <option value="color"${App.sort === "color" ? " selected" : ""}>색 가까운 순</option>
+          <option value="color"${App.sort === "color" ? " selected" : ""}${App.refColor ? "" : " disabled"}>색 가까운 순${App.refColor ? "" : " (◎ 먼저)"}</option>
         </select></div>
       </div>
       ${selectionBarHTML()}
@@ -308,7 +310,16 @@ export function renderCatalog() {
     location.hash = "#/board/" + encodeURIComponent(App.project);
   };
 
-  const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
+  const sel = $("#sort");
+  if (sel) sel.onchange = (e) => {
+    if (e.target.value === "color" && !App.refColor) {
+      toast("카드의 ◎ 를 먼저 눌러 기준색을 잡아 주세요");
+      e.target.value = App.sort;
+      return;
+    }
+    App.sort = e.target.value;
+    renderCatalog();
+  };
   const sa = $("#syncall");
   if (sa) sa.onclick = async () => {
     if (!confirm("RDP-DB의 배합을 모든 시편에 반영할까요?\n(기존 배합 수치는 DB 값으로 갱신되고, 메모는 유지됩니다)")) return;

@@ -78,7 +78,26 @@ function pushUiState() {
   fetch("/api/ui", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   }).then(async (r) => {
-    if (r.status === 409) { toast("저장된 검색이 다른 곳에서 먼저 바뀌었습니다 — 새로고침 후 다시 해주세요"); return; }
+    if (r.status === 409) {
+      // 다른 탭/PC 가 저장된 검색을 먼저 바꿨다. 여기서 dirty 를 안 풀면 이후 모든 저장에
+      // 낡은 폴더가 실려 계속 409 가 나고, 장바구니·제안서 설정이 서버로 못 올라간다.
+      // → 서버 목록을 받아들이고 dirty 를 푼 뒤, 장바구니만 다시 보낸다.
+      App.sfDirty = false;
+      try {
+        const ui = await apiGet("/api/ui");
+        if (ui && ui.state) {
+          if (Array.isArray(ui.state.smartFolders)) App.smartFolders = ui.state.smartFolders;
+          App.sfRev = Number(ui.state.smartFoldersRev || 0) || 0;
+          localStorage.setItem(LS_SMART, JSON.stringify(App.smartFolders));
+          localStorage.setItem(LS_SFREV, String(App.sfRev));
+        }
+      } catch (e) {}
+      toast("저장된 검색이 다른 곳에서 바뀌어 최신 목록으로 맞췄습니다");
+      // 화면(목차)의 폴더 칩도 새 목록으로 다시 그리게 알린다 — core 는 catalog 를 import 하지 않는다(순환)
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("rdp:folders-changed"));
+      saveLS();                       // 폴더 없이 다시 저장
+      return;
+    }
     if (!r.ok) return;
     if (!withFolders) return;
     App.sfDirty = false;
@@ -148,6 +167,8 @@ export async function apiDelete(path, rev) {
   return j;
 }
 export async function apiUpload(pid, vid, slot, blob, crop) {
+  // 사진이 바뀌면 서버 대표색도 바뀐다 → 한 번 받아 둔 색 목록을 버려 다음에 다시 받는다
+  App.colors = null;
   const q = crop ? `?slot=${slot}&x=${crop.x}&y=${crop.y}&w=${crop.w}&h=${crop.h}` : `?slot=${slot}`;
   const r = await fetch(`/api/image/${encodeURIComponent(pid)}/${encodeURIComponent(vid)}${q}`, {
     method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: blob,

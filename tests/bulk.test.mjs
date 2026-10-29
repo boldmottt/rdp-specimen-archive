@@ -9,7 +9,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applySpec, csvCell, csvRows, csvText, CSV_HEAD } from "../web/js/bulk-rules.js";
+import { applySpec, csvCell, csvRows, csvText, CSV_HEAD, scopeVids } from "../web/js/bulk-rules.js";
 
 const doc = () => ({
   id: "P1", project: "MQ5",
@@ -106,4 +106,31 @@ test("CSV 행 — 걸린 컬러만, 머리글 포함, BOM+CRLF", () => {
 test("CSV 행 — 컬러 범위가 없으면 전부", () => {
   const p = { project: "P", pattern: { code: "G-2" }, work: {}, variations: [{ id: "a" }, { id: "b" }] };
   assert.equal(csvRows([p], null, null).length, 3);
+});
+
+/* --- 검색으로 숨긴 시편 (리뷰 지적 1번) -------------------------------------
+   예전에는 목록에 없는 시편이면 scopeVids 가 null(모든 컬러)을 돌려줘서,
+   검색을 바꾼 뒤 예전에 체크해 둔 시편의 모든 컬러가 조용히 바뀌었다. */
+test("목록에 없는 시편: 컬러 항목은 아무것도 안 바뀐다", () => {
+  const d = doc();
+  // hitsOf 가 undefined 를 돌려주는 상황 = 지금 검색 결과에 없는 시편
+  const vids = scopeVids("hits", undefined);
+  assert.deepEqual([...vids], [], "빈 집합이어야 한다(전체가 아니라)");
+  assert.equal(applySpec(d, { status: "합격" }, vids), 0);
+  assert.equal(d.variations[0].status, "가승인", "컬러 상태 그대로");
+  assert.equal(d.variations[1].status, "작업중", "컬러 상태 그대로");
+});
+
+test("목록에 없는 시편이라도 작업자·태그(시편 단위)는 적용된다", () => {
+  const d = doc();
+  const n = applySpec(d, { worker: "최현훈", tagsAdd: ["북매치"] }, scopeVids("hits", undefined));
+  assert.equal(n, 2, "작업자 + 태그");
+  assert.equal(d.work.worker, "최현훈");
+  assert.deepEqual(d.pattern.tags, ["컬러세미나", "북매치"]);
+});
+
+test("모든 컬러 범위는 예전처럼 전체", () => {
+  assert.equal(scopeVids("all", undefined), null);
+  const d = doc();
+  assert.equal(applySpec(d, { status: "합격" }, scopeVids("all", undefined)), 2);
 });

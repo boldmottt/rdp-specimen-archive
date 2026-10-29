@@ -14,6 +14,17 @@
  *      (OWASP 기준. - 도 포함해야 한다 — 코드가 -T1 로 시작하는 값이 있다).
  */
 
+/**
+ * 컬러 단위 항목을 적용할 컬러 범위.
+ *   scope="all"  → null (모든 컬러)
+ *   scope="hits" → 지금 검색에 걸린 컬러만. **목록에 없는 시편이면 빈 집합** —
+ *                  예전에는 null(전체)을 돌려줘서, 검색으로 숨긴 시편의 모든 컬러가 바뀌었다.
+ */
+export function scopeVids(scope, hitIds) {
+  if (scope !== "hits") return null;
+  return new Set(Array.isArray(hitIds) ? hitIds : []);
+}
+
 export const BULK_HINT =
   "비운 칸은 바꾸지 않습니다. 동판은 여기서 바꾸지 않습니다(배합·DB 가 어긋날 수 있어 상세 화면에서 하나씩) — ";
 

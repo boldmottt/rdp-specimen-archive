@@ -90,6 +90,11 @@ async function boot() {
     }
   } catch (e) {}
 
+  // 저장된 검색이 다른 곳과 맞춰졌을 때(409 복구) 목차의 폴더 칩을 다시 그린다
+  window.addEventListener("rdp:folders-changed", () => {
+    if (!location.hash || location.hash === "#") renderCatalog();
+  });
+
   $("#search").addEventListener("input", (e) => {
     App.q = e.target.value;
     if (location.hash && location.hash !== "#") location.hash = ""; else renderCatalog();
