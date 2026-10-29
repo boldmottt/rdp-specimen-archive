@@ -678,6 +678,12 @@ function applyOrderInPlace() {
   const list = document.querySelector("#or-list");
   if (!sheets || !list) { renderKeepView(); return; }
 
+  // 큰 시트를 위아래로 옮기면 브라우저의 '스크롤 앵커링'이 화면을 다른 곳으로 옮긴다(5200 → 1920 실측).
+  // 노드를 옮기는 동안 앵커링을 끄고, 끝난 뒤 보던 위치로 되돌린다.
+  const y = window.scrollY;
+  const root = document.documentElement;
+  root.style.overflowAnchor = "none";
+
   groups.forEach((g) => {
     const pid = CSS.escape(g.pid);
     Array.from(sheets.querySelectorAll(`.sheet[data-pid="${pid}"]`)).forEach((el) => sheets.appendChild(el));   // 시트(패턴 페이지들) 순서
@@ -696,6 +702,10 @@ function applyOrderInPlace() {
     const i = pages.findIndex((pg) => pg.dataset.pid === el.dataset.pageFor);
     el.textContent = i >= 0 ? `${i + 1}쪽` : "";
   });
+  root.style.overflowAnchor = "";
+  window.scrollTo({ top: y, behavior: "instant" });
+  requestAnimationFrame(() => window.scrollTo({ top: y, behavior: "instant" }));
+
   // 되돌리기 표시 갱신
   const undo = $("#or-undo");
   if (undo) undo.innerHTML = orderHistory.canUndo() ? `방금 순서 변경 · <button type="button" id="or-undo-btn">되돌리기</button>` : "";
@@ -846,7 +856,7 @@ function bindRailKeys() {
       App.cart = normalizeOrder(App.cart);
       saveLS(); applyOrderInPlace();
       const again = document.querySelector(`.or-pat[data-pid="${CSS.escape(grab.pid)}"] .or-grip[data-grip="${grab.kind}"]`);
-      if (again) { again.focus(); again.closest("[data-kind]").classList.add("is-dragging"); }
+      if (again) { again.focus({ preventScroll: true }); again.closest("[data-kind]").classList.add("is-dragging"); }
       return;
     }
     if (e.key === "Escape") {
@@ -910,7 +920,7 @@ function bindRailDrag(rail) {
       if (kind === "pat") applyOrder(movePatternTo(App.cart, pid, hit.idx));
       else applyOrder(moveColorTo(App.cart, pid, vid, hit.idx));
       const again = document.querySelector(`.or-grip[data-grip="${kind}"][aria-label]`);
-      if (again) again.focus();
+      if (again) again.focus({ preventScroll: true });
     });
 
     grip.addEventListener("pointercancel", () => {
