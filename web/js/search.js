@@ -12,6 +12,10 @@
  *   plate:26_015    동판(작업·도수별·배합) 포함
  *   color:E3940     컬러 코드·이름 포함
  *   status:가승인    상태가 같은 베리에이션만 남긴다
+ *   client:현대자동차  고객사(대소문자 무시, 완전 일치)
+ *   code:G          패턴 코드 앞부분 일치(계열 묶음용)
+ *   place:API       작업장소(컬러별 유효값 기준, 완전 일치)
+ *   layers:2        인쇄 도수가 2도인 컬러만
  *   앞에 -          제외                      예) #컬러세미나 -@MQ5
  *   "따옴표"         공백 포함                  예) #"메탈 브라운"
  *   그 밖의 단어     예전과 똑같이 부분 문자열 하나로 검색(대소문자 무시)
@@ -21,11 +25,13 @@
  *   검색 상태는 App.q 하나뿐이라 저장된 데이터는 건드리지 않는다 — 데이터 되돌리기가 필요 없다.
  */
 
-const KEYED = /^(tag|project|plate|color|status):([\s\S]*)$/i;
+import { workOf } from "./work.js";
+
+const KEYED = /^(tag|project|plate|color|status|client|place|code|layers):([\s\S]*)$/i;
 const low = (s) => String(s == null ? "" : s).toLowerCase().trim();
 
 /** 컬러(베리에이션) 단위로만 판정되는 문법 — 나머지(tag·project)는 시편 단위 */
-export const VAR_KEYS = new Set(["plate", "color", "status"]);
+export const VAR_KEYS = new Set(["plate", "color", "status", "place", "layers"]);
 
 /* 토큰 자르기. -제외 / #태그 / @프로젝트 / "따옴표" 를 붙여 쓸 수 있다.
    raw 는 토큰을 다시 지울 때(칩 토글) 원문을 그대로 되살리기 위해 남긴다. */
@@ -80,6 +86,10 @@ export function patternHay(p) {
 function testVar(p, v, t) {
   if (t.key === "color") return low(v.colorCode).includes(t.val) || low(v.colorName).includes(t.val);
   if (t.key === "status") return low(v.status) === t.val;
+  // 작업장소는 컬러별 유효값(workOf)으로 판정 — 같은 패턴의 다른 컬러는 걸리지 않는다
+  if (t.key === "place") return low(workOf(p, v).place) === t.val;
+  // 도수 개수(1도/2도…) — layerPlates 의 키 수
+  if (t.key === "layers") return String(Object.keys(v.layerPlates || {}).length) === String(t.val);
   if (t.key === "plate") {
     const plates = [...((p.work || {}).plate || []), ...Object.values(v.layerPlates || {}),
       ...(v.mixes || []).map((m) => m.plate || "")].map(low);
@@ -99,7 +109,9 @@ export function matchVars(p, Q) {
     if (VAR_KEYS.has(t.key)) continue;
     const hit = t.key === "tag" ? (p.pattern.tags || []).some((x) => low(x) === t.val)
       : t.key === "project" ? low(p.project) === t.val || low(p.projectName) === t.val
-        : true;
+        : t.key === "client" ? low((p.client || (p.label || {}).company)) === t.val
+          : t.key === "code" ? low(p.pattern.code).startsWith(t.val)
+            : true;
     // neg=false → 걸려야 한다 / neg=true → 걸리면 안 된다. 둘 중 하나만 어긋나도 탈락.
     if (hit === t.neg) return null;
   }
@@ -124,8 +136,20 @@ export function withoutToken(raw, pred) {
   return tokenize(raw).filter((t) => !pred(t)).map((t) => t.raw).join(" ").trim();
 }
 
+/** 자동 태그 칩이 검색어에 넣을 토큰 — 값에 공백이 있으면 따옴표 */
+export function fieldToken(key, val) {
+  const v = String(val == null ? "" : val).replace(/"/g, "").trim();
+  return /\s/.test(v) ? `${key}:"${v}"` : `${key}:${v}`;
+}
+
+/** 그 토큰이 검색어에 들어 있는가(칩 강조용) */
+export function hasToken(raw, token) {
+  return tokenize(raw).some((t) => t.raw === token);
+}
+
 export const QUERY_HELP =
   "검색 문법 — #태그  @프로젝트  plate:26_015  color:E3940  status:가승인\n" +
+  "고객사 client:현대자동차 · 계열 code:G · 작업장소 place:API · 도수 layers:2\n" +
   "앞에 - 를 붙이면 제외 (예: #컬러세미나 -@MQ5) · 공백이 있는 태그는 #\"메탈 브라운\"";
 
 /* ---------- 화면 도우미 (DOM 사용) ---------- */

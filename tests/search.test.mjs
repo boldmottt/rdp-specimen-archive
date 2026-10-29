@@ -8,7 +8,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseQuery, matchVars, patternHay, tagToken, withoutToken, tokenize } from "../web/js/search.js";
+import { parseQuery, matchVars, patternHay, tagToken, withoutToken, tokenize, fieldToken } from "../web/js/search.js";
 
 /* 실제 데이터 모양을 줄인 고정 시편들 */
 const mk = (id, code, project, tags, vars) => ({
@@ -97,4 +97,55 @@ test("patternHay 는 태그·도수 패턴·배합 동판까지 훑는다", () =
   assert.ok(h.includes("멜란지"));
   assert.ok(h.includes("26_103"));
   assert.ok(h.includes("25_188"));
+});
+
+/* --- 3차 지적: 고객사 · 계열 · 작업장소 · 도수 축 ------------------------- */
+const P3 = {
+  id: "G-3", project: "NKO", client: "현대자동차", projectName: "NKO",
+  pattern: { code: "G-60813-L1", name: "", nameKo: "", tags: [] },
+  work: { place: "미성통상" },
+  variations: [
+    { id: "v01", colorCode: "A1", status: "가승인", layerPlates: { "1도": "26_1", "2도": "26_2" } },
+    { id: "v02", colorCode: "A2", status: "가승인", layerPlates: { "1도": "26_1" }, work: { place: "API" } },
+  ],
+};
+const P4 = {
+  id: "M-4", project: "X", client: "HYUNDAI",
+  pattern: { code: "M-50527-W6", name: "", nameKo: "", tags: [] },
+  work: {}, variations: [{ id: "v01", colorCode: "B1" }],
+};
+const run2 = (q, list) => {
+  const Q = parseQuery(q);
+  const out = new Map();
+  (list || [P3, P4]).forEach((p) => { const v = matchVars(p, Q); if (v) out.set(p.id, v); });
+  return out;
+};
+
+test("client: — 대소문자를 무시한다", () => {
+  assert.deepEqual([...run2("client:현대자동차").keys()], ["G-3"]);
+  assert.equal(run2("client:hyundai").size, 1, "다른 시편(HYUNDAI)도 걸린다");
+});
+
+test("-client: — 제외도 된다", () => {
+  assert.deepEqual([...run2("-client:현대자동차").keys()], ["M-4"]);
+});
+
+test("code: — 앞부분 일치(계열 묶음)", () => {
+  assert.deepEqual([...run2("code:G").keys()], ["G-3"]);
+  assert.deepEqual([...run2("code:M-50").keys()], ["M-4"]);
+});
+
+test("place: — 컬러별 유효값으로 걸러 같은 패턴의 다른 컬러는 남는다", () => {
+  assert.deepEqual(run2("place:API").get("G-3"), ["v02"], "덮어쓴 컬러만");
+  assert.deepEqual(run2("place:미성통상").get("G-3"), ["v01"], "공통값을 물려받은 컬러만");
+});
+
+test("layers: — 인쇄 도수 개수", () => {
+  assert.deepEqual(run2("layers:2").get("G-3"), ["v01"]);
+  assert.deepEqual(run2("layers:1").get("G-3"), ["v02"]);
+});
+
+test("fieldToken — 공백이 있으면 따옴표로 감싼다", () => {
+  assert.equal(fieldToken("client", "현대자동차"), "client:현대자동차");
+  assert.equal(fieldToken("place", "미성 통상"), 'place:"미성 통상"');
 });
