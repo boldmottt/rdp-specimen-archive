@@ -15,6 +15,8 @@ import { bestVar, deLabel, baseVid, badgeFor } from "./color-rules.js";
 export const HITS = new Map();
 /* 색 정렬 중일 때 카드별 "가장 가까운 컬러" — 렌더 단계에서만 쓰고 문서(p)는 건드리지 않는다 */
 const BEST = new Map();
+/* DB 동기화 진행 중 표시 — renderCatalog 안에 두면 다시 그릴 때마다 초기화되어 중복 요청을 막지 못한다 */
+let syncingAll = false;
 
 function filtered() {
   // 기준색이 없으면 '색 가까운 순'은 아무 순서나 된다 → 최근순으로 되돌린다
@@ -339,7 +341,7 @@ export function renderCatalog() {
               <button type="button" data-act="csv">CSV로 내보내기</button>
               <button type="button" data-act="sync">DB 동기화</button>
               <button type="button" data-act="none">결과 빼기 (${hitCount}개)</button>
-              ${App.project === "all" ? `<button type="button" data-act="board">컬러 보드 (프로젝트 선택)</button>` : ""}
+              <button type="button" data-act="board">${App.project === "all" ? "컬러 보드 (프로젝트 선택)" : `${esc(App.project)} 컬러 보드`}</button>
               <button type="button" data-act="help">검색 문법</button>
             </div>
           </div>
@@ -401,24 +403,31 @@ export function renderCatalog() {
     };
   });
   // ---- 결과 줄(B) 동작: 담기 토글 · 더보기 메뉴 · 정렬 세그먼트
-  const addAll = () => {
+  // 다시 그리면 툴바가 새로 만들어져 초점이 body 로 빠진다 → 원래 있던 자리로 돌려준다
+  const refocus = (sel) => { const el = $(sel); if (el) el.focus(); };
+  const addAll = (focusSel) => {
     filtered();                                   // HITS 를 지금 조건으로 다시 채운다
     App.patterns.forEach((p) => (HITS.get(p.id) || []).forEach((vid) => {
       if (!inCart(p.id, vid)) App.cart.push({ pid: p.id, vid });
     }));
     saveLS(); renderCatalog(); renderCart();
+    refocus(focusSel || "#selall");
   };
-  const removeAll = () => {
+  const removeAll = (focusSel) => {
     filtered();
     App.cart = App.cart.filter((c) => !(HITS.get(c.pid) || []).includes(c.vid));
     saveLS(); renderCatalog(); renderCart();
+    refocus(focusSel || "#selall");
   };
   const btnAll = $("#selall");
   // 결과가 전부 담겨 있으면 같은 버튼이 '빼기'가 된다(같은 대상의 반대 동작이라 토글로 합침)
   if (btnAll) btnAll.onclick = () => (allIn ? removeAll() : addAll());
 
   async function doSyncAll() {
+    if (syncingAll) { toast("동기화 중입니다"); return; }
     if (!confirm("RDP-DB의 배합을 모든 시편에 반영할까요?\n(기존 배합 수치는 DB 값으로 갱신되고, 메모는 유지됩니다)")) return;
+    syncingAll = true;
+    toast("동기화 중…", 1200);
     try {
       const r = await fetch("/api/rdp/sync-all", { method: "POST" }).then((x) => x.json());
       if (!r || r.ok === false) throw new Error(r && r.error ? r.error : "동기화 실패");
@@ -427,6 +436,7 @@ export function renderCatalog() {
       renderCatalog();
       toast(`동기화 완료 · ${r.patterns}개 시편 / 추가 ${r.added} · 갱신 ${r.updated}`);
     } catch (e) { toast("동기화 실패: " + e.message); }
+    finally { syncingAll = false; }
   }
 
   const moreBtn = $("#morebtn");
@@ -458,10 +468,14 @@ export function renderCatalog() {
       moreMenu.hidden = true; moreBtn.setAttribute("aria-expanded", "false");
       const act = b.dataset.act;
       if (act === "csv") downloadCsv(list, (pid) => HITS.get(pid));
-      else if (act === "none") removeAll();
+      else if (act === "none") removeAll("#morebtn");
       else if (act === "help") toast(QUERY_HELP, 6500);
       else if (act === "sync") doSyncAll();
-      else if (act === "board") toast("프로젝트를 먼저 고르세요 — 프로젝트 칩을 누르면 보드 링크가 생깁니다");
+      else if (act === "board") {
+        // 좁은 화면에서는 결과 줄의 보드 링크가 숨으므로 메뉴가 유일한 진입로다
+        if (App.project === "all") toast("프로젝트를 먼저 고르세요");
+        else location.hash = "#/board/" + encodeURIComponent(App.project);
+      }
     }));
   }
 
@@ -504,6 +518,7 @@ export function renderCatalog() {
     if (r.value === "color" && !App.refColor) { toast("카드의 ◎를 먼저 눌러 기준색을 잡아 주세요"); return; }
     App.sort = r.value;
     renderCatalog();
+    refocus(`input[name="sort"][value="${App.sort}"]`);   // 화살표로 계속 옮길 수 있게 초점 유지
   }));
   $$("[data-sel]").forEach((el) => {
     const card = el.closest(".card");
