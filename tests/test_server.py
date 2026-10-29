@@ -1537,3 +1537,24 @@ class TestSafety(Base):
         for name in ("DATA", "PATTERNS", "IMAGES", "THUMBS", "ORIG", "BACKUP", "TRASH", "PROPOSALS", "UI_STATE"):
             path = os.path.abspath(getattr(server, name))
             self.assertTrue(path.startswith(tmp), f"{name} 가 임시 폴더 밖을 가리킨다: {path}")
+
+
+class VarWorkTests(Base):
+    """v.work(컬러별 작업정보)가 저장·조회에서 보존되는지. 스키마는 추가만 — 서버는 손대지 않는다."""
+
+    def test_var_work_roundtrip(self):
+        doc = {
+            "id": "P-WORK", "project": "PJ",
+            "pattern": {"code": "P-WORK"},
+            "work": {"place": "미성통상", "worker": "김동훈 부장", "machine": "1호기"},
+            "variations": [
+                {"id": "v01", "images": []},
+                {"id": "v02", "images": [], "work": {"place": "API", "worker": "이석희", "volume": "5"}},
+            ],
+        }
+        self.write_pattern(doc)
+        st, r = self.req("GET", "/api/patterns")
+        self.assertEqual(st, 200, r)
+        got = next(x for x in r["patterns"] if x["id"] == "P-WORK")
+        self.assertEqual(got["variations"][1]["work"], {"place": "API", "worker": "이석희", "volume": "5"})
+        self.assertNotIn("work", got["variations"][0])
