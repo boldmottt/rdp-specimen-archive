@@ -304,11 +304,19 @@ export function renderCatalog() {
         <div class="resbar">
           <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
           ${App.project !== "all" ? `<a class="tool board-link" id="boardbtn" href="#/board/${encodeURIComponent(App.project)}" title="지금 프로젝트의 컬러 보드">${esc(App.project)} 컬러 보드 →</a>` : ""}
+          ${App.refColor ? (() => {
+            const rp = byId(App.refColor.pid), rv = rp && varOf(rp, App.refColor.vid);
+            const label = rp ? `${rp.pattern.code} ${rv ? vName(rv) : App.refColor.vid}` : App.refColor.vid;
+            return `<span class="refchip" title="색 가까운 순의 기준 — 사진에서 뽑은 대표색">
+              <i class="sw" style="background:${/^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
+              <b data-refgoto>${esc(label)}</b><button type="button" data-refclear aria-label="기준색 해제">×</button></span>`;
+          })() : ""}
           <div class="seg" role="radiogroup" aria-label="정렬">
             ${[["recent", "최근"], ["code", "코드"], ["color", "색"]].map(([v, label]) => {
               const off = v === "color" && !App.refColor;
+              const dot = v === "color" && App.refColor ? '<i class="sw dot"></i>' : "";
               return `<label class="segbtn${App.sort === v ? " on" : ""}${off ? " off" : ""}"${off ? ' title="카드의 ◎로 기준색을 고르세요"' : ""}>
-                <input type="radio" name="sort" value="${v}"${App.sort === v ? " checked" : ""}${off ? " disabled" : ""}>${label}</label>`;
+                <input type="radio" name="sort" value="${v}"${App.sort === v ? " checked" : ""}${off ? " disabled" : ""}>${dot}${label}</label>`;
             }).join("")}
           </div>
           <button class="tool" id="selall" title="지금 조건에 걸린 컬러만 제안서에 담기·빼기">${allIn ? `${hitCount}개 빼기` : `${hitCount}개 담기`}</button>
@@ -456,6 +464,18 @@ export function renderCatalog() {
     e.preventDefault(); e.stopPropagation();
     setRefColor(el.dataset.pid, el.dataset.ref).catch((err) => toast(err.message || "색을 읽지 못했습니다"));
   }));
+
+  // 기준색 칩: 누르면 기준 시편 카드로 이동, × 면 해제하고 최근순으로
+  const refGoto = document.querySelector("[data-refgoto]");
+  if (refGoto && App.refColor) refGoto.onclick = () => {
+    const card = document.querySelector(`.card[data-pid="${CSS.escape(App.refColor.pid)}"]`);
+    if (card) card.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+  const refClear = document.querySelector("[data-refclear]");
+  if (refClear) refClear.onclick = () => {
+    App.refColor = null; App.de = null; App.sort = "recent";
+    renderCatalog();
+  };
 
   // 정렬 세그먼트(라디오) — 화살표 키 이동은 브라우저가 해 준다
   $$('input[name="sort"]').forEach((r) => (r.onchange = () => {
