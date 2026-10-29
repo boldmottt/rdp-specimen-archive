@@ -159,7 +159,7 @@ function cardHTML(p) {
       <div class="card-body">
         <div class="card-title">${title}</div>
         <div class="card-meta">${meta}<button class="refdot" data-pid="${p.id}" data-ref="${v ? v.id : ""}"
-          title="이 컬러를 기준색으로 삼아 '색 가까운 순' 정렬">◎</button></div>
+          aria-label="이 색을 기준으로" title="이 컬러를 기준색으로 삼아 '색 가까운 순' 정렬">◎</button></div>
         <div class="vchips">${chips}</div>
       </div>
     </article>`);

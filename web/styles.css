@@ -579,7 +579,9 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .card .pick{position:absolute;right:10px;top:10px;z-index:3;width:24px;height:24px;border-radius:7px;
   border:1px solid rgba(255,255,255,.9);background:rgba(20,20,20,.35);color:#fff;font-size:12px;line-height:1;
   cursor:pointer;opacity:.42;transition:.15s;backdrop-filter:blur(4px)}
-.card:hover .pick,.card .pick.on,.card .pick:focus-visible{opacity:1}
+.card:hover .pick,.card .pick.on{opacity:1}
+/* Tab 으로 들어왔을 때도 보이게 — 투명한 버튼에 초점이 가면 키보드 사용자는 위치를 알 수 없다 */
+.card .pick:focus-visible{opacity:1}
 .card .pick.on{background:var(--ink);border-color:var(--ink)}
 .card.sel{box-shadow:0 0 0 2px var(--ink)}
 
