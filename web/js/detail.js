@@ -195,18 +195,22 @@ export function bindRecipePreviews(root, mixes) {
   });
 }
 
+/* 잉크 이름은 정식 코드(800MT)로 통일한다. 표시 순서는 rdp.db 7색 칼럼 순서를 따른다. */
+const INK_PRIORITY = ["800MT", "700BK", "100WH", "200YE-L", "300RD", "800CL", "200YE-D"];
+
 export function inkOrder(list) {
-  const PRIORITY = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
+  const canon = (n) => inkInfo(n)?.name || n;   // 옛 약칭(MT)이 섞여 있어도 정식명으로 줄 세운다
   return list.slice().sort((a, b) => {
-    const ia = PRIORITY.indexOf(a), ib = PRIORITY.indexOf(b);
+    const ca = canon(a), cb = canon(b);
+    const ia = INK_PRIORITY.indexOf(ca), ib = INK_PRIORITY.indexOf(cb);
     if (ia >= 0 && ib >= 0) return ia - ib;
     if (ia >= 0) return -1;
     if (ib >= 0) return 1;
-    return a.localeCompare(b);
+    return ca.localeCompare(cb);
   });
 }
 
-const DEFAULT_INKS = ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"];
+const DEFAULT_INKS = ["800MT", "700BK", "100WH", "200YE-L", "300RD", "800CL", "200YE-D"];
 
 export function inkPool() {
   const set = new Set(DEFAULT_INKS.concat(App.prop.inkTags || []));
