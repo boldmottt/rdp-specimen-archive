@@ -229,7 +229,7 @@ function cardHTML(p) {
         title="선택 (Shift 범위 · Cmd/Ctrl 하나씩)">✓</button>
       <a class="media" href="${href}" aria-label="${alt} 상세 보기">
         ${cardMedia(p, v)}
-        ${p.project ? html`<div class="badge">${p.project}</div>` : ""}
+        ${p.project && App.project === "all" ? html`<div class="badge">${p.project}</div>` : ""}
         ${colorMode ? html`<span class="de-badge" title="사진에서 뽑은 대표색 기준 — 측색값과 다를 수 있습니다"${bd ? "" : " hidden"}>
             <i class="sw ref" style="background:${App.refColor && /^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
             <i class="sw this" data-pid="${p.id}" data-vid="${v ? v.id : ""}"></i>

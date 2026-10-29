@@ -52,6 +52,23 @@ body.prop-mode .appnav{display:none}
 .stat b{display:block;font-size:20px;font-weight:600;letter-spacing:-.03em;line-height:1.1}
 .stat span{font-size:12px;color:var(--ink-3)}
 
+/* 히어로 압축 — 목록이 늦게 시작되는 가장 큰 원인이었다(390에서 약 188px).
+   1080 이하: 제목+통계 한 줄, 760 이하: 제목만(결과 줄의 '4장 · 8색'이 통계 역할을 대신) */
+@media screen and (max-width:1080px){
+  .hero{padding:14px 0 10px;gap:16px;align-items:center}
+  .toolbar{padding:14px 0 10px}
+  .hero h1{font-size:22px;margin:0}
+  .hero p{display:none}
+  .stats{gap:18px}
+  .stat b{font-size:17px}
+  .stat span{font-size:11px}
+}
+@media screen and (max-width:760px){
+  .hero{padding:10px 0 8px}
+  .hero h1{font-size:18px}
+  .hero .stats{display:none}
+}
+
 /* 툴바 = A(프로젝트 칩) + B(결과 줄). 정렬은 '보기 방식'이라 결과 수 옆에 둔다. */
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:22px 0 14px}
 .projrow{display:flex;gap:7px;flex-wrap:wrap;min-width:0}
@@ -88,7 +105,7 @@ body.prop-mode .appnav{display:none}
 .menu button:hover{background:var(--bg)}
 
 @media screen and (max-width:760px){
-  .toolbar{padding:14px 0 10px;gap:8px}
+  .toolbar{padding:10px 0 8px;gap:6px}
   /* A 는 한 줄 가로 스크롤(줄바꿈 없이), B 는 한 줄 고정 */
   .projrow{flex:1 1 100%;flex-wrap:nowrap;overflow-x:auto;min-width:0;scrollbar-width:none}
   .projrow::-webkit-scrollbar{display:none}
@@ -360,7 +377,8 @@ a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
 
 @media screen and (max-width:1080px){
   .detail{grid-template-columns:minmax(0,1fr);gap:26px}
-  .hero{flex-direction:column;align-items:flex-start;gap:20px}
+  /* 히어로는 제목+통계 한 줄 유지(세로로 쌓으면 목록이 늦게 시작된다) */
+  .hero{flex-direction:row;align-items:center;gap:16px}
 }
 @media screen and (max-width:760px){
   .topbar-in,.wrap{padding-left:16px;padding-right:16px}
@@ -370,8 +388,8 @@ a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
   .search{flex:1 1 110px;width:auto;order:5}
   .search input{height:34px}
   .topbar .ghost{order:6;padding:0 9px;height:34px;font-size:12px;margin-left:0!important}
-  .hero{padding-top:30px}
-  .hero h1{font-size:26px}
+  .hero{padding:10px 0 8px}
+  .hero h1{font-size:18px}
   .grid{grid-template-columns:1fr;gap:18px}
   .drawer{width:100vw}
   .d-head-row{flex-wrap:wrap;align-items:flex-start;gap:16px}
