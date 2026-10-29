@@ -36,3 +36,45 @@ test("isNewValue — 기존 값에 없으면 true(저장은 막지 않음)", () 
   assert.equal(isNewValue("hyundai", ["HYUNDAI"]), false);
   assert.equal(isNewValue("", ["HYUNDAI"]), false);
 });
+
+/* --- 자동 태그(파생) --- */
+import { autoFacets } from "../web/js/facets.js";
+
+const pats2 = () => ([
+  { id: "A", client: "현대자동차", pattern: { code: "G-1" }, work: { place: "미성통상" },
+    variations: [{ id: "v1", layerPlates: { "1도": "x", "2도": "y" } }, { id: "v2", layerPlates: { "1도": "x" } }] },
+  { id: "B", client: "HYUNDAI", pattern: { code: "M-2" }, work: {},
+    variations: [{ id: "v1", layerPlates: { "1도": "x" }, work: { place: "API" } }] },
+  { id: "C", client: "미정", pattern: { code: "M-3" }, work: {}, variations: [{ id: "v1" }] },
+]);
+const wf = (p, v) => ({ ...(p.work || {}), ...((v || {}).work || {}) });
+
+test("autoFacets — 종류별 값과 개수", () => {
+  const f = autoFacets(pats2(), wf);
+  const byKind = Object.fromEntries(f.map((x) => [x.kind, x]));
+  assert.deepEqual(byKind.code.values.map((v) => `${v.val}:${v.n}`), ["M:2", "G:1"]);
+  assert.deepEqual(byKind.client.values.map((v) => `${v.val}:${v.n}`), ["현대자동차:1", "HYUNDAI:1"]);
+  // 작업장소는 컬러 단위로 센다(A 는 두 컬러 모두 공통값 미성통상 → 2)
+  assert.deepEqual(byKind.place.values.map((v) => `${v.val}:${v.n}`), ["미성통상:2", "API:1"]);
+  assert.deepEqual(byKind.layers.values.map((v) => v.val), ["1도"]);
+});
+
+test("autoFacets — 빈 값과 미정은 칩을 만들지 않는다", () => {
+  const f = autoFacets(pats2(), wf);
+  const clients = f.find((x) => x.kind === "client").values.map((v) => v.val);
+  assert.ok(!clients.includes("미정"));
+});
+
+test("autoFacets — 값이 1종류뿐인 종류는 숨긴다", () => {
+  const one = [{ client: "현대자동차", pattern: { code: "G-1" }, variations: [{ id: "v1", layerPlates: { "1도": "x" } }] }];
+  const kinds = autoFacets(one, wf).map((x) => x.kind);
+  assert.ok(!kinds.includes("code"), "전부 G 하나면 계열은 숨김");
+  assert.ok(!kinds.includes("client"));
+  assert.ok(!kinds.includes("layers"));
+});
+
+test("autoFacets — 종류별 상한(topPerKind)", () => {
+  const many = Array.from({ length: 10 }, (_, i) => ({ client: `고객${i}`, pattern: { code: `G-${i}` }, variations: [{ id: "v1" }] }));
+  const f = autoFacets(many, wf, 6).find((x) => x.kind === "client");
+  assert.equal(f.values.length, 6);
+});

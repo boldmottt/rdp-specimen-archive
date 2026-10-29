@@ -44,3 +44,57 @@ export function isNewValue(value, known) {
   if (!s) return false;
   return !(known || []).some((k) => String(k).toLowerCase() === s.toLowerCase());
 }
+
+/* ---------------- 자동 태그 (파생) ----------------
+ * 필드 값을 태그로 '저장'하지 않고 읽을 때 계산한다. 값이 바뀌면 태그도 저절로 바뀐다.
+ * 프로젝트는 여기서 만들지 않는다(A줄 프로젝트 칩과 @가 이미 있다).
+ */
+const EMPTY_VALS = ["", "미정", "-", "—"];
+
+/** 도수 개수 → 표시 이름 */
+const layerLabel = (n) => `${n}도`;
+
+/**
+ * @returns [{kind, label, values:[{val, n, token}]}] — 빈 값 제외, 값이 1종류뿐인 종류는 숨김
+ */
+export function autoFacets(patterns, workOf, topPerKind = 6) {
+  const kinds = [
+    { kind: "code", label: "계열", unit: "pattern" },
+    { kind: "client", label: "고객사", unit: "pattern" },
+    { kind: "place", label: "작업장소", unit: "color" },
+    { kind: "layers", label: "도수", unit: "color" },
+  ];
+  const out = [];
+  kinds.forEach(({ kind, label, unit }) => {
+    const cnt = new Map();
+    (patterns || []).forEach((p) => {
+      if (unit === "pattern") {
+        let val = "";
+        if (kind === "code") {
+          const code = String((p.pattern || {}).code || "");
+          val = code.includes("-") ? code.split("-")[0] : code.slice(0, 3);
+        } else {
+          val = (p.client || (p.label || {}).company || "");
+        }
+        val = String(val).trim();
+        if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1);
+        return;
+      }
+      (p.variations || []).forEach((v) => {
+        let val = "";
+        if (kind === "place") val = String((workOf ? workOf(p, v) : (p.work || {})).place || "").trim();
+        else {
+          const n = Object.keys((v || {}).layerPlates || {}).length;
+          val = n ? layerLabel(n) : "";
+        }
+        if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1);
+      });
+    });
+    if (cnt.size < 2) return;                       // 한 종류뿐이면 걸러낼 의미가 없다
+    const values = [...cnt].map(([val, n]) => ({ val, n }))
+      .sort((a, b) => b.n - a.n || a.val.localeCompare(b.val, "ko"))
+      .slice(0, topPerKind);
+    out.push({ kind, label, values });
+  });
+  return out;
+}
