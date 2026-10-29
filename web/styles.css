@@ -575,6 +575,15 @@ textarea.inline-input{min-height:64px;resize:vertical}
 @media screen and (max-width:500px){.recipe-form{grid-template-columns:1fr}.recipe-preview{padding:16px}}
 @media print{.recipe-preview{display:none!important}}
 
+/* 저장된 검색(스마트 폴더) 줄 */
+.sfbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 10px}
+.sfbar .tb-lbl{font-size:11px;letter-spacing:.08em;color:var(--ink-3);margin-right:2px}
+.chip.sf{display:inline-flex;align-items:center;gap:6px;padding:5px 8px 5px 12px;font-size:12px}
+.chip.sf .sf-name{font-weight:600;cursor:pointer}
+.chip.sf .sf-del{border:0;background:none;color:var(--ink-3);font-size:13px;line-height:1;cursor:pointer;padding:0 2px}
+.chip.sf .sf-del:hover{color:var(--ink)}
+.tool.mini{padding:6px 11px;font-size:12px}
+
 /* 태그 칩 줄 — 누르면 #태그 가 검색창에 들어가고, 다시 누르면 빠진다 (web/js/search.js) */
 .tagbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 14px}
 .tagbar .tb-lbl{font-size:11px;letter-spacing:.08em;color:var(--ink-3);margin-right:2px}

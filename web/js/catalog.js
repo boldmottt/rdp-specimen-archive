@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 // 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
 import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, QUERY_HELP } from "./search.js";
@@ -124,6 +124,20 @@ export function renderCatalog() {
   const totalVar = App.patterns.reduce((a, p) => a + (p.variations || []).length, 0);
   const totalMix = App.patterns.reduce((a, p) => a + (p.variations || []).reduce((b, v) => b + (v.mixes || []).length, 0), 0);
 
+  // 저장된 검색(스마트 폴더) 줄 — 지금 조건을 이름 붙여 저장한다.
+  //   폴더를 바꿀 때만 saveSmart() 로 서버에 보낸다(장바구니 저장이 남의 목록을 덮지 않게).
+  const sfbar = (() => {
+    const fs = App.smartFolders || [];
+    const chips = fs.map((f) => {
+      const on = f.q === App.q && f.project === App.project;
+      return `<span class="chip sf${on ? " on" : ""}" data-sf="${esc(f.id)}">` +
+        `<b class="sf-name" title="눌러서 적용 · 두 번 눌러 이름 바꾸기">${esc(f.name)}</b>` +
+        `<button class="sf-del" title="저장된 검색 지우기" aria-label="${esc(f.name)} 지우기">×</button></span>`;
+    }).join("");
+    return `<div class="sfbar"><span class="tb-lbl">저장</span>${chips}` +
+      `<button class="tool mini" id="sf-save" title="지금 검색 조건을 이름 붙여 저장">＋ 현재 조건 저장</button></div>`;
+  })();
+
   // 태그 칩 줄 — 지금 프로젝트 범위에서 많이 쓴 태그부터. 누르면 #태그 가 검색창에 들어간다.
   const tagbar = (() => {
     const tags = tagCounts(App.patterns, App.project).slice(0, 18);
@@ -155,6 +169,7 @@ export function renderCatalog() {
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
         </select></div>
       </div>
+      ${sfbar}
       ${tagbar}
       ${list.length ? `<div class="grid">${list.map(cardHTML).join("")}</div>`
       : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
@@ -172,6 +187,40 @@ export function renderCatalog() {
   $$("[data-tag]").forEach((el) => (el.onclick = () => { toggleTag(el.dataset.tag); syncSearch(); }));
   const qhelp = $("#qhelp");
   if (qhelp) qhelp.onclick = () => toast(QUERY_HELP, 6500);
+
+  // 저장된 검색: 저장 / 적용 / 이름 변경 / 삭제
+  const sfSave = $("#sf-save");
+  if (sfSave) sfSave.onclick = () => {
+    const dflt = App.q.trim() || (App.project !== "all" ? App.project : "저장된 검색");
+    const name = (prompt("저장할 이름", dflt) || "").trim();
+    if (!name) return;
+    App.smartFolders.push({
+      id: "sf" + Date.now().toString(36), name,
+      q: App.q, project: App.project,
+      sort: App.sort === "code" ? "code" : "recent",   // 색 정렬은 기준색이 저장되지 않으므로 최근순으로
+    });
+    saveSmart(); renderCatalog(); toast("저장했습니다");
+  };
+  $$("[data-sf]").forEach((el) => {
+    const f = (App.smartFolders || []).find((x) => x.id === el.dataset.sf);
+    if (!f) return;
+    const nm = el.querySelector(".sf-name");
+    nm.onclick = () => {
+      App.q = f.q || ""; App.project = f.project || "all"; App.sort = f.sort || "recent";
+      const box = $("#search"); if (box) box.value = App.q;
+      renderCatalog();
+    };
+    nm.ondblclick = () => {
+      const n = (prompt("새 이름", f.name) || "").trim();
+      if (n && n !== f.name) { f.name = n; saveSmart(); renderCatalog(); }
+    };
+    el.querySelector(".sf-del").onclick = (e) => {
+      e.stopPropagation();
+      if (!confirm(`'${f.name}' 저장된 검색을 지울까요?`)) return;
+      App.smartFolders = (App.smartFolders || []).filter((x) => x.id !== f.id);
+      saveSmart(); renderCatalog();
+    };
+  });
   const btnAll = $("#selall");
   if (btnAll) btnAll.onclick = () => {
     filtered();                                   // HITS 를 지금 조건으로 다시 채운다

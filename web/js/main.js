@@ -61,6 +61,16 @@ async function boot() {
         if (Array.isArray(ui.state.cart)) App.cart = ui.state.cart;
         if (ui.state.prop) App.prop = Object.assign(App.prop, ui.state.prop);
       }
+      // 저장된 검색은 서버가 정본(여러 탭·다른 PC 와 맞추기 위해). rev 가 더 크면 서버 것을 쓴다.
+      const sfServerRev = Number(ui.state.smartFoldersRev || 0);
+      if (Array.isArray(ui.state.smartFolders) && sfServerRev > Number(App.sfRev || 0)) {
+        App.smartFolders = ui.state.smartFolders;
+        App.sfRev = sfServerRev;
+        localStorage.setItem("rdp2-smart", JSON.stringify(App.smartFolders));
+        localStorage.setItem("rdp2-sfrev", String(App.sfRev));
+      } else if (sfServerRev > Number(App.sfRev || 0)) {
+        App.sfRev = sfServerRev;
+      }
     }
   } catch (e) {}
 

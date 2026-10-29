@@ -317,6 +317,63 @@ def _str_list(x):
     return x, True
 
 
+# ---------------------------------------------------------------- 화면 상태(_ui/state.json)
+# 장바구니만 저장하는 PUT 이 저장된 검색(스마트 폴더)을 지우지 않도록, "받은 키만" 덮어쓴다.
+# 저장된 검색은 여러 탭/PC 에서 동시에 바뀔 수 있어 rev 로 충돌을 본다(늦게 저장한 쪽이 남의 것을 덮지 않게).
+UI_KEYS = ("cart", "prop", "ts", "smartFolders", "smartFoldersRev")
+
+
+class UIStateConflict(Exception):
+    """다른 곳에서 먼저 바뀐 저장된 검색을 덮어쓰려 할 때."""
+
+
+def clean_smart_folders(x) -> list:
+    """저장된 검색 목록을 저장 가능한 모양으로 다듬는다(이상한 값은 버린다)."""
+    out = []
+    for f in (x if isinstance(x, list) else [])[:80]:
+        if not isinstance(f, dict):
+            continue
+        fid = str(f.get("id") or "")[:40]
+        name = str(f.get("name") or "").strip()[:60]
+        if not fid or not name:
+            continue
+        sort = f.get("sort") if f.get("sort") in ("recent", "code") else "recent"
+        out.append({
+            "id": fid,
+            "name": name,
+            "q": str(f.get("q") or "")[:300],
+            "project": str(f.get("project") or "all")[:80],
+            "sort": sort,
+        })
+    return out
+
+
+def merge_ui_state(cur, body) -> dict:
+    """지금 파일 내용(cur)에 요청 본문(body)의 키만 얹는다.
+    smartFolders 가 들어오면 smartFoldersRev 를 검사해 충돌이면 UIStateConflict."""
+    out = dict(cur) if isinstance(cur, dict) else {}
+    for k in ("cart", "prop", "ts"):
+        if isinstance(body, dict) and k in body:
+            out[k] = body[k]
+    if isinstance(body, dict) and "smartFolders" in body:
+        have = out.get("smartFoldersRev")
+        try:
+            have = int(have or 0)
+        except (TypeError, ValueError):
+            have = 0
+        want = body.get("smartFoldersRev")
+        if want is not None:
+            try:
+                want = int(want)
+            except (TypeError, ValueError):
+                want = None
+        if want is not None and want != have:
+            raise UIStateConflict(f"저장된 검색이 다른 곳에서 먼저 바뀌었습니다 (rev {have})")
+        out["smartFolders"] = clean_smart_folders(body["smartFolders"])
+        out["smartFoldersRev"] = have + 1
+    return out
+
+
 def normalize_shape(doc: dict, coerce: bool = False) -> list:
     """화면이 기대하는 뼈대를 맞춘다: label·work는 객체, 동판·태그·도장은 목록.
     빠진 칸은 빈 값으로 채우고(doc을 바꿈), 형식이 틀린 칸은 목록으로 돌려준다.
@@ -2083,11 +2140,24 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/ui":
                 raw = self.read_body()
                 try:
-                    state = json.loads(raw.decode("utf-8"))
+                    body = json.loads(raw.decode("utf-8"))
                 except Exception as e:
                     return self.error(400, f"JSON 파싱 실패: {e}")
-                atomic_write(UI_STATE, json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8"))
-                return self.json({"ok": True})
+                if not isinstance(body, dict):
+                    return self.error(400, "UI 상태는 객체여야 합니다")
+                cur = {}
+                if os.path.exists(UI_STATE):
+                    try:
+                        with open(UI_STATE, encoding="utf-8") as f:
+                            cur = json.load(f)
+                    except Exception:
+                        cur = {}
+                try:
+                    merged = merge_ui_state(cur, body)
+                except UIStateConflict as e:
+                    return self.error(409, str(e))
+                atomic_write(UI_STATE, json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8"))
+                return self.json({"ok": True, "state": merged})
             if p.startswith("/api/patterns/"):
                 pid = p[len("/api/patterns/"):].strip("/")
                 return self.save_pattern(pid)

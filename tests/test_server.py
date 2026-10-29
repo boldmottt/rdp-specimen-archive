@@ -1424,3 +1424,39 @@ class AccessTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UiStateTests(Base):
+    """저장된 검색(_ui/state.json) — 장바구니 저장이 폴더를 지우지 않고, rev 로 충돌을 본다."""
+
+    SF = [{"id": "sf1", "name": "세미나", "q": "#컬러세미나 -@MQ5", "project": "all", "sort": "recent"}]
+
+    def test_folders_saved_and_not_wiped_by_cart_only_save(self):
+        st, r = self.req("PUT", "/api/ui", {"cart": [], "prop": {}, "ts": 1, "smartFolders": self.SF, "smartFoldersRev": 0})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["state"]["smartFoldersRev"], 1)
+        # 장바구니만 저장 → 폴더는 그대로 (예전에는 파일 전체를 덮어써서 지워졌다)
+        st, _ = self.req("PUT", "/api/ui", {"cart": [{"pid": "A", "vid": "v01"}], "ts": 2})
+        self.assertEqual(st, 200)
+        st, r = self.req("GET", "/api/ui")
+        self.assertEqual(r["state"]["smartFolders"], self.SF)
+        self.assertEqual(r["state"]["cart"], [{"pid": "A", "vid": "v01"}])
+
+    def test_stale_rev_is_rejected(self):
+        self.req("PUT", "/api/ui", {"smartFolders": self.SF, "smartFoldersRev": 0})
+        # 같은 rev(0)로 다시 저장 시도 = 낡은 사본 → 409 로 막고, 저장된 값은 그대로
+        st, r = self.req("PUT", "/api/ui", {"smartFolders": [], "smartFoldersRev": 0})
+        self.assertEqual(st, 409, r)
+        st, r = self.req("GET", "/api/ui")
+        self.assertEqual(len(r["state"]["smartFolders"]), 1)
+
+    def test_junk_folders_are_dropped(self):
+        junk = [{"id": "", "name": "이름없음"}, {"id": "ok", "name": "  정상  ", "sort": "이상한값",
+                 "q": "x" * 400}, "문자열", {"id": "no-name", "name": "   "}]
+        st, r = self.req("PUT", "/api/ui", {"smartFolders": junk, "smartFoldersRev": 0})
+        self.assertEqual(st, 200, r)
+        got = r["state"]["smartFolders"]
+        self.assertEqual(len(got), 1, got)
+        self.assertEqual(got[0]["name"], "정상")
+        self.assertEqual(got[0]["sort"], "recent")
+        self.assertEqual(len(got[0]["q"]), 300)

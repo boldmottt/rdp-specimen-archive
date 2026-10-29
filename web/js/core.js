@@ -28,6 +28,12 @@ export const App = {
   config: {},
   q: "", project: "all", sort: "recent",
   cart: [],
+  // 저장된 검색(스마트 폴더) — sfRev 는 서버와 맞추는 버전. sfDirty 는 "폴더가 바뀌어 저장이 필요" 표시
+  smartFolders: [], sfRev: 0, sfDirty: false,
+  // 2단계: 편집용 선택(패턴 id 집합). 장바구니(cart)와는 별개 축이다
+  sel: new Set(),
+  // 3단계: 색 정렬 기준색과 컬러별 ΔE
+  refColor: null, colors: null, de: null,
   prop: { title: "RDP 패턴 제안", client: "", date: "", by: "", comments: {}, showMix: false, showComments: false, note: "", inkTags: [] },
   edit: null,
   meeting: false,
@@ -36,24 +42,51 @@ export const App = {
 
 const LS_CART = "rdp2-cart";
 const LS_PROP = "rdp2-prop";
+const LS_SMART = "rdp2-smart";
+const LS_SFREV = "rdp2-sfrev";
 
 export function loadLS() {
   try { App.cart = JSON.parse(localStorage.getItem(LS_CART)) || []; } catch (e) { App.cart = []; }
   try { App.prop = Object.assign(App.prop, JSON.parse(localStorage.getItem(LS_PROP)) || {}); } catch (e) {}
   try { App.meeting = !!JSON.parse(localStorage.getItem("rdp2-meeting") || "false"); } catch (e) {}
+  try { App.smartFolders = JSON.parse(localStorage.getItem(LS_SMART)) || []; } catch (e) { App.smartFolders = []; }
+  try { App.sfRev = Number(localStorage.getItem(LS_SFREV) || 0) || 0; } catch (e) { App.sfRev = 0; }
 }
+
 let uiTimer = null;
 export function saveLS() {
   try { localStorage.setItem(LS_CART, JSON.stringify(App.cart)); } catch (e) {}
   try { localStorage.setItem(LS_PROP, JSON.stringify(App.prop)); } catch (e) {}
   try { localStorage.setItem("rdp2-meeting", JSON.stringify(!!App.meeting)); } catch (e) {}
+  try { localStorage.setItem(LS_SMART, JSON.stringify(App.smartFolders)); } catch (e) {}
+  try { localStorage.setItem(LS_SFREV, String(App.sfRev || 0)); } catch (e) {}
   clearTimeout(uiTimer);
-  uiTimer = setTimeout(() => {
-    fetch("/api/ui", {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cart: App.cart, prop: App.prop, ts: (App.prop.ts = Date.now()) }),
-    }).catch(() => {});
-  }, 400);
+  uiTimer = setTimeout(pushUiState, 400);
+}
+
+/* 폴더를 바꿨을 때만 부른다 — 장바구니 저장이 남의 폴더 목록을 덮지 않게 하려고
+   smartFolders 는 "바뀐 경우에만" 서버로 보낸다(sfDirty). */
+export function saveSmart() {
+  App.sfDirty = true;
+  saveLS();
+}
+
+function pushUiState() {
+  const body = { cart: App.cart, prop: App.prop, ts: (App.prop.ts = Date.now()) };
+  const withFolders = !!App.sfDirty;
+  if (withFolders) { body.smartFolders = App.smartFolders; body.smartFoldersRev = App.sfRev || 0; }
+  fetch("/api/ui", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }).then(async (r) => {
+    if (r.status === 409) { toast("저장된 검색이 다른 곳에서 먼저 바뀌었습니다 — 새로고침 후 다시 해주세요"); return; }
+    if (!r.ok) return;
+    if (!withFolders) return;
+    App.sfDirty = false;
+    try {
+      const j = await r.json();
+      if (j && j.state) { App.sfRev = Number(j.state.smartFoldersRev || 0) || 0; localStorage.setItem(LS_SFREV, String(App.sfRev)); }
+    } catch (e) {}
+  }).catch(() => {});
 }
 
 /* ---------------- api ---------------- */
