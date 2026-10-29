@@ -6,11 +6,12 @@ import { renderCart } from "./proposal.js";
 // 태그 자동완성 — 기존 태그를 골라 넣게 한다 (web/js/search.js)
 import { bindTagInput } from "./search.js";
 import { valueCounts, canonical, isNewValue } from "./facets.js";
+import { WORK_VAR_KEYS, WORK_PATTERN_KEYS, cleanVarWork, overrides } from "./work.js";
 import { startCrop } from "./crop.js";
 import { rerender } from "./main.js";
 
 /* ---------------- editor drawer ---------------- */
-export const E = { draft: null, vIdx: 0, tab: "base", pid: null, isNew: false, msg: "" };
+export const E = { draft: null, vIdx: 0, tab: "base", pid: null, isNew: false, msg: "", workMode: "all" };
 
 export function openEditor(pid, vid) {
   E.isNew = !pid;
@@ -20,7 +21,7 @@ export function openEditor(pid, vid) {
   if (pid) { delete E.draft._file; delete E.draft._mtime; }
   E.vIdx = Math.max(0, E.draft.variations.findIndex((v) => v.id === vid));
   if (E.vIdx < 0) E.vIdx = 0;
-  E.tab = "base"; E.msg = ""; E.origJson = JSON.stringify(E.draft); E.jsonErr = null;
+  E.tab = "base"; E.workMode = "all"; E.msg = ""; E.origJson = JSON.stringify(E.draft); E.jsonErr = null;
   $("#drawer-title").textContent = pid ? byId(pid).pattern.code + " 편집" : "새 시편";
   syncTabs();
   renderDrawer();
@@ -172,6 +173,67 @@ function renderVars() {
   }));
 }
 
+/* 작업 정보 — 공통(패턴) | 이 컬러(베리에이션).
+   장소·작업자·설비·수량은 컬러별로 다를 수 있다(같은 패턴이라도 다른 날·다른 곳에서 작업).
+   SOP·엠보·패드·동판은 패턴 공통으로 남긴다. 작업일자는 이미 컬러별(v.date)이다. */
+const WORK_LABELS = { place: "작업 장소", worker: "작업자", machine: "설비", volume: "생산 수량", sop: "양산 일정", emboss: "엠보", pad: "패드", plate: "동판" };
+
+function workModeLabel() {
+  if (E.workMode !== "var") return "";
+  const v = (E.draft.variations || [])[E.vIdx];
+  return `<span class="wm-note">· 이 컬러(${esc(v ? vName(v) : "")}) 값</span>`;
+}
+
+function workModeButtons() {
+  const on = (m) => (E.workMode === m ? " on" : "");
+  return `<div class="wm-seg" role="group" aria-label="작업 정보 범위">
+      <button type="button" data-workmode="all" class="wm-btn${on("all")}">공통</button>
+      <button type="button" data-workmode="var" class="wm-btn${on("var")}">이 컬러만</button>
+    </div>`;
+}
+
+function workRows() {
+  const d = E.draft;
+  const v = (d.variations || [])[E.vIdx] || {};
+  const base = d.work || {};
+  const over = v.work || {};
+  const head = workModeButtons();
+
+  if (E.workMode === "var") {
+    const rows = WORK_VAR_KEYS.map((k) => {
+      const val = over[k] == null ? "" : String(over[k]);
+      const inherited = base[k] == null ? "" : String(base[k]);
+      const own = val.trim() !== "";
+      return `<div class="field-row">
+          <label>${WORK_LABELS[k] || k}</label>
+          <input data-k="variations.${E.vIdx}.work.${k}" value="${esc(val)}"
+                 placeholder="${esc(inherited || "공통값 없음")}">
+          ${own ? `<button type="button" class="wm-clear" data-clearwork="${k}" title="이 컬러 값을 지우고 공통값을 씁니다">× 공통으로</button>` : ""}
+        </div>`;
+    }).join("");
+    const fixed = WORK_PATTERN_KEYS.filter((k) => k !== "plate").map((k) => `<div class="field-row is-locked">
+        <label>${WORK_LABELS[k] || k}</label><input value="${esc(base[k] || "")}" disabled>
+      </div>`).join("");
+    return `${head}<p class="wm-hint">비우면 공통값을 씁니다. 아래 항목은 패턴 공통입니다.</p>${rows}${fixed}
+      <div class="field-row is-locked"><label>동판</label><input value="${esc((base.plate || []).join(", "))}" disabled></div>`;
+  }
+
+  // 공통 모드 — 지금 값 + 컬러가 덮어쓴 개수 안내
+  const note = (k) => {
+    const n = overrides([{ variations: (d.variations || []) }], k);
+    return n ? `<div class="field-note">컬러 ${n}개는 다른 값</div>` : "";
+  };
+  return `${head}
+    ${fieldRow("작업 장소", "work.place")}${note("place")}
+    ${fieldRow("작업자", "work.worker")}${note("worker")}
+    ${fieldRow("설비", "work.machine")}${note("machine")}
+    ${fieldRow("동판", "work.plate", { ph: "26_027, 26_045" })}
+    <div class="field-row"><label>엠보</label><input data-k="work.emboss" list="emboss-list" value="${esc((d.work && d.work.emboss) || "")}" placeholder="평엠보 · 사용한 값은 다시 고를 수 있습니다"><datalist id="emboss-list">${Array.from(new Set(App.patterns.flatMap((pp) => [(pp.work || {}).emboss]).filter(Boolean))).map((x) => `<option value="${esc(x)}">`).join("")}</datalist></div>
+    ${fieldRow("패드", "work.pad")}
+    ${fieldRow("양산 일정", "work.sop", { ph: "2027-01" })}
+    ${fieldRow("생산 수량", "work.volume")}${note("volume")}`;
+}
+
 export function renderDrawer() {
   const d = E.draft;
   renderVars();
@@ -194,15 +256,8 @@ export function renderDrawer() {
         ${fieldRow("구분", "label.type", { ph: "Padprint Layer 1" })}
         ${fieldRow("공급사", "label.supplier", { ph: "NIFCO KOREA" })}
         ${fieldRow("비고", "label.remark")}
-        <div class="sec-label">작업</div>
-        ${fieldRow("작업 장소", "work.place")}
-        ${fieldRow("작업자", "work.worker")}
-        ${fieldRow("설비", "work.machine")}
-        ${fieldRow("동판", "work.plate", { ph: "26_027, 26_045" })}
-        <div class="field-row"><label>엠보</label><input data-k="work.emboss" list="emboss-list" value="${esc((E.draft.work && E.draft.work.emboss) || "")}" placeholder="평엠보 · 사용한 값은 다시 고를 수 있습니다"><datalist id="emboss-list">${Array.from(new Set(App.patterns.flatMap((pp) => [(pp.work || {}).emboss]).filter(Boolean))).map((x) => `<option value="${esc(x)}">`).join("")}</datalist></div>
-        ${fieldRow("패드", "work.pad")}
-        ${fieldRow("양산 일정", "work.sop", { ph: "2027-01" })}
-        ${fieldRow("생산 수량", "work.volume")}
+        <div class="sec-label">작업 ${workModeLabel()}</div>
+        ${workRows()}
         ${E.isNew ? "" : `<div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line)"><button class="mini-btn danger" id="del-pattern">이 시편 삭제</button> <span style="font-size:11px;color:#8d9198">삭제하면 _trash로 이동합니다</span></div>`}`;
   }
 
@@ -375,6 +430,17 @@ export function renderDrawer() {
   }
 
   $("#drawer-body").innerHTML = body;
+  $$("#drawer-body [data-workmode]").forEach((b) => (b.onclick = () => {
+    E.workMode = b.dataset.workmode;
+    renderDrawer();
+  }));
+  $$("#drawer-body [data-clearwork]").forEach((b) => (b.onclick = () => {
+    const v = (E.draft.variations || [])[E.vIdx];
+    if (!v || !v.work) return;
+    delete v.work[b.dataset.clearwork];
+    if (!Object.keys(v.work).length) delete v.work;
+    renderDrawer();
+  }));
   // 고객사: 기존 값이면 자동완성 후보, 없으면 안내(저장은 막지 않는다)
   {
     const clientInput = $('#drawer-body [data-k="client"]');
@@ -874,6 +940,12 @@ const jsonShapeError = (x) => (!x || typeof x !== "object" || Array.isArray(x) ?
 export async function saveDraft() {
   if (!E.draft) return;
   let d = E.draft;
+  // 컬러별 작업정보 정리 — 빈 값·공통값과 같은 값은 지우고, 남는 게 없으면 키 자체를 지운다
+  (d.variations || []).forEach((v) => {
+    if (!v || !v.work) return;
+    const cleaned = cleanVarWork(v.work, d.work || {});
+    if (cleaned) v.work = cleaned; else delete v.work;
+  });
   try {
     if (E.tab === "json" && $("#jsonarea")) {
       let parsed;
