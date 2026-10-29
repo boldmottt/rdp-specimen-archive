@@ -14,6 +14,8 @@ import { $, App, apiGet, html, vName } from "./core.js";
 const hexOf = (c) => (c && /^#[0-9a-f]{6}$/i.test(c.hex || "") ? c.hex : "#eee");
 
 export async function renderBoard(proj) {
+  // 지금 열려 있는 주소를 기억해 둔다 — 색을 받는 동안 다른 보드로 옮겼는지 비교하려고
+  const want = location.hash;
   document.body.classList.remove("prop-mode");
   document.body.classList.add("board-mode");
 
@@ -38,8 +40,9 @@ export async function renderBoard(proj) {
       </div>`;
   }));
 
-  // 색을 받는 동안 사용자가 다른 화면으로 갔으면 그리지 않는다(뒤늦게 목차를 덮어쓰던 문제)
-  if (!location.hash.startsWith("#/board/")) return;
+  // 색을 받는 동안 화면이 바뀌었으면(다른 보드 포함) 그리지 않는다.
+  //   #/board/ 인지만 보면 MQ5 → NKO 로 빠르게 옮겼을 때 늦게 도착한 MQ5 가 NKO 를 덮어쓴다.
+  if (location.hash !== want) return;
 
   $("#view").innerHTML = String(html`<div class="wrap board">
       <div class="bd-head">
