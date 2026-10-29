@@ -168,6 +168,9 @@ export async function apiPut(path, body, rev, create, renameFrom) {
     err.status = 409; err.payload = j; throw err;
   }
   if (!r.ok || j.ok === false) throw new Error((j.errors || [j.error || "저장 실패"]).join(", "));
+  // 시편 저장으로 이미지 목록이 바뀌었을 수 있다(사진 빼기·교체). 색 캐시를 버려 다음에 다시 받는다.
+  // (apiPut 은 편집기 저장의 단일 통로다 — editor.js 를 건드리지 않고 여기서 처리한다)
+  if (String(path).startsWith("/api/patterns/")) invalidateColors(decodeURIComponent(String(path).slice("/api/patterns/".length)));
   return j;
 }
 export async function apiDelete(path, rev) {
@@ -176,15 +179,24 @@ export async function apiDelete(path, rev) {
   if (!r.ok) throw new Error(j.message || j.error || "삭제 실패");
   return j;
 }
-export async function apiUpload(pid, vid, slot, blob, crop) {
-  // 사진이 바뀌면 서버 대표색도 바뀐다 → 한 번 받아 둔 색 목록을 버려 다음에 다시 받는다
+/* 사진이 바뀌면(추가·교체·삭제) 서버 대표색도 바뀐다 → 받아 둔 색·ΔE 를 버린다.
+   업로드는 apiUpload, 삭제·교체는 시편 저장(PUT) 뒤에 확정되므로 성공한 뒤에 부른다.
+   기준색이 그 사진이었으면 기준색도 지운다(없는 사진으로 정렬하면 순서가 무의미해진다). */
+export function invalidateColors(pid, vid) {
   App.colors = null;
+  App.de = null;
+  const r = App.refColor;
+  if (r && (!pid || r.pid === pid) && (!vid || r.vid === vid)) App.refColor = null;
+}
+
+export async function apiUpload(pid, vid, slot, blob, crop) {
   const q = crop ? `?slot=${slot}&x=${crop.x}&y=${crop.y}&w=${crop.w}&h=${crop.h}` : `?slot=${slot}`;
   const r = await fetch(`/api/image/${encodeURIComponent(pid)}/${encodeURIComponent(vid)}${q}`, {
     method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: blob,
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.ok === false) throw new Error(j.error || "업로드 실패");
+  invalidateColors(pid, vid);        // 성공한 뒤에 버린다 — 업로드 중에 받은 색을 다시 캐시하지 않게
   return j;
 }
 
