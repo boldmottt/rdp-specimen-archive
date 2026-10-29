@@ -15,6 +15,9 @@ export const HITS = new Map();
 function filtered() {
   // 기준색이 없으면 '색 가까운 순'은 아무 순서나 된다 → 최근순으로 되돌린다
   if (App.sort === "color" && !App.refColor) App.sort = "recent";
+  // 기준색은 있는데 ΔE 표가 비었으면(저장 직후 캐시를 버렸을 때) 정렬하지 않는다.
+  //   드롭다운은 '색 가까운 순'인데 실제로는 원래 순서인 상태를 만들지 않기 위해.
+  const sortMode = App.sort === "color" && !App.de ? "recent" : App.sort;
   const Q = parseQuery(App.q);
   HITS.clear();
   const list = App.patterns.filter((p) => {
@@ -25,16 +28,16 @@ function filtered() {
     return true;
   });
   return list.sort((a, b) => {
-    if (App.sort === "code") return (a.project + a.pattern.code).localeCompare(b.project + b.pattern.code);
+    if (sortMode === "code") return (a.project + a.pattern.code).localeCompare(b.project + b.pattern.code);
     // 색 가까운 순: 그 카드에서 '검색에 걸린 컬러' 중 기준색과 가장 가까운 ΔE 로 줄 세운다
-    if (App.sort === "color" && App.de) {
+    if (sortMode === "color" && App.de) {
       const key = (p) => Math.min(999, ...(HITS.get(p.id) || []).map((vid) => {
         const d = App.de.get(p.id + "/" + vid);
         return d == null ? 999 : d;
       }));
       return key(a) - key(b);
     }
-    if (App.sort === "recent") {
+    if (sortMode === "recent") {
       const key = (p) => {
         const d = (p.variations || []).map((v) => v.date).filter(Boolean).sort().pop();
         return d || String(p.updatedAt || "").slice(0, 10);
@@ -61,11 +64,16 @@ function toggleTag(tag) {
 /* ---------------- 색(사진 대표색) ----------------
  * 색은 사진에서 뽑은 값이라 측색값과 다르다. 정렬용 참고로만 쓴다(화면에도 그렇게 알린다).
  * /api/colors 는 컬러마다 첫 사진의 대표색을 돌려준다. 한 번 받아 App.colors 에 캐시한다. */
+let colorsPending = null;
 async function ensureColors() {
   if (App.colors) return App.colors;
-  const r = await apiGet("/api/colors");
-  App.colors = new Map((r.items || []).map((it) => [it.pid + "/" + it.vid, it]));
-  return App.colors;
+  // 같은 순간에 여러 번 그려도 요청은 하나로 합친다(캐시를 비운 직후 두 번 부르면 두 번 나갔다)
+  if (colorsPending) return colorsPending;
+  colorsPending = apiGet("/api/colors").then((r) => {
+    App.colors = new Map((r.items || []).map((it) => [it.pid + "/" + it.vid, it]));
+    return App.colors;
+  }).finally(() => { colorsPending = null; });
+  return colorsPending;
 }
 
 async function paintRefDots() {
@@ -77,6 +85,23 @@ async function paintRefDots() {
       if (c) { el.style.background = c.hex; el.classList.add("has"); }
     });
   } catch (e) { /* 색을 못 읽어도 목록은 그대로 */ }
+}
+
+/* 저장하면 invalidation 으로 App.de 가 비워진다. 색 정렬을 쓰던 중이면 ΔE 표만 다시 받아
+   정렬을 이어 간다(기준색은 그대로 — Lab 값이라 사진 교체와 무관하다). */
+let dePending = false;
+async function ensureDe() {
+  if (App.sort !== "color" || !App.refColor || App.de || dePending) return;
+  dePending = true;
+  try {
+    const r = await apiGet("/api/colors?ref=" + App.refColor.lab.join(","));
+    App.de = new Map((r.items || []).map((x) => [x.pid + "/" + x.vid, x.de]));
+    if (!location.hash || location.hash === "#") renderCatalog();   // 표가 생겼으니 다시 그린다
+  } catch (e) {
+    /* 실패하면 정렬은 최근순으로 떨어진다(위 sortMode) */
+  } finally {
+    dePending = false;
+  }
 }
 
 async function setRefColor(pid, vid) {
@@ -167,6 +192,9 @@ function cardHTML(p) {
 
 export function renderCatalog() {
   document.body.classList.remove("prop-mode");
+  ensureDe();                       // 색 정렬인데 ΔE 표가 비었으면 서버에서 한 번 받아 온다
+
+
   const list = filtered();
   const projects = ["all"].concat(Array.from(new Set(App.patterns.map((p) => p.project))));
   const chips = projects.map((k) => {

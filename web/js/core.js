@@ -185,8 +185,8 @@ export async function apiDelete(path, rev) {
 export function invalidateColors(pid, vid) {
   App.colors = null;
   App.de = null;
-  const r = App.refColor;
-  if (r && (!pid || r.pid === pid) && (!vid || r.vid === vid)) App.refColor = null;
+  // 기준색(refColor)은 지우지 않는다 — 그 색은 Lab 값으로 따로 들고 있어 사진이 바뀌어도 유효하다.
+  // 여기서 지우면 시편을 하나 저장할 때마다 '색 가까운 순'이 조용히 풀린다.
 }
 
 export async function apiUpload(pid, vid, slot, blob, crop) {
