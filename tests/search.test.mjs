@@ -155,3 +155,24 @@ test("key: 로 따옴표 값도 한 토큰으로 처리한다", () => {
   assert.deepEqual(Q.terms, [{ key: "client", val: "other motors", neg: false }]);
   assert.equal(Q.text, "", "따옴표 값이 본문 검색으로 새지 않는다");
 });
+
+/* --- 4차 지적(A·B·C) --- */
+test("layers — '2도'와 '2' 가 같은 컬러를 건다", () => {
+  assert.deepEqual(run2("layers:2도").get("G-3"), ["v01"]);
+  assert.deepEqual(run2("layers:2").get("G-3"), ["v01"]);
+});
+
+test("모르는 접두 단어는 본문 검색으로 남는다 (RAL:9005)", () => {
+  const Q = parseQuery("RAL:9005");
+  assert.equal(Q.terms.length, 0, "문법 조건으로 새지 않는다");
+  assert.equal(Q.text, "ral:9005", "예전처럼 부분 문자열로 검색된다");
+});
+
+test("code:M 은 MX-1 을 걸지 않고, code:MX 는 건다", () => {
+  const P5 = { id: "MX", client: "", pattern: { code: "MX-1" }, work: {}, variations: [{ id: "v01" }] };
+  const P6 = { id: "M6", client: "", pattern: { code: "M-9" }, work: {}, variations: [{ id: "v01" }] };
+  const m = (q) => { const Q = parseQuery(q); const out = []; [P5, P6].forEach((p) => { if (matchVars(p, Q)) out.push(p.id); }); return out; };
+  assert.deepEqual(m("code:M"), ["M6"]);
+  assert.deepEqual(m("code:MX"), ["MX"]);
+  assert.deepEqual(m("code:M-9"), ["M6"], "값이 영문자만이 아니면 앞부분 일치");
+});

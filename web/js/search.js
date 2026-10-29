@@ -56,7 +56,9 @@ export function parseQuery(raw) {
   const terms = [], notText = [], words = [];
   tokenize(raw).forEach((t) => {
     let key = "", val = t.text;
-    if (t.prefix) key = t.prefix;            // client:"값" 처럼 접두를 먼저 떼어낸 경우
+    const KNOWN = ["tag", "project", "plate", "color", "status", "client", "place", "code", "layers"];
+    if (t.prefix && KNOWN.includes(t.prefix)) key = t.prefix;   // 아는 키일 때만 접두로 인정
+    else if (t.prefix) { val = `${t.prefix}:${t.text}`; }        // RAL:9005 같은 건 그냥 단어로
     else if (t.sigil === "#") key = "tag";
     else if (t.sigil === "@") key = "project";
     else {
@@ -91,7 +93,11 @@ function testVar(p, v, t) {
   // 작업장소는 컬러별 유효값(workOf)으로 판정 — 같은 패턴의 다른 컬러는 걸리지 않는다
   if (t.key === "place") return low(workOf(p, v).place) === t.val;
   // 도수 개수(1도/2도…) — layerPlates 의 키 수
-  if (t.key === "layers") return String(Object.keys(v.layerPlates || {}).length) === String(t.val);
+  if (t.key === "layers") {
+    // 칩은 "2도"를 넣고 사용자는 layers:2 로도 쓴다 — 둘 다 받는다
+    const n = String(t.val).replace(/도$/, "");
+    return String(Object.keys(v.layerPlates || {}).length) === n;
+  }
   if (t.key === "plate") {
     const plates = [...((p.work || {}).plate || []), ...Object.values(v.layerPlates || {}),
       ...(v.mixes || []).map((m) => m.plate || "")].map(low);
@@ -112,7 +118,9 @@ export function matchVars(p, Q) {
     const hit = t.key === "tag" ? (p.pattern.tags || []).some((x) => low(x) === t.val)
       : t.key === "project" ? low(p.project) === t.val || low(p.projectName) === t.val
         : t.key === "client" ? low((p.client || (p.label || {}).company)) === t.val
-          : t.key === "code" ? low(p.pattern.code).startsWith(t.val)
+          : t.key === "code" ? (/^[a-z]+$/.test(t.val)
+            ? (String(p.pattern.code).match(/^[A-Za-z]+/) || [""])[0].toLowerCase() === t.val
+            : low(p.pattern.code).startsWith(t.val))
             : true;
     // neg=false → 걸려야 한다 / neg=true → 걸리면 안 된다. 둘 중 하나만 어긋나도 탈락.
     if (hit === t.neg) return null;
