@@ -575,6 +575,14 @@ textarea.inline-input{min-height:64px;resize:vertical}
 @media screen and (max-width:500px){.recipe-form{grid-template-columns:1fr}.recipe-preview{padding:16px}}
 @media print{.recipe-preview{display:none!important}}
 
+/* 태그 칩 줄 — 누르면 #태그 가 검색창에 들어가고, 다시 누르면 빠진다 (web/js/search.js) */
+.tagbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 14px}
+.tagbar .tb-lbl{font-size:11px;letter-spacing:.08em;color:var(--ink-3);margin-right:2px}
+.chip.tag{font-size:12px}
+.tb-help{width:20px;height:20px;border-radius:50%;border:1px solid var(--line-2);background:none;
+  color:var(--ink-3);font-size:11px;line-height:1;cursor:pointer;margin-left:auto}
+.tb-help:hover{border-color:var(--ink);color:var(--ink)}
+
 /* 제안서 상태 · 보관함 */
 .prop-status{font-size:12px;white-space:nowrap}
 .prop-status.ok{color:var(--ok)}

@@ -1,22 +1,26 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
 import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
+// 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
+import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, QUERY_HELP } from "./search.js";
 
 /* ---------------- catalog ---------------- */
+/* 검색 결과: 지금 조건에 남은 시편 목록. 동시에 HITS 에 "패턴별로 남은 컬러 id" 를 채운다.
+   HITS 가 담기(#selall)·빼기(#selnone)·CSV 의 범위다 — 예전에는 color: 로 컬러 하나만 걸러도
+   그 패턴의 모든 컬러가 담겼다(버그). 이제 걸린 컬러만 들어간다. */
+export const HITS = new Map();
+
 function filtered() {
-  const q = App.q.trim().toLowerCase();
-  return App.patterns.filter((p) => {
+  const Q = parseQuery(App.q);
+  HITS.clear();
+  const list = App.patterns.filter((p) => {
     if (App.project !== "all" && p.project !== App.project) return false;
-    if (!q) return true;
-    const hay = [p.pattern.code, p.pattern.name, p.pattern.nameKo, p.projectName, p.client, p.label.type,
-      (p.pattern.tags || []).join(" "), (p.work.plate || []).join(" "),
-      (p.variations || []).map((v) => [v.colorName, v.colorCode, (v.coating || []).map((c) => c.code).join(" "),
-        // 도수별 동판·패턴 코드와 배합에 적힌 동판도 찾는다
-        Object.values(v.layerPlates || {}).join(" "), Object.values(v.layerPatterns || {}).join(" "),
-        (v.mixes || []).map((m) => m.plate || "").join(" ")].join(" ")).join(" ")]
-      .join(" ").toLowerCase();
-    return hay.indexOf(q) >= 0;
-  }).sort((a, b) => {
+    const vids = matchVars(p, Q);
+    if (!vids) return false;
+    HITS.set(p.id, vids);
+    return true;
+  });
+  return list.sort((a, b) => {
     if (App.sort === "code") return (a.project + a.pattern.code).localeCompare(b.project + b.pattern.code);
     if (App.sort === "recent") {
       const key = (p) => {
@@ -27,6 +31,27 @@ function filtered() {
     }
     return 0;
   });
+}
+
+/* 태그 칩 토글: 검색창 문자열에 #태그 토큰을 넣었다 뺐다 한다.
+   검색 상태를 App.q 하나로 두면 저장·복원·새로고침이 저절로 맞는다. */
+function toggleTag(tag) {
+  const key = String(tag || "").toLowerCase();
+  const isThisTag = (t) => {
+    const q = parseQuery(t.raw).terms.find((x) => x.key === "tag");
+    return !!q && !q.neg && q.val === key;
+  };
+  const has = tokenize(App.q).some(isThisTag);
+  App.q = has ? withoutToken(App.q, isThisTag)
+    : ((App.q || "").trim() ? App.q.trim() + " " : "") + tagToken(tag);
+}
+
+/* 태그 칩을 눌렀을 때: 검색창 값도 같이 맞추고 목차를 다시 그린다 */
+function syncSearch() {
+  const box = $("#search");
+  if (box) box.value = App.q;
+  if (location.hash && location.hash !== "#") location.hash = "";
+  else renderCatalog();
 }
 
 // 카드 썸네일: 축소본 srcset + 원본 대체. 컬러 칩으로 바꿀 때도 이걸 통째로 다시 그린다
@@ -99,6 +124,16 @@ export function renderCatalog() {
   const totalVar = App.patterns.reduce((a, p) => a + (p.variations || []).length, 0);
   const totalMix = App.patterns.reduce((a, p) => a + (p.variations || []).reduce((b, v) => b + (v.mixes || []).length, 0), 0);
 
+  // 태그 칩 줄 — 지금 프로젝트 범위에서 많이 쓴 태그부터. 누르면 #태그 가 검색창에 들어간다.
+  const tagbar = (() => {
+    const tags = tagCounts(App.patterns, App.project).slice(0, 18);
+    if (!tags.length) return "";
+    const on = new Set(parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val));
+    return `<div class="tagbar"><span class="tb-lbl">태그</span>${
+      tags.map(([t, n]) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(t)}<span class="n">${n}</span></button>`).join("")
+    }<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
+  })();
+
   $("#view").innerHTML = `<div class="wrap">
       <section class="hero">
         <div>
@@ -112,7 +147,7 @@ export function renderCatalog() {
         </div>
       </section>
       <div class="toolbar">${chips}<div class="spacer"></div>
-        <button class="tool" id="selall" title="지금 보이는 시편을 모두 제안서에 담기">전체 선택<span class="n">${list.reduce((a, p) => a + (p.variations || []).length, 0)}</span></button>
+        <button class="tool" id="selall" title="지금 조건에 걸린 컬러만 제안서에 담기">${list.reduce((a, p) => a + (HITS.get(p.id) || []).length, 0)}개 담기</button>
         <button class="tool" id="selnone" title="지금 보이는 시편을 제안서에서 빼기">전체 해제</button>
         <button class="tool" id="syncall" title="RDP-DB의 배합을 모든 시편에 반영">DB 동기화</button>
         <div class="selwrap"><select id="sort" aria-label="정렬">
@@ -120,6 +155,7 @@ export function renderCatalog() {
           <option value="code"${App.sort === "code" ? " selected" : ""}>코드순</option>
         </select></div>
       </div>
+      ${tagbar}
       ${list.length ? `<div class="grid">${list.map(cardHTML).join("")}</div>`
       : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
@@ -133,17 +169,21 @@ export function renderCatalog() {
   if (of) of.onclick = (e) => { e.preventDefault(); apiPost("/api/open-folder").then(() => toast("데이터 폴더를 열었습니다")).catch((err) => toast(err.message)); };
   paintDots();
   $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
+  $$("[data-tag]").forEach((el) => (el.onclick = () => { toggleTag(el.dataset.tag); syncSearch(); }));
+  const qhelp = $("#qhelp");
+  if (qhelp) qhelp.onclick = () => toast(QUERY_HELP, 6500);
   const btnAll = $("#selall");
   if (btnAll) btnAll.onclick = () => {
-    filtered().forEach((p) => (p.variations || []).forEach((v) => {
-      if (!inCart(p.id, v.id)) App.cart.push({ pid: p.id, vid: v.id });
+    filtered();                                   // HITS 를 지금 조건으로 다시 채운다
+    App.patterns.forEach((p) => (HITS.get(p.id) || []).forEach((vid) => {
+      if (!inCart(p.id, vid)) App.cart.push({ pid: p.id, vid });
     }));
     saveLS(); renderCatalog(); renderCart();
   };
   const btnNone = $("#selnone");
   if (btnNone) btnNone.onclick = () => {
-    const ids = new Set(filtered().map((p) => p.id));
-    App.cart = ids.size === App.patterns.length ? [] : App.cart.filter((c) => !ids.has(c.pid));
+    filtered();
+    App.cart = App.cart.filter((c) => !(HITS.get(c.pid) || []).includes(c.vid));
     saveLS(); renderCatalog(); renderCart();
   };
   const sel = $("#sort"); if (sel) sel.onchange = (e) => { App.sort = e.target.value; renderCatalog(); };
