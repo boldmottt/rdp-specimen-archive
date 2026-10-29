@@ -33,3 +33,25 @@ export function deLabel(de) {
   if (de <= 5) return "비슷";
   return de.toFixed(1);
 }
+
+/**
+ * 카드가 기본으로 보여 줄 컬러.
+ *   sel   사용자가 이 카드에서 칩을 눌러 고른 컬러(p._sel) — 있으면 최우선
+ *   best  기준색과 가장 가까운 컬러(색 정렬 중에만)
+ *   first 그 시편의 첫 컬러(최근순·코드순)
+ */
+export function baseVid({ sel, best, first }) {
+  return (sel && String(sel)) || (best && best.vid) || (first && String(first)) || null;
+}
+
+/**
+ * 지금 보이는 컬러의 배지 값. 사진과 배지가 **항상 같은 컬러**를 가리키게 하려고
+ * vid 를 반드시 받는다(예전에는 배지가 best 를, 사진이 다른 컬러를 가리킬 수 있었다).
+ * @returns {de, label, isBest} | null  (그 컬러의 ΔE 가 없으면 null)
+ */
+export function badgeFor(pid, vid, de, best) {
+  if (!de || !vid) return null;
+  const d = de.get(pid + "/" + vid);
+  if (typeof d !== "number" || !Number.isFinite(d)) return null;
+  return { de: d, label: deLabel(d), isBest: !!(best && best.vid === vid) };
+}

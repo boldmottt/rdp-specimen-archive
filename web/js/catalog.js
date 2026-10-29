@@ -6,7 +6,7 @@ import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, QUE
 // 선택·일괄 편집·CSV (규칙은 bulk-rules.js, 화면은 bulk.js). 서로 import 하지 않고 데이터를 넘긴다.
 import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk.js";
 // 색 정렬에서 "가장 가까운 컬러"를 고르는 규칙 — 정렬 키와 카드 표시가 같은 함수를 쓴다
-import { bestVar, deLabel } from "./color-rules.js";
+import { bestVar, deLabel, baseVid, badgeFor } from "./color-rules.js";
 
 /* ---------------- catalog ---------------- */
 /* 검색 결과: 지금 조건에 남은 시편 목록. 동시에 HITS 에 "패턴별로 남은 컬러 id" 를 채운다.
@@ -90,12 +90,8 @@ async function paintRefDots() {
       const c = it && it.colors && it.colors[0];
       if (c) { el.style.background = c.hex; el.classList.add("has"); }
     });
-    // 색 정렬 배지의 '이 컬러' 견본
-    $$(".de-badge .this").forEach((el) => {
-      const it = m.get(el.dataset.pid + "/" + (el.dataset.vid || ""));
-      const c = it && it.colors && it.colors[0];
-      if (c && /^#[0-9a-f]{6}$/i.test(c.hex || "")) el.style.background = c.hex;
-    });
+    // 색 정렬 배지의 '이 컬러' 견본 (paintSwatch 와 같은 규칙)
+    $$(".de-badge .this").forEach((el) => paintSwatch(el, el.dataset.pid, el.dataset.vid || ""));
   } catch (e) { /* 색을 못 읽어도 목록은 그대로 */ }
 }
 
@@ -122,6 +118,9 @@ async function setRefColor(pid, vid) {
   const c = it && it.colors && it.colors[0];
   if (!c) { toast("이 컬러에는 사진이 없어 기준으로 쓸 수 없습니다"); return; }
   App.refColor = { pid, vid, lab: c.lab, hex: c.hex };
+  // 기준색을 새로 잡으면 각 카드의 '눌러서 고정된 컬러'를 푼다 — 안 풀면 정렬 순서(가장 가까운 컬러)와
+  // 카드 사진이 어긋난다(예전에 담아 둔 카드가 옛 컬러 사진을 계속 보여 주던 문제).
+  App.patterns.forEach((p) => { delete p._sel; });
   const r = await apiGet("/api/colors?ref=" + c.lab.join(","));
   App.de = new Map((r.items || []).map((x) => [x.pid + "/" + x.vid, x.de]));
   App.sort = "color";
@@ -151,20 +150,47 @@ function showVar(card, p, v) {
   const media = card.querySelector("a.media");
   if (!media || !v) return;
   const cur = media.querySelector("img, .empty");
-  if (cur && cur.dataset.vid === v.id) return;
-  const box = document.createElement("div");
-  box.innerHTML = String(cardMedia(p, v));
-  const next = box.firstElementChild;
-  if (cur) cur.replaceWith(next); else media.prepend(next);
+  if (!(cur && cur.dataset.vid === v.id)) {
+    const box = document.createElement("div");
+    box.innerHTML = String(cardMedia(p, v));
+    const next = box.firstElementChild;
+    if (cur) cur.replaceWith(next); else media.prepend(next);
+  }
+  paintBadge(card, p, v);
+}
+
+/* 배지를 '지금 보이는 컬러'에 맞춘다 — 사진과 배지가 서로 다른 컬러를 가리키지 않게.
+   ΔE 가 없는 컬러(사진 없음 등)에서는 배지를 숨긴다. */
+function paintBadge(card, p, v) {
+  const badge = card.querySelector(".de-badge");
+  if (!badge) return;
+  const bd = (App.sort === "color" && App.de) ? badgeFor(p.id, v && v.id, App.de, BEST.get(p.id) || null) : null;
+  if (!bd) { badge.hidden = true; return; }
+  badge.hidden = false;
+  badge.querySelector(".de-num").textContent = `ΔE ${bd.de.toFixed(1)}`;
+  const word = badge.querySelector("b");
+  const text = bd.isBest ? "가장 가까움" : (bd.de <= 5 ? bd.label : "");
+  word.textContent = text;
+  word.hidden = !text;
+  const sw = badge.querySelector(".this");
+  if (sw) { sw.dataset.vid = v.id; paintSwatch(sw, p.id, v.id); }
+}
+
+function paintSwatch(el, pid, vid) {
+  const it = App.colors && App.colors.get(pid + "/" + vid);
+  const hex = it && it.colors && it.colors[0] && it.colors[0].hex;
+  if (hex && /^#[0-9a-f]{6}$/i.test(hex)) el.style.background = hex;
 }
 
 function cardHTML(p) {
   const vars = p.variations || [];
   // 색 정렬 중에는 '기준색과 가장 가까운 컬러'를 보여 준다. 커서를 올린 칩(p._sel)이 있으면 그게 우선.
   const best = App.sort === "color" && App.de ? BEST.get(p.id) : null;
-  const vid = p._sel || (best && best.vid) || (vars[0] && vars[0].id);
+  const vid = baseVid({ sel: p._sel, best, first: vars[0] && vars[0].id });
   const v = varOf(p, vid) || vars[0];
-  const showBest = !!(best && v && best.vid === v.id);
+  // 배지는 '지금 보이는 컬러'의 ΔE — 사진과 배지가 항상 같은 컬러를 가리킨다.
+  // 색 정렬일 때만 붙인다(최근순·코드순은 예전과 똑같이 배지가 없다).
+  const bd = App.sort === "color" && App.de ? badgeFor(p.id, v && v.id, App.de, best) : null;
   const picked = v && inCart(p.id, v.id);
   const nm = p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "";
   const title = html`<span class="c-code">${p.pattern.code}</span><span class="c-name">${[nm, p.pattern.nameKo].filter(Boolean).join(" ") || ""}</span>`;
@@ -189,16 +215,16 @@ function cardHTML(p) {
   // 선택 체크는 .media(링크) 밖에 둔다 — 안에 두면 누를 때 상세로 넘어간다.
   // 위치는 오른쪽 위: 왼쪽 위(.badge, left:10px)와 겹치지 않게.
   const sel = App.sel.has(p.id);
-  return String(html`<article class="card${picked ? " picked" : ""}${sel ? " sel" : ""}" data-pid="${p.id}">
+  return String(html`<article class="card${picked ? " picked" : ""}${sel ? " sel" : ""}" data-pid="${p.id}" data-base="${v ? v.id : ""}">
       <button class="pick${sel ? " on" : ""}" data-pick="${p.id}" aria-pressed="${sel ? "true" : "false"}"
         title="선택 (Shift 범위 · Cmd/Ctrl 하나씩)">✓</button>
       <a class="media" href="${href}" aria-label="${alt} 상세 보기">
         ${cardMedia(p, v)}
         ${p.project ? html`<div class="badge">${p.project}</div>` : ""}
-        ${showBest ? html`<span class="de-badge" title="사진에서 뽑은 대표색 기준 — 측색값과 다를 수 있습니다">
+        ${bd ? html`<span class="de-badge" title="사진에서 뽑은 대표색 기준 — 측색값과 다를 수 있습니다">
             <i class="sw ref" style="background:${App.refColor && /^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
-            <i class="sw this" data-pid="${p.id}" data-vid="${v.id}"></i>
-            <span class="de-num">ΔE ${best.de.toFixed(1)}</span>${best.de <= 5 ? html`<b>${deLabel(best.de)}</b>` : ""}
+            <i class="sw this" data-pid="${p.id}" data-vid="${v ? v.id : ""}"></i>
+            <span class="de-num">ΔE ${bd.de.toFixed(1)}</span><b${bd.isBest || bd.de <= 5 ? "" : " hidden"}>${bd.isBest ? "가장 가까움" : (bd.de <= 5 ? bd.label : "")}</b>
           </span>` : ""}
       </a>
       <div class="card-body">
@@ -386,11 +412,13 @@ export function renderCatalog() {
     const p = byId(card.dataset.pid);
     const x = varOf(p, el.dataset.sel);
     el.onmouseenter = () => showVar(card, p, x);
-    el.onmouseleave = () => showVar(card, p, varOf(p, p._sel));
+    // 떼면 '이 카드의 기본 컬러'(색 정렬이면 가장 가까운 컬러)로 돌아간다 — p._sel 이 아니라
+    el.onmouseleave = () => showVar(card, p, varOf(p, card.dataset.base));
     el.onclick = (e) => {
       e.stopPropagation();
       toggleCart(p.id, el.dataset.sel);
       p._sel = el.dataset.sel;
+      card.dataset.base = el.dataset.sel;      // 누른 컬러가 이 카드의 기본이 된다
       showVar(card, p, x);
       card.querySelectorAll("[data-sel]").forEach((b) => b.classList.toggle("on", b.dataset.sel === p._sel));
       card.classList.toggle("picked", inCart(p.id, el.dataset.sel));

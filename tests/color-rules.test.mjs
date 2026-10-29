@@ -3,7 +3,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bestVar, deLabel } from "../web/js/color-rules.js";
+import { bestVar, deLabel, baseVid, badgeFor } from "../web/js/color-rules.js";
 
 const de = new Map([["P1/v01", 8.4], ["P1/v02", 2.3], ["P1/v03", 5.0], ["P2/v01", 1.0]]);
 
@@ -31,4 +31,27 @@ test("deLabel — 2 이하 거의 같음, 5 이하 비슷, 그 외 숫자", () =
   assert.equal(deLabel(5), "비슷");
   assert.equal(deLabel(8.44), "8.4");
   assert.equal(deLabel(undefined), "");
+});
+
+/* --- 카드 사진과 배지가 같은 컬러를 가리키게 (2차 지적) --------------------- */
+test("baseVid — sel → best → first 우선순위", () => {
+  const best = { vid: "v02", de: 2.3 };
+  assert.equal(baseVid({ sel: "v03", best, first: "v01" }), "v03", "고른 컬러가 최우선");
+  assert.equal(baseVid({ best, first: "v01" }), "v02", "색 정렬이면 가장 가까운 컬러");
+  assert.equal(baseVid({ first: "v01" }), "v01", "평소에는 첫 컬러");
+  assert.equal(baseVid({}), null);
+});
+
+test("badgeFor — 가장 가까운 컬러면 isBest, 다른 컬러면 그 컬러의 ΔE", () => {
+  const best = { vid: "v02", de: 2.3 };
+  assert.deepEqual(badgeFor("P1", "v02", de, best), { de: 2.3, label: "비슷", isBest: true });
+  assert.deepEqual(badgeFor("P1", "v01", de, best), { de: 8.4, label: "8.4", isBest: false });
+});
+
+test("badgeFor — 그 컬러의 ΔE 가 없으면 null(배지를 숨긴다)", () => {
+  const best = { vid: "v02", de: 2.3 };
+  assert.equal(badgeFor("P1", "v99", de, best), null);
+  assert.equal(badgeFor("P9", "v01", de, best), null, "다른 시편");
+  assert.equal(badgeFor("P1", "", de, best), null);
+  assert.equal(badgeFor("P1", "v01", null, best), null);
 });
