@@ -313,9 +313,12 @@ export function renderCatalog() {
       ${list.length ? `<div class="grid">${list.map(cardHTML).join("")}</div>`
       : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
-        <span style="display:flex;gap:12px;align-items:center">
-          <a href="#" id="openfolder" style="text-decoration:underline;text-underline-offset:3px">데이터 폴더 열기</a>
-          <span style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(App.config.dataRoot || "")}</span>
+        <span class="foot-right">
+          <a href="#" id="openfolder">데이터 폴더 열기</a>
+          <span class="path" title="${esc(App.config.dataRoot || "")}">
+            <span class="path-full">${esc(App.config.dataRoot || "")}</span>
+            <span class="path-tail">…/${esc((App.config.dataRoot || "").split("/").slice(-2).join("/"))}</span>
+          </span>
         </span></div>
     </div>`;
 
