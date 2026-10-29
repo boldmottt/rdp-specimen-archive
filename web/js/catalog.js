@@ -165,7 +165,14 @@ function paintBadge(card, p, v) {
   const badge = card.querySelector(".de-badge");
   if (!badge) return;
   const bd = (App.sort === "color" && App.de) ? badgeFor(p.id, v && v.id, App.de, BEST.get(p.id) || null) : null;
-  if (!bd) { badge.hidden = true; return; }
+  if (!bd) {
+    // 숨김 + 값도 비운다 — 화면에는 안 보이지만, 나중에 다른 컬러로 바뀔 때 옛 숫자가 남지 않게
+    badge.hidden = true;
+    badge.querySelector(".de-num").textContent = "";
+    const w = badge.querySelector("b");
+    w.textContent = ""; w.hidden = true;
+    return;
+  }
   badge.hidden = false;
   badge.querySelector(".de-num").textContent = `ΔE ${bd.de.toFixed(1)}`;
   const word = badge.querySelector("b");
@@ -185,12 +192,14 @@ function paintSwatch(el, pid, vid) {
 function cardHTML(p) {
   const vars = p.variations || [];
   // 색 정렬 중에는 '기준색과 가장 가까운 컬러'를 보여 준다. 커서를 올린 칩(p._sel)이 있으면 그게 우선.
-  const best = App.sort === "color" && App.de ? BEST.get(p.id) : null;
+  const colorMode = App.sort === "color" && !!App.de;   // 색 정렬 중인가(배지 자리를 그릴지 결정)
+  const best = colorMode ? BEST.get(p.id) : null;
   const vid = baseVid({ sel: p._sel, best, first: vars[0] && vars[0].id });
   const v = varOf(p, vid) || vars[0];
   // 배지는 '지금 보이는 컬러'의 ΔE — 사진과 배지가 항상 같은 컬러를 가리킨다.
-  // 색 정렬일 때만 붙인다(최근순·코드순은 예전과 똑같이 배지가 없다).
-  const bd = App.sort === "color" && App.de ? badgeFor(p.id, v && v.id, App.de, best) : null;
+  // 색 정렬일 때만 자리를 만들고(최근순·코드순은 예전과 똑같이 배지가 없다),
+  // 이 컬러에 ΔE 가 없으면 hidden 으로 숨긴다 — 자리를 남겨 두어야 다른 칩에 올렸을 때 값이 뜬다.
+  const bd = colorMode ? badgeFor(p.id, v && v.id, App.de, best) : null;
   const picked = v && inCart(p.id, v.id);
   const nm = p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "";
   const title = html`<span class="c-code">${p.pattern.code}</span><span class="c-name">${[nm, p.pattern.nameKo].filter(Boolean).join(" ") || ""}</span>`;
@@ -221,10 +230,10 @@ function cardHTML(p) {
       <a class="media" href="${href}" aria-label="${alt} 상세 보기">
         ${cardMedia(p, v)}
         ${p.project ? html`<div class="badge">${p.project}</div>` : ""}
-        ${bd ? html`<span class="de-badge" title="사진에서 뽑은 대표색 기준 — 측색값과 다를 수 있습니다">
+        ${colorMode ? html`<span class="de-badge" title="사진에서 뽑은 대표색 기준 — 측색값과 다를 수 있습니다"${bd ? "" : " hidden"}>
             <i class="sw ref" style="background:${App.refColor && /^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
             <i class="sw this" data-pid="${p.id}" data-vid="${v ? v.id : ""}"></i>
-            <span class="de-num">ΔE ${bd.de.toFixed(1)}</span><b${bd.isBest || bd.de <= 5 ? "" : " hidden"}>${bd.isBest ? "가장 가까움" : (bd.de <= 5 ? bd.label : "")}</b>
+            <span class="de-num">${bd ? `ΔE ${bd.de.toFixed(1)}` : ""}</span><b${bd ? "" : " hidden"}>${bd ? (bd.isBest ? "가장 가까움" : (bd.de <= 5 ? bd.label : "")) : ""}</b>
           </span>` : ""}
       </a>
       <div class="card-body">
