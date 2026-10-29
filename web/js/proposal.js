@@ -621,6 +621,7 @@ function railHTML() {
   const groups = groupOrder(App.cart);
   return `<div class="or-top">
       <span class="or-title">순서<small>${groups.length}개 패턴 · 자동 저장</small></span>
+      <button type="button" class="or-close" id="or-close" aria-label="순서 닫기">✕</button>
       <select id="or-sort" aria-label="순서 정렬">
         <option value="">정렬…</option>
         <option value="code">코드순</option>
@@ -639,12 +640,23 @@ function toggleRail() {
   if (btn) btn.setAttribute("aria-expanded", String(railOpen));
 }
 
+/* 순서를 바꿀 때 화면이 맨 위로 튀지 않게, 보고 있던 위치(페이지·레일)를 기억했다가 되돌린다 */
+function renderKeepView() {
+  const y = window.scrollY;
+  const railEl = document.getElementById("order-rail");
+  const railTop = railEl ? railEl.scrollTop : 0;
+  renderProposal();
+  const r2 = document.getElementById("order-rail");
+  if (r2) r2.scrollTop = railTop;
+  window.scrollTo({ top: y, behavior: "instant" });
+}
+
 /** 순서를 바꾸는 모든 조작의 공통 통로 — 기록 → 적용 → 저장 → 다시 그리기 */
 function applyOrder(next) {
   orderHistory.push(App.cart);
   App.cart = next;
   saveLS();
-  renderProposal();
+  renderKeepView();
 }
 
 function bindRail() {
@@ -661,7 +673,7 @@ function bindRail() {
   // 행 클릭 → 그 시트로 스크롤 + 잠깐 테두리
   $$(".or-head, .or-col", rail).forEach((row) => {
     row.onclick = (e) => {
-      if (e.target.closest(".or-more") || e.target.closest(".or-grip")) return;
+      if (e.target.closest(".or-more") || e.target.closest(".or-grip") || e.target.closest(".or-menu")) return;
       const pid = row.closest("[data-kind]")?.dataset.pid || row.dataset.pid;   // .or-head 는 부모에 있다
       const pg = document.querySelector(`.sheet[data-pid="${CSS.escape(pid)}"]`);
       if (!pg) return;
@@ -710,6 +722,10 @@ function bindRail() {
   bindRailDrag(rail);
   bindRailKeys();
 
+  // 닫기(좁은 화면 서랍·전체 화면에서 필요)
+  const closeBtn = $("#or-close");
+  if (closeBtn) closeBtn.onclick = () => toggleRail();
+
   // 되돌리기
   const undoBtn = $("#or-undo-btn");
   if (undoBtn) undoBtn.onclick = () => {
@@ -717,7 +733,7 @@ function bindRail() {
     if (!prev) return;
     App.cart = prev;
     saveLS();
-    renderProposal();
+    renderKeepView();
   };
 }
 
@@ -736,7 +752,17 @@ function bindRailKeys() {
 
   document.addEventListener("keydown", (e) => {
     const grip = e.target && e.target.closest ? e.target.closest(".or-grip") : null;
-    if (!grip) return;
+    if (!grip) {
+      // 손잡이에 초점이 없어도, 좁은 화면에서 서랍이 열려 있으면 Esc 로 닫는다
+      if (e.key === "Escape" && window.matchMedia("(max-width:1079px)").matches) {
+        const rail = document.getElementById("order-rail");
+        if (rail && !rail.classList.contains("is-hidden")) {
+          e.preventDefault(); e.stopPropagation();
+          toggleRail();
+        }
+      }
+      return;
+    }
     const row = grip.closest("[data-kind]");
     if (!row) return;
     const pid = row.dataset.pid, vid = row.dataset.vid, kind = row.dataset.kind;
@@ -761,16 +787,21 @@ function bindRailKeys() {
       const d = e.key === "ArrowUp" ? -1 : 1;
       App.cart = kind === "pat" ? movePattern(App.cart, grab.pid, d) : moveColor(App.cart, grab.pid, grab.vid, d);
       App.cart = normalizeOrder(App.cart);
-      saveLS(); renderProposal();
+      saveLS(); renderKeepView();
       const again = document.querySelector(`.or-pat[data-pid="${CSS.escape(grab.pid)}"] .or-grip[data-grip="${grab.kind}"]`);
       if (again) { again.focus(); again.closest("[data-kind]").classList.add("is-dragging"); }
       return;
     }
     if (e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();
-      grab = null;
-      const prev = orderHistory.undo();
-      if (prev) { App.cart = prev; saveLS(); renderProposal(); }
+      if (grab) {                       // 집고 있으면 원래 자리로
+        grab = null;
+        const prev = orderHistory.undo();
+        if (prev) { App.cart = prev; saveLS(); renderKeepView(); }
+        return;
+      }
+      // 집고 있지 않으면 좁은 화면 서랍을 닫는다(넓은 화면은 툴바 토글이 보인다)
+      if (window.matchMedia("(max-width:1079px)").matches) toggleRail();
     }
   }, true);
 }
