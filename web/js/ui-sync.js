@@ -60,3 +60,32 @@ export function createUiSync({ send, fetchState, getBody, onAdopt, onRev }) {
   };
   return api;
 }
+
+/**
+ * 409 로 서버 목록을 받아들일 때, 내가 방금 만든 폴더 중 서버에 없는 것들의 이름.
+ * 조용히 사라지면 사용자는 왜 없어졌는지 알 수 없으므로 화면에서 이름을 알려 준다.
+ * 비교 기준: id 가 없거나, 이름·검색어·프로젝트가 다르면 '내 것이 반영되지 않았다'로 본다.
+ */
+export function lostFolders(local, server) {
+  const srv = new Map((server || []).map((f) => [f && f.id, f]));
+  return (local || [])
+    .filter((f) => {
+      if (!f) return false;
+      const s = srv.get(f.id);
+      if (!s) return true;
+      return String(s.name || "") !== String(f.name || "")
+        || String(s.q || "") !== String(f.q || "")
+        || String(s.project || "all") !== String(f.project || "all");
+    })
+    .map((f) => String(f.name || "").trim())
+    .filter(Boolean);
+}
+
+/** 409 뒤에 띄울 안내 문구 — 버려진 폴더가 있으면 이름을 넣는다 */
+export function adoptMessage(lost) {
+  const base = "저장된 검색이 다른 곳에서 바뀌어 최신 목록으로 맞췄습니다";
+  if (!lost || !lost.length) return base;
+  const head = lost.slice(0, 3).map((n) => `'${n}'`).join(", ");
+  const more = lost.length > 3 ? ` 외 ${lost.length - 3}개` : "";
+  return `${base} — ${head}${more}는 반영되지 않았습니다. 다시 저장해 주세요`;
+}

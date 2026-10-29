@@ -111,3 +111,31 @@ test("폴더를 안 바꾼 저장(장바구니)은 폴더를 싣지 않는다", 
   await h.answer(200);
   await p;
 });
+
+/* ② 서버 목록을 받아들일 때 버려진 폴더를 알려 준다 */
+test("②-1 lostFolders — 서버에 없거나 내용이 다른 로컬 폴더 이름만", async () => {
+  const { lostFolders } = await import("../web/js/ui-sync.js");
+  const local = [
+    { id: "a", name: "같은것", q: "", project: "all" },
+    { id: "b", name: "서버에없음", q: "#x", project: "all" },
+    { id: "c", name: "이름바뀜", q: "", project: "all" },
+    { id: "d", name: "조건바뀜", q: "", project: "all" },
+  ];
+  const server = [
+    { id: "a", name: "같은것", q: "", project: "all" },
+    { id: "c", name: "서버이름", q: "", project: "all" },
+    { id: "d", name: "조건바뀜", q: "#y", project: "all" },
+  ];
+  assert.deepEqual(lostFolders(local, server), ["서버에없음", "이름바뀜", "조건바뀜"]);
+  assert.deepEqual(lostFolders(server, server), [], "같으면 빈 배열");
+  assert.deepEqual(lostFolders([], server), []);
+});
+
+test("②-2 adoptMessage — 버려진 폴더가 있으면 이름이 들어간다", async () => {
+  const { adoptMessage } = await import("../web/js/ui-sync.js");
+  assert.equal(adoptMessage([]), "저장된 검색이 다른 곳에서 바뀌어 최신 목록으로 맞췄습니다");
+  const m1 = adoptMessage(["세미나"]);
+  assert.ok(m1.includes("'세미나'") && m1.includes("반영되지 않았습니다"), m1);
+  const m4 = adoptMessage(["a", "b", "c", "d"]);
+  assert.ok(m4.includes("외 1개"), m4);
+});

@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 공통 유틸 · 앱 상태 · 서버 API · 데이터 헬퍼 */
-import { createUiSync } from "./ui-sync.js";
+import { createUiSync, lostFolders, adoptMessage } from "./ui-sync.js";
 
 export const $ = (s, r) => (r || document).querySelector(s);
 export const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
@@ -92,6 +92,8 @@ const uiSync = createUiSync({
 
   // 다른 곳에서 먼저 바뀌었다(409) → 서버 목록을 받아들이고 화면에 알린다
   onAdopt: (state) => {
+    // 받아들이기 전에 '내가 방금 만든 폴더 중 버려지는 것'을 먼저 계산한다(이름을 알려 주려고)
+    const lost = lostFolders(App.smartFolders, state.smartFolders || []);
     if (Array.isArray(state.smartFolders)) App.smartFolders = state.smartFolders;
     App.sfRev = Number(state.smartFoldersRev || 0) || 0;
     try {
@@ -100,7 +102,7 @@ const uiSync = createUiSync({
     } catch (e) {}
     // 화면(목차)의 폴더 칩도 다시 그리게 알린다 — core 는 catalog 를 import 하지 않는다(순환)
     if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("rdp:folders-changed"));
-    toast("저장된 검색이 다른 곳에서 바뀌어 최신 목록으로 맞췄습니다");
+    toast(adoptMessage(lost), lost.length ? 6000 : 1800);
   },
 });
 
