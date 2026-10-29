@@ -1,4 +1,5 @@
 /* RDP 시편 아카이브 — 공통 유틸 · 앱 상태 · 서버 API · 데이터 헬퍼 */
+import { createUiSync } from "./ui-sync.js";
 
 export const $ = (s, r) => (r || document).querySelector(s);
 export const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
@@ -64,48 +65,55 @@ export function saveLS() {
   uiTimer = setTimeout(pushUiState, 400);
 }
 
+/* ---------- 화면 상태 저장 큐 ----------
+ * 요청이 오가는 동안 폴더를 또 고치면 변경이 사라지던 문제를 ui-sync.js 가 막는다
+ * (한 번에 하나만 보내고, 변경 세대를 비교한다). 여기서는 그 큐에 필요한 것만 주입한다. */
+const uiSync = createUiSync({
+  send: (body) => fetch("/api/ui", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }).then(async (r) => ({ status: r.status, json: await r.json().catch(() => null) })),
+
+  fetchState: async () => {
+    try { const ui = await apiGet("/api/ui"); return (ui && ui.state) || {}; } catch (e) { return {}; }
+  },
+
+  getBody: (withFolders) => {
+    const body = { cart: App.cart, prop: App.prop, ts: (App.prop.ts = Date.now()) };
+    if (withFolders) { body.smartFolders = App.smartFolders; body.smartFoldersRev = App.sfRev || 0; }
+    return body;
+  },
+
+  // 성공 응답의 새 rev 반영 — 다음 요청이 이 rev 를 써야 자기 자신과 409 가 나지 않는다
+  onRev: (json) => {
+    const rev = Number((json && json.state && json.state.smartFoldersRev) || 0) || 0;
+    if (rev) App.sfRev = rev;
+    try { localStorage.setItem(LS_SFREV, String(App.sfRev)); } catch (e) {}
+  },
+
+  // 다른 곳에서 먼저 바뀌었다(409) → 서버 목록을 받아들이고 화면에 알린다
+  onAdopt: (state) => {
+    if (Array.isArray(state.smartFolders)) App.smartFolders = state.smartFolders;
+    App.sfRev = Number(state.smartFoldersRev || 0) || 0;
+    try {
+      localStorage.setItem(LS_SMART, JSON.stringify(App.smartFolders));
+      localStorage.setItem(LS_SFREV, String(App.sfRev));
+    } catch (e) {}
+    // 화면(목차)의 폴더 칩도 다시 그리게 알린다 — core 는 catalog 를 import 하지 않는다(순환)
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("rdp:folders-changed"));
+    toast("저장된 검색이 다른 곳에서 바뀌어 최신 목록으로 맞췄습니다");
+  },
+});
+
 /* 폴더를 바꿨을 때만 부른다 — 장바구니 저장이 남의 폴더 목록을 덮지 않게 하려고
-   smartFolders 는 "바뀐 경우에만" 서버로 보낸다(sfDirty). */
+   smartFolders 는 "바뀐 경우에만" 서버로 보낸다. */
 export function saveSmart() {
+  uiSync.markDirty();
   App.sfDirty = true;
   saveLS();
 }
 
 function pushUiState() {
-  const body = { cart: App.cart, prop: App.prop, ts: (App.prop.ts = Date.now()) };
-  const withFolders = !!App.sfDirty;
-  if (withFolders) { body.smartFolders = App.smartFolders; body.smartFoldersRev = App.sfRev || 0; }
-  fetch("/api/ui", {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  }).then(async (r) => {
-    if (r.status === 409) {
-      // 다른 탭/PC 가 저장된 검색을 먼저 바꿨다. 여기서 dirty 를 안 풀면 이후 모든 저장에
-      // 낡은 폴더가 실려 계속 409 가 나고, 장바구니·제안서 설정이 서버로 못 올라간다.
-      // → 서버 목록을 받아들이고 dirty 를 푼 뒤, 장바구니만 다시 보낸다.
-      App.sfDirty = false;
-      try {
-        const ui = await apiGet("/api/ui");
-        if (ui && ui.state) {
-          if (Array.isArray(ui.state.smartFolders)) App.smartFolders = ui.state.smartFolders;
-          App.sfRev = Number(ui.state.smartFoldersRev || 0) || 0;
-          localStorage.setItem(LS_SMART, JSON.stringify(App.smartFolders));
-          localStorage.setItem(LS_SFREV, String(App.sfRev));
-        }
-      } catch (e) {}
-      toast("저장된 검색이 다른 곳에서 바뀌어 최신 목록으로 맞췄습니다");
-      // 화면(목차)의 폴더 칩도 새 목록으로 다시 그리게 알린다 — core 는 catalog 를 import 하지 않는다(순환)
-      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("rdp:folders-changed"));
-      saveLS();                       // 폴더 없이 다시 저장
-      return;
-    }
-    if (!r.ok) return;
-    if (!withFolders) return;
-    App.sfDirty = false;
-    try {
-      const j = await r.json();
-      if (j && j.state) { App.sfRev = Number(j.state.smartFoldersRev || 0) || 0; localStorage.setItem(LS_SFREV, String(App.sfRev)); }
-    } catch (e) {}
-  }).catch(() => {});
+  uiSync.push().finally(() => { App.sfDirty = uiSync.isDirty(); });
 }
 
 /* ---------------- api ---------------- */
