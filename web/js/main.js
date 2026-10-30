@@ -1,9 +1,10 @@
 /* RDP 시편 아카이브 — 라우터 · 부팅 (진입점) */
-import { $, $$, App, apiGet, esc, loadLS, normalizeDoc, toast } from "./core.js";
+import { $, $$, App, apiGet, esc, loadLS, normalizeDoc, saveSmart, toast } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
 import { renderBoard } from "./board.js";
+import { renderPlates } from "./plates-page.js";
 import { E, closeEditor, newDoc, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
@@ -21,6 +22,8 @@ export function rerender() {
     const parts = h.slice(3).split("/");
     renderDetail(decodeURIComponent(parts[0]), parts[1] ? decodeURIComponent(parts[1]) : null);
     renderCart();
+  } else if (h === "/plates") {
+    renderPlates();
   } else if (h.indexOf("/board/") === 0) {
     renderBoard(decodeURIComponent(h.slice("/board/".length)));
   } else if (h === "/proposal") {
@@ -72,6 +75,11 @@ async function boot() {
         App.sfRev = sfServerRev;
         localStorage.setItem("rdp2-smart", JSON.stringify(App.smartFolders));
         localStorage.setItem("rdp2-sfrev", String(App.sfRev));
+      } else if (!Array.isArray(ui.state.smartFolders) && (App.smartFolders || []).length) {
+        // 서버에 저장된 검색이 아예 없다(state.json 초기화·새 데이터 폴더) → 이 브라우저의 목록을 다시 올린다.
+        //   rev 를 서버 값으로 맞춰야 한다 — 내 rev 가 더 크면 저장할 때마다 409 가 났다.
+        App.sfRev = sfServerRev;
+        saveSmart();
       } else if (sfServerRev > Number(App.sfRev || 0)) {
         App.sfRev = sfServerRev;
       }

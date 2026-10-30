@@ -6,6 +6,10 @@ import { showPlate } from "./plates.js";
 import { renderCart } from "./proposal.js";
 import { workOf, workSource } from "./work.js";
 import { openEditor } from "./editor.js";
+import { openHistory } from "./history.js";
+import { batchCompare, deltaText } from "./mix-compare.js";
+import { loadWorklogs } from "./worklog-link.js";
+import { loadProposalHistory } from "./feedback.js";
 
 /* ---------------- detail ---------------- */
 export const labOf = (p, v) => Object.assign({}, (p && p.label) || {}, (v && v.label) || {});
@@ -249,6 +253,29 @@ export function mixTable(mixes) {
       <td class="note">${m.change || m.note || ""}</td></tr>`);
   return String(html`<div class="tbl-wrap"><table class="mix">${head}${body}</table></div>`);
 }
+/* 같은 도수 배치끼리 나란히 — 바로 앞 배치보다 늘었으면 +, 줄었으면 − (규칙은 mix-compare.js) */
+function openBatchCompare(title, rows) {
+  const r = batchCompare(rows, inkOrder);
+  const cell = (c, unit) => c.v == null
+    ? `<td class="${c.changed ? "bc-chg" : ""}">${c.changed ? "없앰" : "—"}</td>`
+    : `<td class="${c.changed ? "bc-chg" : ""}">${esc(c.v)}${unit === "%" ? "%" : ""}${c.d ? `<small class="${c.d > 0 ? "up" : "down"}">${esc(deltaText(c.d))}</small>` : ""}</td>`;
+  const dlg = document.createElement("dialog");
+  dlg.className = "recipe-preview batch-compare";
+  dlg.innerHTML = `<button class="mini-btn recipe-close" type="button">닫기</button>
+    <h3>배치 비교 <small>${esc(title)}</small></h3>
+    <p class="recipe-help">왼쪽부터 배합표 순서입니다. 칸의 작은 숫자는 바로 앞 배치보다 늘거나 준 양이고, 바뀐 칸은 색으로 표시합니다.</p>
+    <div class="tbl-wrap"><table class="mix bc">
+      <tr><th></th>${r.batches.map((b) => `<th>${esc(b.batch)}${b.isReference ? " *" : ""}${b.plate ? `<small>${esc(b.plate)}</small>` : ""}</th>`).join("")}</tr>
+      ${r.rows.map((x) => `<tr class="${x.changedAny ? "" : "bc-same"}"><th>${x.key.startsWith("ink:") ? inkLabel(x.label) : esc(x.label)}</th>${x.cells.map((c) => cell(c, x.unit)).join("")}</tr>`).join("")}
+      <tr><th>결과</th>${r.batches.map((b) => `<td class="res res-${esc(b.result)}">${esc(RESULT_LABEL[b.result] || "—")}</td>`).join("")}</tr>
+      <tr><th>변경 메모</th>${r.batches.map((b) => `<td class="note">${esc(b.change)}</td>`).join("")}</tr>
+    </table></div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector(".recipe-close").onclick = () => dlg.close();
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.showModal();
+}
+
 export function pigmentTotal(m) {
   const keys = Object.keys(m.inks || {});
   const t = keys.reduce((a, k) => a + (Number(m.inks[k]) || 0), 0);
@@ -280,7 +307,8 @@ export function renderDetail(pid, vid, override) {
         <button class="plate-chip" data-layer-plate="${esc(layer)}" title="이 도수의 동판 — 클릭해서 변경">${plate ? "동판 " + esc(plate) : "동판 지정"}</button>
         ${plate ? `<span class="plate-pats">${((v.layerPatterns || {})[layer]) ? `<b class="cur">${esc(v.layerPatterns[layer])}</b>` : (platePatterns(plate).map((x) => `<b class="${x.id === p.id ? "cur" : ""}">${esc(x.label)}</b>`).join(" · ") || `<b class="cur">${esc(p.pattern.code)}</b>`)}</span>` : ""}
         ${plate ? `<button class="plate-info" data-plate="${esc(plate)}" title="동판 정보" aria-label="동판 ${esc(plate)} 정보">i</button>` : ""}
-        <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
+        <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span>
+        ${rows.length > 1 ? `<button type="button" class="mini-btn" data-batch-compare="${esc(layer)}" title="같은 도수의 배치끼리 무엇을 바꿨는지 나란히">배치 비교</button>` : ""}</h4>${mixTable(rows)}</div>`;
   }).join("");
 
   $("#view").innerHTML = `<div class="wrap">
@@ -298,6 +326,7 @@ export function renderDetail(pid, vid, override) {
             ? `<button class="btn-dark" id="newsave">저장</button><button class="btn-line" id="newcancel">취소</button>`
             : `<button class="btn-dark${inCart(p.id, v.id) ? " on" : ""}" id="addbtn">${inCart(p.id, v.id) ? "✓ 담김" : "제안서에 담기"}</button>
                  <button class="btn-line${App.meeting ? " on" : ""}" id="meetingbtn" title="고객 미팅용: 메모·배합·작업일지·동판 숨김">${App.meeting ? "미팅 모드 ON" : "미팅 모드"}</button>
+                 <button class="btn-line" id="histbtn" title="저장할 때마다 남은 이전 상태 보기·되돌리기">이력</button>
                  <button class="btn-line" id="editbtn">편집</button>`}
           </div>
         </div>
@@ -379,6 +408,8 @@ export function renderDetail(pid, vid, override) {
           ${(p.history || []).length ? `<section class="sec sec-hist"><h3>작업일지 <span class="cnt">${p.history.length}</span></h3><ul class="timeline">
             ${p.history.map((h) => `<li><span class="d">${esc(fmtDate(h.date))}</span><div><div>${esc(h.title)}</div>${h.summary ? `<div style="color:#8d9198;font-size:11.5px">${esc(h.summary)}</div>` : ""}</div></li>`).join("")}
           </ul></section>` : ""}
+          ${isNew ? "" : `<section class="sec sec-hist sec-fb" id="fb-sec" data-pid="${esc(p.id)}" hidden></section>`}
+          ${isNew ? "" : `<section class="sec sec-hist sec-wl" id="wl-sec" data-pid="${esc(p.id)}" hidden></section>`}
         </div>
       </div>
     </div>`;
@@ -387,6 +418,12 @@ export function renderDetail(pid, vid, override) {
     const layer = layers(v)[index];
     bindRecipePreviews(group, mixes.filter((m) => m.layer === layer));
   });
+  if (!isNew) loadProposalHistory(p, v);   // 이 시편이 들어간 확정본과 고객 반응
+  if (!isNew) loadWorklogs(p);      // 작업일지(PCCS3)에서 이 시편과 관련된 작업 — 비동기, 없으면 칸을 숨긴 채로
+  $$("[data-batch-compare]").forEach((b) => (b.onclick = () => {
+    const layer = b.dataset.batchCompare;
+    openBatchCompare(`${p.pattern.code} · ${vName(v)} · ${layer}`, mixes.filter((m) => m.layer === layer));
+  }));
   if (sameAsVar) bindRecipePreviews($("#view .sec-mix"), sameAsVar.mixes || []);
   if (isNew) {
     $("#newsave").onclick = () => saveNewPattern();
@@ -396,6 +433,9 @@ export function renderDetail(pid, vid, override) {
     if (addBtn) addBtn.onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
     const editBtn = $("#editbtn");
     if (editBtn) editBtn.onclick = async () => { await inlineSettled(pid); openEditor(pid, v.id); };
+    const histBtn = $("#histbtn");
+    // 고치던 메모(인라인 저장)가 끝난 뒤 열어야 '지금 상태'와 rev 가 맞는다
+    if (histBtn) histBtn.onclick = async () => { await inlineSettled(pid); openHistory(pid, (saved) => renderDetail(pid, (saved.variations || []).some((x) => x.id === v.id) ? v.id : null)); };
     const meetBtn = $("#meetingbtn");
     if (meetBtn) meetBtn.onclick = () => { App.meeting = !App.meeting; saveLS(); renderDetail(pid, v.id); };
   }

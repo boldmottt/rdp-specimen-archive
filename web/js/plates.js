@@ -44,7 +44,8 @@ export async function showPlate(lot, anchor) {
       <div class="pp-meta">${esc([info.type, info.size].filter(Boolean).join(" · ") || "—")}</div>
       ${info.note ? `<div class="pp-note">${esc(info.note)}</div>` : ""}
       ${info.created ? `<div class="pp-date">${esc(fmtDate(info.created))}</div>` : ""}
-      ${used ? `<div class="pp-sub">이 동판에 들어간 패턴</div><ul>${used}</ul>` : ""}`;
+      ${used ? `<div class="pp-sub">이 동판에 들어간 패턴</div><ul>${used}</ul>` : ""}
+      ${location.hash === "#/plates" ? "" : `<a class="pp-all" href="#/plates" data-goto="1">동판 대장 전체 보기 →</a>`}`;
   $$("[data-goto]", pop).forEach((a) => (a.onclick = () => pop.classList.remove("on")));
 }
 

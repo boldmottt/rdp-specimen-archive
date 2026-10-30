@@ -506,7 +506,8 @@ export function renderDrawer() {
       clientInput.addEventListener("input", upd);
       clientInput.addEventListener("change", () => {
         const fixed = canonical(clientInput.value, known);   // hyundai → HYUNDAI
-        if (fixed !== clientInput.value) clientInput.value = fixed;
+        // 초안은 oninput 으로만 바뀐다 — 입력칸 값만 고치면 화면은 맞는데 저장은 예전 표기로 됐다
+        if (fixed !== clientInput.value) { clientInput.value = fixed; E.draft.client = fixed; }
         upd();
       });
       upd();

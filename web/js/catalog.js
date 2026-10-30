@@ -297,7 +297,8 @@ export function renderCatalog() {
 
   // 태그 칩 줄 — 지금 프로젝트 범위에서 많이 쓴 태그부터. 누르면 #태그 가 검색창에 들어간다.
   // 자동 태그 — 필드 값에서 계산한 것(저장하지 않음). 직접 단 태그와 구분선으로 나눈다.
-  const autoRows = autoFacets(App.patterns, workOf, 6);
+  //   직접 단 태그처럼 지금 프로젝트 범위로 센다 — 다른 프로젝트 수까지 세면 눌렀을 때 숫자와 결과가 달랐다
+  const autoRows = autoFacets(App.project === "all" ? App.patterns : App.patterns.filter((p) => p.project === App.project), workOf, 6);
 
   const tagbar = (() => {
     const tags = tagCounts(App.patterns, App.project).slice(0, 20);
@@ -363,6 +364,7 @@ export function renderCatalog() {
               <button type="button" data-act="sync">DB 동기화</button>
               <button type="button" data-act="none">결과 빼기 (${hitCount}개)</button>
               <button type="button" data-act="board">${App.project === "all" ? "컬러 보드 (프로젝트 선택)" : `${esc(App.project)} 컬러 보드`}</button>
+              <button type="button" data-act="plates">동판 대장</button>
               <button type="button" data-act="help">검색 문법</button>
             </div>
           </div>
@@ -435,8 +437,8 @@ export function renderCatalog() {
   // 다시 그리면 툴바가 새로 만들어져 초점이 body 로 빠진다 → 원래 있던 자리로 돌려준다
   const refocus = (sel) => { const el = $(sel); if (el) el.focus(); };
   const addAll = (focusSel) => {
-    filtered();                                   // HITS 를 지금 조건으로 다시 채운다
-    App.patterns.forEach((p) => (HITS.get(p.id) || []).forEach((vid) => {
+    // 화면에 보이는 순서(정렬 포함)대로 담는다 — 제안서 순서가 곧 담은 순서다. filtered()가 HITS 도 다시 채운다
+    filtered().forEach((p) => (HITS.get(p.id) || []).forEach((vid) => {
       if (!inCart(p.id, vid)) App.cart.push({ pid: p.id, vid });
     }));
     saveLS(); renderCatalog(); renderCart();
@@ -499,6 +501,7 @@ export function renderCatalog() {
       if (act === "csv") downloadCsv(list, (pid) => HITS.get(pid));
       else if (act === "none") removeAll("#morebtn");
       else if (act === "help") toast(QUERY_HELP, 6500);
+      else if (act === "plates") location.hash = "#/plates";
       else if (act === "sync") doSyncAll();
       else if (act === "board") {
         // 좁은 화면에서는 결과 줄의 보드 링크가 숨으므로 메뉴가 유일한 진입로다

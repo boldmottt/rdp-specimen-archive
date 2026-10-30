@@ -89,6 +89,10 @@ def handle(path, query, cfg):
                      "frontmatter": w.fm if w.kind in ("v3", "v2") else None,
                      "error": w.error}
 
+    if path == "/api/pccs/related":
+        # 아카이브 상세 화면 — 이 시편(코드·동판)과 관련된 작업 기록
+        return 200, {"ok": True, "entries": worklog.related_entries(idx, query.get("code") or [], query.get("lot") or [])}
+
     if path == "/api/pccs/plates":
         return 200, {"ok": True, "plates": idx.plates()}
 

@@ -73,8 +73,9 @@ const uiSync = createUiSync({
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   }).then(async (r) => ({ status: r.status, json: await r.json().catch(() => null) })),
 
+  // 못 읽으면 null — 서버가 정말 비어 있는 것({})과 구분해야 초기화된 서버를 복구할 수 있다
   fetchState: async () => {
-    try { const ui = await apiGet("/api/ui"); return (ui && ui.state) || {}; } catch (e) { return {}; }
+    try { const ui = await apiGet("/api/ui"); return ui && ui.state && typeof ui.state === "object" ? ui.state : null; } catch (e) { return null; }
   },
 
   getBody: (withFolders) => {
@@ -87,6 +88,12 @@ const uiSync = createUiSync({
   onRev: (json) => {
     const rev = Number((json && json.state && json.state.smartFoldersRev) || 0) || 0;
     if (rev) App.sfRev = rev;
+    try { localStorage.setItem(LS_SFREV, String(App.sfRev)); } catch (e) {}
+  },
+
+  // 서버에 저장된 검색이 없다(state.json 초기화·새 데이터 폴더) → 서버 rev 로 맞춰 내 목록을 다시 올린다
+  onRebase: (state) => {
+    App.sfRev = Number(state.smartFoldersRev || 0) || 0;
     try { localStorage.setItem(LS_SFREV, String(App.sfRev)); } catch (e) {}
   },
 

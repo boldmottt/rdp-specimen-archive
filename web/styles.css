@@ -785,10 +785,15 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .bd-cell .bd-de{color:var(--ink-3);font-size:11px}
 .bd-empty{color:var(--ink-3);font-size:13px}
 
-/* 컬러 보드 인쇄 — 이 화면에서만 건다(제안서 인쇄 규칙과 섞이지 않게 body.board-mode 로 범위 제한) */
+/* 컬러 보드 인쇄 — 이 화면에서만 건다(제안서 인쇄 규칙과 섞이지 않게 body.board-mode 로 범위 제한)
+   제안서용 @page 는 여백 0(시트가 스스로 여백을 가진다)이라, 보드는 이름 붙인 페이지로 여백을 따로 준다
+   — 안 그러면 종이 끝까지 찍혀 프린터가 가장자리를 잘랐다. 견본 칸은 페이지 사이에서 쪼개지지 않게. */
+@page board{size:A4;margin:12mm}
 @media print{
   body.board-mode .topbar,body.board-mode .cartbar,body.board-mode .noprint{display:none!important}
   body.board-mode .wrap{padding:0;max-width:none}
+  body.board-mode .wrap.board{page:board}
+  body.board-mode .bd-cell{break-inside:avoid}
   body.board-mode .bd-grid{grid-template-columns:repeat(4,1fr);gap:8mm}
   body.board-mode .bd-sw{height:22mm;print-color-adjust:exact;-webkit-print-color-adjust:exact}
   body.board-mode .bd-head h1{font-size:15pt}
@@ -897,3 +902,70 @@ a.prop-status.ok:hover{background:#fff}
 /* 편집기 안내 링크 (예: 작업일은 「작업」에서 수정) */
 .link-btn{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .link-btn:hover{color:var(--ink-2)}
+
+/* 변경 이력 (상세 [이력]) */
+.history-dialog .hi-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.history-dialog .hi-row{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.history-dialog .hi-top{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.history-dialog .hi-when{font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums}
+.history-dialog .hi-restore{font-size:11.5px;padding:4px 10px}
+.history-dialog .hi-ch{margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--ink-2);line-height:1.6}
+.history-dialog .hi-note{margin-top:6px;font-size:11.5px;color:var(--ink-3)}
+.history-dialog .hi-err{color:var(--ink-3);font-size:12px;display:flex;gap:10px}
+
+/* 배치 비교 (상세 배합 [배치 비교]) */
+.batch-compare h3 small{font-size:12px;font-weight:500;color:var(--ink-3);margin-left:6px}
+.batch-compare table.bc th small{display:block;font-weight:400;color:var(--ink-3);font-size:10px}
+.batch-compare table.bc tr > th:first-child{text-align:left;white-space:nowrap}
+.batch-compare td small{display:block;font-size:10px;font-weight:650}
+.batch-compare td small.up{color:#b4442c}
+.batch-compare td small.down{color:#2c6cb4}
+.batch-compare td.bc-chg{background:#fff4d6}
+.batch-compare tr.bc-same td{color:var(--ink-3)}
+
+/* 상세 — 작업일지(PCCS3) 연결 */
+.sec-wl .wl-meta{font-size:11px;color:var(--ink-3);margin-left:4px}
+.sec-wl .wl-sub{color:#8d9198;font-size:11.5px;line-height:1.5}
+.sec-wl .wl-open{font-size:11px;color:var(--ink-2);text-decoration:underline;text-underline-offset:2px}
+.sec-wl .wl-none{color:#8d9198;font-size:12px}
+.sec-wl .wl-plate{margin-top:10px}
+.sec-wl .wl-plate summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
+.sec-wl .wl-plate summary small{color:var(--ink-3)}
+
+/* 고객 피드백 (확정본 [고객 피드백] · 상세 '제안 이력') */
+.feedback-dialog h3 small{font-size:12px;font-weight:500;color:var(--ink-3);margin-left:6px}
+.feedback-dialog .fb-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.feedback-dialog .fb-row{display:flex;gap:12px;border:1px solid var(--line);border-radius:10px;padding:10px}
+.feedback-dialog .fb-th{width:72px;height:48px;object-fit:cover;border-radius:6px;background:#eceae5;flex:none}
+.feedback-dialog .fb-main{flex:1;display:flex;flex-direction:column;gap:6px;font-size:12.5px;min-width:0}
+.feedback-dialog .fb-seg{display:flex;gap:6px;flex-wrap:wrap}
+.fb-btn{border:1px solid var(--line-2);background:var(--surface);border-radius:999px;font-size:11.5px;padding:3px 10px;cursor:pointer}
+.fb-btn.on.fb-adopted,.fb-tag.fb-adopted{background:#e3f1e6;border-color:#2f7d46;color:#1f5d33}
+.fb-btn.on.fb-revise,.fb-tag.fb-revise{background:#fff1d6;border-color:#b07a12;color:#7a5409}
+.fb-btn.on.fb-rejected,.fb-tag.fb-rejected{background:#f7e1dd;border-color:#a8442f;color:#7d2c1d}
+.feedback-dialog .fb-note{border:1px solid var(--line-2);border-radius:7px;padding:5px 8px;font:inherit;font-size:12px}
+.feedback-dialog .fb-foot{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--ink-3)}
+.fb-tag{display:inline-block;border:1px solid;border-radius:999px;font-size:10.5px;padding:0 7px;margin-left:4px}
+.sec-fb .fb-other{opacity:.65}
+.arch-fb{font-style:normal;margin-left:6px;color:var(--ink-2)}
+@media screen and (max-width:760px){.feedback-dialog .fb-th{display:none}}
+
+/* 동판 대장 (#/plates) */
+.plates-page .pl-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:26px 0 10px}
+.plates-page .pl-head h1{margin:0;font-size:24px}
+.plates-page .pl-sub{color:var(--ink-3);font-size:12.5px}
+.plates-page .pl-tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.plates-page .pl-q{flex:1;min-width:200px;max-width:360px;border:1px solid var(--line-2);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px}
+.plates-page .pl-n{color:var(--ink-3);font-size:12px}
+.plates-page .pl-warn{color:var(--ink-3);font-size:11.5px;min-height:1em;margin:4px 0 10px}
+.plates-page .pl-table td,.plates-page .pl-table th{text-align:left;vertical-align:top}
+.plates-page .pl-table small{display:block;color:var(--ink-3);font-size:10.5px}
+.plates-page .pl-lot{border:0;background:none;font:inherit;font-family:var(--mono);font-weight:650;text-decoration:underline;text-underline-offset:2px;cursor:pointer;padding:0}
+.plates-page .pl-flag{display:inline-block;margin-top:3px;font-size:10px;border:1px solid #b07a12;color:#7a5409;background:#fff1d6;border-radius:999px;padding:0 6px}
+.plates-page .pl-arch{display:flex;flex-wrap:wrap;gap:4px 8px}
+.plates-page .pl-pat{font-size:12px;text-decoration:underline;text-underline-offset:2px}
+.plates-page .pl-pat small{display:inline;margin-left:3px}
+.plates-page .pl-none{color:var(--ink-3);font-size:12px}
+.plates-page .pl-dbpats{font-size:11.5px;color:var(--ink-2);max-width:220px}
+#plate-pop .pp-all{display:block;margin-top:8px;font-size:11.5px;text-decoration:underline}
+.plates-page .pl-lot-txt{font-family:var(--mono)}

@@ -777,6 +777,39 @@ class PushTests(Base):
         self.assertEqual(con.execute("SELECT bl, vl FROM rdp_mixes").fetchone(), (5.0, 2.0))
         con.close()
 
+    def old_schema_db(self):
+        """bl·vl 칼럼을 아직 늘리지 않은 rdp.db (다른 PC·백업에서 되살린 DB)"""
+        con = sqlite3.connect(self.db)
+        con.execute("DROP TABLE rdp_mixes")
+        con.execute(SCHEMA.replace(", bl REAL, vl REAL", ""))
+        con.execute("INSERT INTO rdp_mixes (project, pattern_code, plate, layer, batch_no, mt, result)"
+                    " VALUES ('P','W01','26_001','1도','B1',30,'')")
+        con.commit()
+        con.close()
+
+    def test_old_schema_db_still_reads_and_pushes_known_inks(self):
+        self.old_schema_db()
+        self.assertEqual(server.read_rdp_mixes("P", "W01")[0]["inks"], {"MT": 30})
+        m = {"layer": "1도", "batch": "B2", "plate": "26_001", "inks": {"MT": 10.0}, "result": "", "isReference": False}
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [m]}]))
+        st, r = self.push("P-W01")
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["inserted"], 1, r)
+
+    def test_old_schema_db_blocks_blue_with_clear_message(self):
+        self.old_schema_db()
+        m = {"layer": "1도", "batch": "B2", "plate": "26_001", "inks": {"BL": 5.0}, "result": "", "isReference": False}
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [m]}]))
+        st, pv = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(st, 200, pv)
+        self.assertIn("ADD COLUMN bl", pv.get("blocked", ""), pv)
+        st, r = self.push("P-W01")
+        self.assertEqual(st, 409, r)
+        self.assertIn("ADD COLUMN bl", r["error"])
+        con = sqlite3.connect(self.db)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM rdp_mixes").fetchone()[0], 1)   # 아무것도 안 들어갔다
+        con.close()
+
     def test_insert_keeps_coating_so_sync_round_trips(self):
         doc = pattern("P-W01", "P", "W01", [
             {"id": "v01", "colorCode": "K-1", "mixes": []},
@@ -1195,6 +1228,31 @@ class ProposalTests(Base):
         self.assertEqual(st, 200)                                       # 확정본 사본은 남아 있다
         self.assertEqual(raw, b"\xff\xd8fakejpeg")
 
+    def test_feedback_saved_per_color_and_listed_on_specimen(self):
+        st, r = self.req("POST", "/api/proposals", self.doc())
+        slug = r["slug"]
+        st, r = self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v01", "status": "adopted", "note": " 좋음 "})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["feedback"]["P-W01::v01"]["note"], "좋음")
+        self.assertEqual(r["counts"]["adopted"], 1)
+        snap = self.req("GET", f"/api/proposals/{slug}")[1]["proposal"]
+        self.assertEqual(snap["items"][0]["variations"][0]["name"], "Gray")      # 스냅샷은 그대로
+        self.assertEqual(self.req("GET", "/api/proposals")[1]["proposals"][0]["feedback"]["adopted"], 1)
+        st, r = self.req("GET", "/api/proposals-for/P-W01")
+        self.assertEqual([(x["docNo"], x["vid"], x["status"], x["note"]) for x in r["items"]],
+                         [("RDP-P-20261028-01", "v01", "adopted", "좋음")])
+        self.assertEqual(self.req("GET", "/api/proposals-for/P-X")[1]["items"], [])
+        # 상태·메모를 다 비우면 기록을 지운다
+        st, r = self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v01", "status": "", "note": ""})
+        self.assertEqual(r["feedback"], {})
+
+    def test_feedback_rejects_unknown_color_and_status(self):
+        slug = self.req("POST", "/api/proposals", self.doc())[1]["slug"]
+        self.assertEqual(self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v99", "status": "adopted"})[0], 400)
+        self.assertEqual(self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v01", "status": "maybe"})[0], 400)
+        self.assertEqual(self.req("POST", "/api/proposals/" + urllib.parse.quote("없는것") + "/feedback", {"key": "P-W01::v01", "status": "adopted"})[0], 404)
+        self.assertEqual(self.req("POST", "/api/proposals/..%2Fx/feedback", {"key": "a", "status": ""})[0], 400)
+
     def test_missing_image_needs_confirmation(self):
         st, r = self.req("POST", "/api/proposals", self.doc(images=("gone.jpg",)))
         self.assertEqual(st, 409, r)
@@ -1442,6 +1500,24 @@ class UiStateTests(Base):
 
     SF = [{"id": "sf1", "name": "세미나", "q": "#컬러세미나 -@MQ5", "project": "all", "sort": "recent"}]
 
+    def test_concurrent_cart_save_does_not_drop_folder_save(self):
+        """서버는 요청마다 스레드 — 읽기·병합·쓰기 사이에 다른 저장이 끼면 먼저 쓴 쪽이 사라졌다."""
+        import threading
+        orig = server.merge_ui_state
+
+        def slow_merge(cur, body):
+            time.sleep(0.15)               # 읽은 뒤 쓰기 전에 다른 요청이 들어올 틈을 넓힌다
+            return orig(cur, body)
+
+        with mock.patch.object(server, "merge_ui_state", slow_merge):
+            a = threading.Thread(target=self.req, args=("PUT", "/api/ui", {"smartFolders": self.SF, "smartFoldersRev": 0}))
+            b = threading.Thread(target=self.req, args=("PUT", "/api/ui", {"cart": [{"pid": "A", "vid": "v01"}], "ts": 2}))
+            a.start(); time.sleep(0.05); b.start()
+            a.join(); b.join()
+        st, r = self.req("GET", "/api/ui")
+        self.assertEqual(r["state"].get("smartFolders"), self.SF)
+        self.assertEqual(r["state"].get("cart"), [{"pid": "A", "vid": "v01"}])
+
     def test_folders_saved_and_not_wiped_by_cart_only_save(self):
         st, r = self.req("PUT", "/api/ui", {"cart": [], "prop": {}, "ts": 1, "smartFolders": self.SF, "smartFoldersRev": 0})
         self.assertEqual(st, 200, r)
@@ -1569,3 +1645,88 @@ class VarWorkTests(Base):
         got = next(x for x in r["patterns"] if x["id"] == "P-WORK")
         self.assertEqual(got["variations"][1]["work"], {"place": "API", "worker": "이석희", "volume": "5"})
         self.assertNotIn("work", got["variations"][0])
+
+
+class HistoryTests(Base):
+    """이전 버전(_backup) 목록과 휴지통 사진 되살리기 — 되돌리기 자체는 화면이 평소 저장(PUT)으로 한다."""
+
+    def test_versions_newest_first_and_restore_via_put(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "status": "검토"}])
+        st, r = self.put("P-W01", doc, create=True)
+        self.assertEqual(st, 200, r)
+        for status in ("가승인", "승인"):
+            doc["variations"][0]["status"] = status
+            st, r = self.put("P-W01", doc, rev=r["rev"])
+            self.assertEqual(st, 200, r)
+            time.sleep(0.002)             # 백업 파일 이름(밀리초)이 겹치지 않게
+        st, h = self.req("GET", "/api/history/P-W01")
+        self.assertEqual(st, 200, h)
+        self.assertEqual(h["total"], 2)
+        self.assertEqual([it["doc"]["variations"][0]["status"] for it in h["items"]], ["가승인", "검토"])
+        # 화면처럼: 가장 옛 버전을 지금 rev 로 다시 저장 → 지금 상태가 또 백업된다
+        old = h["items"][-1]["doc"]
+        st, r2 = self.put("P-W01", old, rev=r["rev"])
+        self.assertEqual(st, 200, r2)
+        self.assertEqual(self.read_pattern("P-W01")["variations"][0]["status"], "검토")
+        self.assertEqual(self.req("GET", "/api/history/P-W01")[1]["total"], 3)
+
+    def test_other_ids_with_same_prefix_are_not_mixed(self):
+        os.makedirs(server.BACKUP, exist_ok=True)
+        for n in ("P-W01.20261030-101010-001.json", "P-W01.x.20261030-101010-002.json", "P-W011.20261030-101010-003.json"):
+            with open(os.path.join(server.BACKUP, n), "w", encoding="utf-8") as f:
+                json.dump(pattern("X", "P", "W01", []), f)
+        st, h = self.req("GET", "/api/history/P-W01")
+        self.assertEqual([it["stamp"] for it in h["items"]], ["20261030-101010-001"])
+        self.assertEqual(self.req("GET", "/api/history/..%2Fx")[0], 400)
+
+    def test_missing_images_are_reported_and_recovered_from_trash(self):
+        os.makedirs(server.BACKUP, exist_ok=True)
+        with open(os.path.join(server.BACKUP, "P-W01.20261030-101010-001.json"), "w", encoding="utf-8") as f:
+            json.dump(pattern("P-W01", "P", "W01", [{"id": "v01", "images": ["v01-1.jpg", "v01-2.jpg"]}]), f)
+        os.makedirs(server.TRASH, exist_ok=True)
+        with open(os.path.join(server.TRASH, "20261030-111111-000_P-W01_v01-1.jpg"), "wb") as f:
+            f.write(b"jpg")
+        st, h = self.req("GET", "/api/history/P-W01")
+        self.assertEqual(h["items"][0]["missingImages"], ["v01-1.jpg", "v01-2.jpg"])
+        st, r = self.req("POST", "/api/history/P-W01/recover-images", {"images": ["v01-1.jpg", "v01-2.jpg", "../x.jpg"]})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["recovered"], ["v01-1.jpg"])
+        self.assertEqual(r["missing"], ["v01-2.jpg", "../x.jpg"])
+        self.assertTrue(os.path.isfile(os.path.join(server.IMAGES, "P-W01", "v01-1.jpg")))
+        self.assertEqual(os.listdir(server.TRASH), [])
+
+
+class PlateListTests(Base):
+    """동판 대장 — rdp.db 동판 표 전체와 그 동판에 들어간 패턴."""
+
+    def make_tables(self):
+        con = sqlite3.connect(self.db)
+        con.executescript("""
+            CREATE TABLE projects (id INTEGER PRIMARY KEY, code TEXT);
+            CREATE TABLE patterns (id INTEGER PRIMARY KEY, code TEXT, project_id INTEGER);
+            CREATE TABLE plates (id INTEGER PRIMARY KEY, lot_no TEXT, size TEXT, type TEXT, note TEXT, created_date TEXT);
+            CREATE TABLE plate_patterns (id INTEGER PRIMARY KEY, plate_id INTEGER, pattern_id INTEGER, layer TEXT);
+            INSERT INTO projects VALUES (1, 'P');
+            INSERT INTO patterns VALUES (1, 'W01', 1), (2, 'W02', 1);
+            INSERT INTO plates VALUES (1, '26_001', '100x100', '부식', '메모', '2026-01-02'), (2, '26_002', '', '', '', '');
+            INSERT INTO plate_patterns VALUES (1, 1, 1, '1도'), (2, 1, 2, '2도');
+        """)
+        con.commit()
+        con.close()
+
+    def test_lists_plates_with_patterns(self):
+        self.make_tables()
+        st, r = self.req("GET", "/api/plates")
+        self.assertEqual(st, 200, r)
+        self.assertNotIn("dbError", r)
+        self.assertEqual([p["lot"] for p in r["plates"]], ["26_001", "26_002"])
+        self.assertEqual(r["plates"][0]["usedBy"], [
+            {"id": "P-W01", "project": "P", "code": "W01", "layer": "1도"},
+            {"id": "P-W02", "project": "P", "code": "W02", "layer": "2도"}])
+        self.assertEqual(r["plates"][1]["usedBy"], [])
+
+    def test_db_without_plate_tables_says_why(self):
+        st, r = self.req("GET", "/api/plates")         # 테스트 DB 에는 rdp_mixes 만 있다
+        self.assertEqual(st, 200)
+        self.assertEqual(r["plates"], [])
+        self.assertIn("동판 표", r["dbError"])

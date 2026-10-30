@@ -5,10 +5,12 @@ import { rerender } from "./main.js";
 import { groupOrder, movePattern, moveColor, normalizeOrder, movePatternTo, moveColorTo, sortPatterns } from "./cart-order.js";
 import { createHistory, sameItems } from "./order-history.js";
 import { workOf } from "./work.js";
+import { fbCountText, openFeedback } from "./feedback.js";
 
 /* ---------------- 순서 레일 상태 ---------------- */
-let railOpen = true;
-try { railOpen = localStorage.getItem("rdp.orderRail") !== "0"; } catch (e) {}
+// 좁은 화면(1079px 이하)에서는 레일이 화면을 덮는 서랍이다 → 처음엔 접어 두고, 사용자가 고른 적이 있으면 그걸 따른다
+let railOpen = !(typeof matchMedia === "function" && matchMedia("(max-width:1079px)").matches);
+try { const v = localStorage.getItem("rdp.orderRail"); if (v === "0" || v === "1") railOpen = v === "1"; } catch (e) {}
 const orderHistory = createHistory(20);
 let lastCart = [];          // 항목 구성이 바뀌면 되돌리기 기록을 비운다
 
@@ -489,7 +491,7 @@ function paintArchive() {
           <span class="arch-thumb">${x.thumb ? html`<img src="${archCtx(x.slug).img(x.thumb.pid, x.thumb.name)}?w=240" alt="" loading="lazy">` : ""}</span>
           <span class="arch-main"><b>${x.title || "제안서"}</b><span>${[x.client, x.by].filter(Boolean).join(" · ") || "—"}</span></span>
           <span class="arch-doc">${x.docNo || "—"} <em>Rev.${x.rev}</em></span>
-          <span class="arch-n">패턴 ${x.patterns} · 컬러 ${x.variations}${x.missing ? html` · <i class="warn">이미지 ${x.missing}장 없음</i>` : ""}</span>
+          <span class="arch-n">패턴 ${x.patterns} · 컬러 ${x.variations}${x.missing ? html` · <i class="warn">이미지 ${x.missing}장 없음</i>` : ""}${fbCountText(x.feedback) ? html`<i class="arch-fb">${fbCountText(x.feedback)}</i>` : ""}</span>
           <span class="arch-date">${x.date ? fmtDate(x.date) : ""}<small>확정 ${stamp(x.createdAt)}</small></span>
         </a>`)}</div>`
     : html`<div class="empty-state"><h2>${list.length ? "찾는 제안서가 없습니다" : "아직 확정한 제안서가 없습니다"}</h2><p>제안서 화면에서 [확정 저장]을 누르면 여기에 보관됩니다.</p></div>`}`);
@@ -516,6 +518,7 @@ export async function renderArchived(slug) {
         <strong class="arch-title">${docLabel(m)}</strong>
         <span class="arch-count">${m.title} · 확정 ${stamp(snap.createdAt || doc.createdAt)}${(snap.missing || []).length ? ` · 이미지 ${(snap.missing || []).length}장 없음` : ""}</span>
         <div class="grow"></div>
+        <button class="btn-line" id="afeedback" title="컬러마다 고객 반응(채택·수정 요청·반려)과 의견을 남깁니다">고객 피드백${fbCountText(feedbackCounts(doc)) ? html` <small>${fbCountText(feedbackCounts(doc))}</small>` : ""}</button>
         <button class="btn-line" id="arevise" title="이 확정본 내용을 작성 중인 제안서로 불러와 개정본(Rev+1)을 만듭니다">개정본 만들기</button>
         <button class="btn-dark" id="aprint">인쇄 / PDF</button>
       </div></div>
@@ -523,7 +526,19 @@ export async function renderArchived(slug) {
   $("#aback").onclick = () => (location.hash = "#/proposals");
   $("#aprint").onclick = () => window.print();
   $("#arevise").onclick = () => reviseFrom(m);
+  $("#afeedback").onclick = () => openFeedback(slug, doc, m, archCtx(slug).img, (counts) => {
+    const b = $("#afeedback");
+    if (b) b.innerHTML = "고객 피드백" + (fbCountText(counts) ? ` <small>${esc(fbCountText(counts))}</small>` : "");
+    const row = (App.archList || []).find((x) => x.slug === slug);
+    if (row) row.feedback = counts;                         // 보관함 목록 숫자도 맞춘다
+  });
 }
+
+const feedbackCounts = (doc) => {
+  const out = {};
+  Object.values(doc.feedback || {}).forEach((f) => { if (f && f.status) out[f.status] = (out[f.status] || 0) + 1; });
+  return out;
+};
 
 // 확정본을 작성 중인 제안서로 불러와 같은 번호의 다음 Rev로 고칠 수 있게 한다
 function reviseFrom(m) {
@@ -696,6 +711,12 @@ function applyOrderInPlace() {
     });
   });
 
+  // 끌어 놓을 자리(data-index)도 새 순서로 — 안 고치면 두 번째로 끌 때 옛 번호로 엉뚱한 자리에 들어갔다
+  $$(".or-pat", list).forEach((row, gi) => {
+    row.dataset.index = gi;
+    $$(".or-col", row).forEach((c, ci) => { c.dataset.index = ci; });
+  });
+
   // 쪽 번호 다시 계산
   const pages = Array.from(document.querySelectorAll(".sheet.s-page"));
   $$("[data-page-for]", list).forEach((el) => {
@@ -715,6 +736,9 @@ function applyOrderInPlace() {
 
 /** 순서를 바꾸는 모든 조작의 공통 통로 — 기록 → 적용 → 저장 → (다시 그리지 않고) 반영 */
 function applyOrder(next) {
+  // 손잡이를 눌렀다 그 자리에 놓는 등 순서가 그대로면 아무것도 하지 않는다('되돌리기'만 생기던 문제)
+  const key = (cart) => cart.map((c) => `${c.pid}/${c.vid}`).join("|");
+  if (key(next) === key(App.cart)) return;
   orderHistory.push(App.cart);
   App.cart = next;
   saveLS();
@@ -821,7 +845,11 @@ function bindRailKeys() {
     const grip = e.target && e.target.closest ? e.target.closest(".or-grip") : null;
     if (!grip) {
       // 손잡이에 초점이 없어도, 좁은 화면에서 서랍이 열려 있으면 Esc 로 닫는다
-      if (e.key === "Escape" && window.matchMedia("(max-width:1079px)").matches) {
+      const ae = document.activeElement;
+      const typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT" || ae.isContentEditable);
+      // 열린 대화상자(확정 저장 등)·입력 중이면 그쪽 Esc 가 먼저다 — 여기서 막으면 대화상자가 안 닫혔다
+      if (e.key === "Escape" && !typing && !document.querySelector("dialog[open]")
+        && window.matchMedia("(max-width:1079px)").matches) {
         const rail = document.getElementById("order-rail");
         if (rail && !rail.classList.contains("is-hidden")) {
           e.preventDefault(); e.stopPropagation();
@@ -855,7 +883,9 @@ function bindRailKeys() {
       App.cart = kind === "pat" ? movePattern(App.cart, grab.pid, d) : moveColor(App.cart, grab.pid, grab.vid, d);
       App.cart = normalizeOrder(App.cart);
       saveLS(); applyOrderInPlace();
-      const again = document.querySelector(`.or-pat[data-pid="${CSS.escape(grab.pid)}"] .or-grip[data-grip="${grab.kind}"]`);
+      const again = grab.kind === "pat"
+        ? document.querySelector(`.or-pat[data-pid="${CSS.escape(grab.pid)}"] .or-head .or-grip`)
+        : document.querySelector(`.or-col[data-pid="${CSS.escape(grab.pid)}"][data-vid="${CSS.escape(grab.vid)}"] .or-grip`);
       if (again) { again.focus({ preventScroll: true }); again.closest("[data-kind]").classList.add("is-dragging"); }
       return;
     }

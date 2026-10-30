@@ -147,7 +147,7 @@ test("②-3 409 인데 서버 상태를 못 받으면 받아들이지 않는다(
     send: (body) => new Promise((resolve) => {
       calls.push({ body, done: false, settle: (st) => resolve({ status: st, json: st === 200 ? { ok: true, state: { smartFoldersRev: 5 } } : null }) });
     }),
-    fetchState: async () => ({}),                       // 서버가 아무것도 못 줬다
+    fetchState: async () => null,                       // 서버 상태를 못 읽었다(네트워크)
     getBody: (withFolders) => (withFolders ? { smartFolders: [{ id: "mine" }] } : { cart: [] }),
     onAdopt: (s) => adopted.push(s),
     onRev: () => {},
@@ -163,6 +163,62 @@ test("②-3 409 인데 서버 상태를 못 받으면 받아들이지 않는다(
   await answer(409);
   assert.equal(adopted.length, 0, "빈 상태로 덮어쓰지 않는다");
   assert.equal(calls.length, 2, "장바구니 재전송은 그대로 한다");
+  assert.ok(!calls[1].body.smartFolders, "rev 를 모르니 이번엔 폴더 없이(같은 409 반복 방지)");
   await answer(200);
   await p;
+  assert.equal(sync.isDirty(), true, "바꾼 폴더는 다음 저장 때 다시 보낸다(버리지 않는다)");
+});
+
+/* ③ 서버 state.json 이 초기화됐을 때(rev 0, 폴더 없음) — 예전엔 내 rev 가 더 커서 영원히 409 */
+function resetHarness(serverStates) {
+  const calls = [];
+  const rebased = [];
+  let rev = 7;                                          // 이 브라우저가 기억하는 rev (서버보다 큼)
+  const sync = createUiSync({
+    send: (body) => new Promise((resolve) => {
+      calls.push({ body, done: false, settle: (st) => resolve({ status: st, json: st === 200 ? { ok: true, state: { smartFoldersRev: 1 } } : null }) });
+    }),
+    fetchState: async () => serverStates.shift() ?? {},
+    getBody: (withFolders) => (withFolders ? { smartFolders: [{ id: "mine" }], smartFoldersRev: rev } : { cart: [] }),
+    onAdopt: () => assert.fail("받아들일 서버 목록이 없다"),
+    onRev: (j) => { rev = j.state.smartFoldersRev; },
+    onRebase: (s) => { rebased.push(s); rev = Number(s.smartFoldersRev || 0); },
+  });
+  const answer = async (st) => {
+    await tick();
+    const c = calls.find((x) => !x.done);
+    assert.ok(c, "응답할 요청이 없습니다");
+    c.done = true; c.settle(st);
+    await tick();
+  };
+  return { sync, calls, rebased, answer };
+}
+
+test("③-1 서버가 초기화돼 폴더가 없으면 서버 rev 로 맞춰 내 목록을 다시 올린다", { timeout: 4000 }, async () => {
+  const h = resetHarness([{}]);                         // GET /api/ui → state: {}
+  h.sync.markDirty();
+  const p = h.sync.push();
+  await h.answer(409);
+  assert.equal(h.rebased.length, 1);
+  assert.equal(h.calls.length, 2);
+  assert.deepEqual(h.calls[1].body.smartFolders, [{ id: "mine" }], "내 목록을 다시 싣는다");
+  assert.equal(h.calls[1].body.smartFoldersRev, 0, "서버 rev(0)로 맞춰서");
+  await h.answer(200);
+  await p;
+  assert.equal(h.sync.isDirty(), false);
+});
+
+test("③-2 rev 를 맞췄는데도 409 면 더 시도하지 않는다(루프 없음)", { timeout: 4000 }, async () => {
+  const h = resetHarness([{}, {}]);
+  h.sync.markDirty();
+  const p = h.sync.push();
+  await h.answer(409);                                  // → 맞추고 다시
+  await h.answer(409);                                  // → 또 409: 이번엔 장바구니만
+  assert.equal(h.rebased.length, 1, "rev 맞추기는 한 번만");
+  assert.equal(h.calls.length, 3);
+  assert.ok(!h.calls[2].body.smartFolders);
+  await h.answer(200);
+  await p;
+  assert.equal(h.calls.length, 3, "그 뒤로 더 보내지 않는다");
+  assert.equal(h.sync.isDirty(), true, "폴더 변경은 남겨 둔다");
 });

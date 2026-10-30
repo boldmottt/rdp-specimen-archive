@@ -35,8 +35,8 @@ export function bindPicks(order, rerender) {
   });
   const clear = $("#sel-clear");
   if (clear) clear.onclick = () => { App.sel.clear(); lastPick = -1; rerender(); };
-  const open = $("#bulk-open");
-  if (open) open.onclick = () => openBulkDialog(rerender);
+  // '일괄 편집' 버튼은 catalog.js 가 검색 범위(hitsOf)와 함께 연결한다 — 여기서 범위 없이 붙이면
+  //   '검색에 맞는 컬러만'이 아무것도 못 고르는 대화상자가 된다
 }
 
 /** 선택 바 HTML — 아무것도 안 골랐으면 빈 문자열(자리도 차지하지 않는다) */

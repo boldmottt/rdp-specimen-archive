@@ -324,6 +324,9 @@ def _str_list(x):
 UI_KEYS = ("cart", "prop", "ts", "smartFolders", "smartFoldersRev")
 
 
+UI_LOCK = threading.Lock()   # 요청마다 스레드 — 읽기·병합·쓰기 사이에 다른 저장이 끼어 서로 덮지 않게
+
+
 class UIStateConflict(Exception):
     """다른 곳에서 먼저 바뀐 저장된 검색을 덮어쓰려 할 때."""
 
@@ -657,8 +660,9 @@ def read_rdp_mixes(project: str, code: str):
         if not code_enum and "예정" in res:
             code_enum = "plan"
         inks = {}
+        cols = r.keys()
         for k, col in INK_COLS:
-            v = r[col]
+            v = r[col] if col in cols else None   # bl·vl 칼럼을 아직 늘리지 않은 DB도 읽는다
             if v not in (None, 0, 0.0):
                 inks[k] = v
         out.append({
@@ -759,6 +763,28 @@ PCT_COLS = (("mattingPct", "matting_agent_pct"), ("mattingG", "matting_agent_g")
 
 
 DB_INKS = {k for k, _ in INK_COLS}
+
+
+def rdp_ink_cols(con) -> tuple:
+    """이 rdp.db에 실제로 있는 잉크 칼럼만. bl·vl은 나중에 늘린 칼럼이라 예전 DB(다른 PC·백업)에는 없다."""
+    have = {r[1] for r in con.execute("PRAGMA table_info(rdp_mixes)")}
+    return tuple((k, c) for k, c in INK_COLS if c in have)
+
+
+def rdp_missing_ink_cols() -> dict:
+    """{잉크 코드: 칼럼} — 이 rdp.db에 없는 잉크 칼럼. DB가 없거나 못 열면 빈 dict(다른 곳에서 알린다)."""
+    path = rdp_db_path()
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            have = {c for _, c in rdp_ink_cols(con)}
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return {}
+    return {k: c for k, c in INK_COLS if c not in have}
 
 
 def doc_code(doc) -> str:
@@ -980,6 +1006,15 @@ def plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
     if issues:
         return {"updates": [], "inserts": [], "moves": [], "skipped": issues, "ink_errors": issues,
                 "blocked": "DB에 연결되지 않은 잉크 또는 중복 연결이 있습니다. 컬러연구소에서 연결을 확인하세요. 전체 전송을 중단합니다."}
+    missing = rdp_missing_ink_cols()
+    used = sorted({k for v in prepared.get("variations") or [] for m in v.get("mixes") or []
+                   for k, x in (m.get("inks") or {}).items() if k in missing and float(x or 0)})
+    if used:
+        cols = ", ".join(missing[k] for k in used)
+        fix = "; ".join(f"ALTER TABLE rdp_mixes ADD COLUMN {missing[k]} REAL DEFAULT 0" for k in used)
+        return {"updates": [], "inserts": [], "moves": [], "skipped": [],
+                "blocked": f"이 rdp.db에는 {cols} 칼럼이 없어 {', '.join(used)} 잉크를 보낼 수 없습니다. "
+                           f"DB를 백업한 뒤 칼럼을 먼저 늘리세요: {fix}"}
     vs = {v["id"]: v for v in prepared.get("variations") or []}
     mapped = [(vs[v["id"]], rows) for v, rows in assigned]
     plan = _plan_push(prepared, mapped, old_rows, old_key, taken)
@@ -1152,6 +1187,7 @@ def apply_push(project, code, doc, plan):
     try:
         cur = con.cursor()
         cur.execute("BEGIN IMMEDIATE")
+        ink_cols = rdp_ink_cols(con)   # 계획 단계에서 없는 칼럼에 쓸 값은 이미 막았다 — 있는 칼럼만 넣는다
         n_upd = n_ins = n_mov = 0
         failed = []
         bad_ids = set()
@@ -1200,18 +1236,18 @@ def apply_push(project, code, doc, plan):
             m = by_key.get((ins["vid"], ins["layer"], ins["batch"], ins["plate"]))
             if not m:
                 continue
-            inks = {k: float((m.get("inks") or {}).get(k) or 0) for k, _ in INK_COLS}
+            inks = [float((m.get("inks") or {}).get(k) or 0) for k, _ in ink_cols]
             cur.execute("SAVEPOINT ins_row")
             try:
-                cur.execute("""INSERT INTO rdp_mixes
+                cur.execute(f"""INSERT INTO rdp_mixes
                 (date, project, pattern_code, plate, layer, batch_no, is_base,
-                 mt, bk, wh, ye, rd, cl, ye_d, bl, vl,
+                 {", ".join(c for _, c in ink_cols)},
                  matting_agent_pct, matting_agent_g, thinner_pct, thinner_g, hardener_pct, hardener_g,
                  result, change_summary, notes, coating_code)
-                VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?, {",".join("?" * len(ink_cols))}, ?,?,?,?,?,?, ?,?,?,?)""",
                 (m.get("date") or datetime.now().strftime("%Y-%m-%d"), project, ins.get("code") or code, ins["plate"], ins["layer"], ins["batch"],
                  1 if m.get("isReference") else 0,
-                 inks["MT"], inks["BK"], inks["WH"], inks["YE"], inks["RD"], inks["CL"], inks["YE-D"], inks["BL"], inks["VL"],
+                 *inks,
                  m.get("mattingPct"), m.get("mattingG"), m.get("thinnerPct"), m.get("thinnerG"),
                  m.get("hardenerPct"), m.get("hardenerG"),
                  RESULT_TO_DB.get(m.get("result") or "", ""), m.get("change") or "", m.get("note") or "",
@@ -1339,6 +1375,34 @@ def read_plate_info(lot: str):
                     "project": u["project"], "code": u["pattern_code"],
                     "layer": u["layer"] or ""} for u in used],
     }
+
+
+def list_plates() -> dict:
+    """rdp.db 의 동판 전체 + 그 동판에 들어간 패턴(프로젝트·코드·도수). 동판 표가 없는 DB면 빈 목록과 이유."""
+    path = rdp_db_path()
+    if not path or not os.path.isfile(path):
+        return {"plates": [], "dbError": f"rdp.db를 찾을 수 없습니다: {path or '(경로 미설정)'}"}
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            rows = con.execute("SELECT id, lot_no, size, type, note, created_date FROM plates ORDER BY lot_no").fetchall()
+            used = con.execute("""
+                SELECT pp.plate_id, pr.code AS project, pa.code AS pattern_code, pp.layer
+                FROM plate_patterns pp
+                JOIN patterns pa ON pa.id = pp.pattern_id
+                JOIN projects pr ON pr.id = pa.project_id
+                ORDER BY pr.code, pa.code, pp.layer""").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        return {"plates": [], "dbError": f"rdp.db에 동판 표가 없거나 읽지 못했습니다 ({e})"}
+    by = {}
+    for u in used:
+        by.setdefault(u["plate_id"], []).append({"id": f"{u['project']}-{u['pattern_code']}", "project": u["project"],
+                                                 "code": u["pattern_code"], "layer": u["layer"] or ""})
+    return {"plates": [{"lot": r["lot_no"], "size": r["size"] or "", "type": r["type"] or "", "note": r["note"] or "",
+                        "created": r["created_date"] or "", "usedBy": by.get(r["id"], [])} for r in rows if r["lot_no"]]}
 
 
 def load_all():
@@ -1644,7 +1708,58 @@ def proposal_summary(slug, doc):
             "date": doc.get("date") or "", "createdAt": snap.get("createdAt") or doc.get("createdAt") or "",
             "patterns": len(items), "variations": len(vars_),
             "missing": len(snap.get("missing")) if isinstance(snap.get("missing"), list) else 0,
-            "thumb": thumb}
+            "thumb": thumb, "feedback": feedback_counts(doc)}
+
+
+# ---------------------------------------------------------------- 고객 피드백(확정본)
+# 확정본의 내용(스냅샷)은 그대로 두고, 컬러별 고객 반응만 proposal.json 의 feedback 에 따로 적는다.
+FEEDBACK_STATUS = {"": "", "adopted": "채택", "revise": "수정 요청", "rejected": "반려"}
+
+
+def _feedback(doc) -> dict:
+    fb = doc.get("feedback")
+    return {k: v for k, v in fb.items() if isinstance(k, str) and isinstance(v, dict)} if isinstance(fb, dict) else {}
+
+
+def feedback_counts(doc) -> dict:
+    out = {k: 0 for k in FEEDBACK_STATUS if k}
+    for v in _feedback(doc).values():
+        if v.get("status") in out:
+            out[v["status"]] += 1
+    return out
+
+
+def set_feedback(doc, key, status, note) -> dict:
+    """키(시편id::컬러id)가 이 확정본에 있는 컬러일 때만. 상태·메모가 둘 다 비면 그 키를 지운다."""
+    keys = {f"{pid}::{v.get('id')}" for pid, v in _proposal_vars(doc) if pid and v.get("id")}
+    if key not in keys:
+        raise ValueError("이 확정본에 없는 컬러입니다")
+    if status not in FEEDBACK_STATUS:
+        raise ValueError("상태는 채택·수정 요청·반려 중 하나입니다")
+    note = str(note or "").strip()[:500]
+    fb = _feedback(doc)
+    if status or note:
+        fb[key] = {"status": status, "note": note, "at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+    else:
+        fb.pop(key, None)
+    doc["feedback"] = fb
+    return fb
+
+
+def proposals_for(pid) -> list:
+    """이 시편이 들어간 확정본들 — 컬러마다 한 줄 (상세 화면 '제안 이력')."""
+    out = []
+    for slug, doc in load_proposals():
+        fb = _feedback(doc)
+        for p_, v in _proposal_vars(doc):
+            if p_ != pid or not v.get("id"):
+                continue
+            f = fb.get(f"{pid}::{v['id']}") or {}
+            out.append({"slug": slug, "docNo": doc.get("docNo") or "", "rev": str(doc.get("rev") or "0"),
+                        "title": doc.get("title") or "", "client": doc.get("client") or "", "date": doc.get("date") or "",
+                        "vid": v["id"], "name": v.get("name") or v.get("colorName") or v.get("colorCode") or v["id"],
+                        "status": f.get("status") or "", "note": f.get("note") or "", "at": f.get("at") or ""})
+    return out
 
 
 def proposal_shape_error(doc) -> str:
@@ -1700,6 +1815,21 @@ def _srgb8_to_lab(rgb):
     return [round(x, 2) for x in cm.rgb_lin_to_lab(tuple(lin))]
 
 
+def render_thumb(src, dst, w):
+    """축소본 캐시(dst)가 원본(src)보다 오래됐거나 없으면 Lanczos 로 다시 만든다.
+    카드 축소본(serve_thumb)과 대표색(ensure_thumb)이 같은 캐시 파일을 쓰므로 만드는 법도 하나여야 한다."""
+    if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+        return
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        h = max(1, round(w * im.height / im.width))
+        im = im.resize((w, h), Image.LANCZOS)
+        tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"   # 같은 축소본을 동시에 만들어도 서로의 반쯤 쓴 파일을 옮기지 않게
+        im.save(tmp, "JPEG", quality=82, optimize=True)
+        os.replace(tmp, dst)
+
+
 def ensure_thumb(pid, name, w=240):
     """축소본 경로를 돌려준다(없으면 만든다).
     serve_thumb 과 같은 캐시 규칙(_thumb/<pid>/<w>-<name>)을 쓴다 — 대표색을 뽑을 때
@@ -1711,18 +1841,8 @@ def ensure_thumb(pid, name, w=240):
     src = safe_join(IMAGES, pid, name)
     if not os.path.isfile(src):
         raise FileNotFoundError(name)
-    dst_dir = safe_join(THUMBS, pid)
-    dst = os.path.join(dst_dir, f"{w}-{name}")
-    if not (os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src)):
-        from PIL import Image
-        os.makedirs(dst_dir, exist_ok=True)
-        with Image.open(src) as im:
-            im = im.convert("RGB")
-            h = max(1, round(w * im.height / im.width))
-            im = im.resize((w, h), Image.LANCZOS)
-            tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"
-            im.save(tmp, "JPEG", quality=82, optimize=True)
-            os.replace(tmp, dst)
+    dst = os.path.join(safe_join(THUMBS, pid), f"{w}-{name}")
+    render_thumb(src, dst, w)
     return dst, src
 
 
@@ -1756,6 +1876,66 @@ def image_colors(pid, name, top=3):
     except Exception as e:
         print(f"[warn] 대표색 캐시를 쓰지 못했습니다 {pid}/{name}: {e}")
     return out
+
+
+# ---------------------------------------------------------------- 이전 버전(_backup)
+# 저장할 때마다 바뀌기 전 파일을 _backup/<id>.<시각>.json 으로 남긴다. 화면에서 보고 되돌릴 수 있게 읽어 준다.
+# 되돌리기는 여기서 하지 않는다 — 화면이 옛 문서를 평소 저장(PUT, rev 검사·백업·동판 추적)으로 보낸다.
+STAMP_RE = r"\d{8}-\d{6}-\d{3}"
+HISTORY_LIMIT = 40
+
+
+def history_versions(pid, limit=HISTORY_LIMIT) -> dict:
+    """{items: [{stamp, doc, missingImages} | {stamp, error}], total} — 최근 것부터 limit개."""
+    safe_id(pid)
+    pat = re.compile(r"^" + re.escape(pid) + r"\.(" + STAMP_RE + r")\.json$")
+    names = []
+    if os.path.isdir(BACKUP):
+        for n in os.listdir(BACKUP):
+            m = pat.match(n)
+            if m:
+                names.append((m.group(1), n))
+    names.sort(reverse=True)
+    items = []
+    for stamp, n in names[:limit]:
+        try:
+            with open(os.path.join(BACKUP, n), encoding="utf-8") as fh:
+                doc = json.load(fh)
+            if not isinstance(doc, dict):
+                raise ValueError("문서가 객체가 아님")
+        except (OSError, ValueError) as e:
+            items.append({"stamp": stamp, "error": f"읽지 못함: {e}"})
+            continue
+        names_in = {str(x) for v in (doc.get("variations") or []) if isinstance(v, dict)
+                    for x in (v.get("images") or []) if x}
+        missing = sorted(x for x in names_in
+                         if not IMAGE_NAME_RE.match(x) or not os.path.isfile(os.path.join(IMAGES, pid, x)))
+        items.append({"stamp": stamp, "doc": doc, "missingImages": missing})
+    return {"items": items, "total": len(names)}
+
+
+def recover_images(pid, names) -> dict:
+    """옛 버전이 쓰던 사진이 휴지통(_trash/<시각>_<id>_<파일>)에 있으면 제자리로 되돌린다."""
+    safe_id(pid)
+    recovered, missing = [], []
+    trash = sorted(os.listdir(TRASH), reverse=True) if os.path.isdir(TRASH) else []   # 최근 것 먼저
+    for name in names if isinstance(names, list) else []:
+        name = str(name)
+        if not IMAGE_NAME_RE.match(name):
+            missing.append(name)
+            continue
+        dst = safe_join(IMAGES, pid, name)
+        if os.path.isfile(dst):
+            continue
+        pat = re.compile(r"^" + STAMP_RE + "_" + re.escape(pid) + "_" + re.escape(name) + r"(~\d+)?$")
+        hit = next((t for t in trash if pat.match(t) and os.path.isfile(os.path.join(TRASH, t))), None)
+        if not hit:
+            missing.append(name)
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(os.path.join(TRASH, hit), dst)
+        recovered.append(name)
+    return {"recovered": recovered, "missing": missing}
 
 
 def parse_lab_ref(raw):
@@ -2144,6 +2324,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"ok": True, **diff_db(doc, load_doc_rows(doc))})
                 except Exception as e:
                     return self.error(400, str(e))
+            if p == "/api/plates":
+                return self.json({"ok": True, **list_plates()})
             if p.startswith("/api/plate/"):
                 lot = p[len("/api/plate/"):].strip("/")
                 try:
@@ -2179,6 +2361,12 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/patterns":
                 pats, errs = load_all()
                 return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
+            if p.startswith("/api/history/"):
+                pid = p[len("/api/history/"):].strip("/")
+                try:
+                    return self.json({"ok": True, **history_versions(pid)})
+                except ValueError as e:
+                    return self.error(400, str(e))
             if p == "/api/colors":
                 qs = parse_qs(urlparse(self.path).query)
                 try:
@@ -2212,6 +2400,13 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:   # noqa: BLE001 — 깨진 확정본 하나가 목록 전체를 멈추지 않게
                         print(f"[warn] 제안서 요약 실패 {s_}: {e}")
                 return self.json({"ok": True, "proposals": rows})
+            if p.startswith("/api/proposals-for/"):
+                pid = p[len("/api/proposals-for/"):].strip("/")
+                try:
+                    safe_id(pid)
+                except ValueError as e:
+                    return self.error(400, str(e))
+                return self.json({"ok": True, "items": proposals_for(pid)})
             if p == "/api/proposals/next-no":
                 prefix = (parse_qs(u.query).get("prefix") or [""])[0]
                 if not re.match(r"^[0-9A-Za-z._-]{1,40}$", prefix):   # 날짜를 2026.10.28처럼 써도
@@ -2271,18 +2466,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(400, f"JSON 파싱 실패: {e}")
                 if not isinstance(body, dict):
                     return self.error(400, "UI 상태는 객체여야 합니다")
-                cur = {}
-                if os.path.exists(UI_STATE):
+                with UI_LOCK:
+                    cur = {}
+                    if os.path.exists(UI_STATE):
+                        try:
+                            with open(UI_STATE, encoding="utf-8") as f:
+                                cur = json.load(f)
+                        except Exception:
+                            cur = {}
                     try:
-                        with open(UI_STATE, encoding="utf-8") as f:
-                            cur = json.load(f)
-                    except Exception:
-                        cur = {}
-                try:
-                    merged = merge_ui_state(cur, body)
-                except UIStateConflict as e:
-                    return self.error(409, str(e))
-                atomic_write(UI_STATE, json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8"))
+                        merged = merge_ui_state(cur, body)
+                    except UIStateConflict as e:
+                        return self.error(409, str(e))
+                    atomic_write(UI_STATE, json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8"))
                 return self.json({"ok": True, "state": merged})
             if p.startswith("/api/patterns/"):
                 pid = p[len("/api/patterns/"):].strip("/")
@@ -2452,6 +2648,16 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json({"ok": True, **res, "skipped": len(plan["skipped"])})
                 except Exception as e:
                     return self.error(500, str(e))
+            if p.startswith("/api/history/") and p.endswith("/recover-images"):
+                pid = p[len("/api/history/"):-len("/recover-images")].strip("/")
+                try:
+                    safe_id(pid)
+                    body = json.loads(self.read_body() or b"{}")
+                    with pid_lock(pid):
+                        res = recover_images(pid, (body or {}).get("images"))
+                except ValueError as e:
+                    return self.error(400, str(e))
+                return self.json({"ok": True, **res})
             if p.startswith("/api/rdp/sync/"):
                 pid = p[len("/api/rdp/sync/"):].strip("/")
                 return self.sync_pattern(pid)
@@ -2565,6 +2771,26 @@ class Handler(BaseHTTPRequestHandler):
                                  json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
                 return self.json({"ok": True, "path": os.path.join(d, "proposal.json"),
                                   "slug": os.path.basename(d), "images": len(copied), "missing": missing})
+            if p.startswith("/api/proposals/") and p.endswith("/feedback"):
+                try:
+                    d = proposal_dir(p[len("/api/proposals/"):-len("/feedback")].strip("/"))
+                    body = json.loads(self.read_body() or b"{}")
+                    if not isinstance(body, dict):
+                        raise ValueError("요청 형식 오류")
+                except ValueError as e:
+                    return self.error(400, str(e))
+                path = os.path.join(d, "proposal.json")
+                with PROPOSAL_LOCK:
+                    if not os.path.isfile(path):
+                        return self.error(404, "확정본이 없습니다")
+                    with open(path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    try:
+                        fb = set_feedback(doc, str(body.get("key") or ""), str(body.get("status") or ""), body.get("note"))
+                    except ValueError as e:
+                        return self.error(400, str(e))
+                    atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+                return self.json({"ok": True, "feedback": fb, "counts": feedback_counts(doc)})
             return self.error(404, "not found")
         except Exception as e:
             self.error(500, str(e))
@@ -2777,18 +3003,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(400, str(e))
         if not os.path.isfile(src):
             return self.error(404, "이미지 없음")
-        if not (os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src)):
-            try:
-                from PIL import Image
-                os.makedirs(dst_dir, exist_ok=True)
-                im = Image.open(src).convert("RGB")
-                h = max(1, round(w * im.height / im.width))
-                im = im.resize((w, h), Image.LANCZOS)
-                tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"   # 같은 축소본을 동시에 만들어도 서로의 반쯤 쓴 파일을 옮기지 않게
-                im.save(tmp, "JPEG", quality=82, optimize=True)
-                os.replace(tmp, dst)
-            except Exception:
-                return self.serve_image(f"{pid}/{name}", base, cache)
+        try:
+            render_thumb(src, dst, w)
+        except Exception:
+            return self.serve_image(f"{pid}/{name}", base, cache)
         with open(dst, "rb") as f:
             body = f.read()
         self.send_response(200)
