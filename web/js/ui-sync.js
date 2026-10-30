@@ -32,7 +32,7 @@ export function createUiSync({ send, fetchState, getBody, onAdopt, onRev, onReba
   const api = {
     /** 폴더를 바꿨다 — 다음 push 에 smartFolders 를 싣는다.
      *  요청이 오가는 중이면 끝난 뒤 한 번 더 보내도록 예약한다(변경이 사라지지 않게). */
-    markDirty() { dirty = true; gen++; if (inflight) again = true; },
+    markDirty() { dirty = true; gen++; rebased = false; if (inflight) again = true; },   // 새 변경 = 복구 기회도 새로
     isDirty: () => dirty,
     isInflight: () => inflight,
 
