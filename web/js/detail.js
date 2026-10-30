@@ -7,6 +7,7 @@ import { renderCart } from "./proposal.js";
 import { workOf, workSource } from "./work.js";
 import { openEditor } from "./editor.js";
 import { openHistory } from "./history.js";
+import { batchCompare, deltaText } from "./mix-compare.js";
 
 /* ---------------- detail ---------------- */
 export const labOf = (p, v) => Object.assign({}, (p && p.label) || {}, (v && v.label) || {});
@@ -250,6 +251,29 @@ export function mixTable(mixes) {
       <td class="note">${m.change || m.note || ""}</td></tr>`);
   return String(html`<div class="tbl-wrap"><table class="mix">${head}${body}</table></div>`);
 }
+/* 같은 도수 배치끼리 나란히 — 바로 앞 배치보다 늘었으면 +, 줄었으면 − (규칙은 mix-compare.js) */
+function openBatchCompare(title, rows) {
+  const r = batchCompare(rows, inkOrder);
+  const cell = (c, unit) => c.v == null
+    ? `<td class="${c.changed ? "bc-chg" : ""}">${c.changed ? "없앰" : "—"}</td>`
+    : `<td class="${c.changed ? "bc-chg" : ""}">${esc(c.v)}${unit === "%" ? "%" : ""}${c.d ? `<small class="${c.d > 0 ? "up" : "down"}">${esc(deltaText(c.d))}</small>` : ""}</td>`;
+  const dlg = document.createElement("dialog");
+  dlg.className = "recipe-preview batch-compare";
+  dlg.innerHTML = `<button class="mini-btn recipe-close" type="button">닫기</button>
+    <h3>배치 비교 <small>${esc(title)}</small></h3>
+    <p class="recipe-help">왼쪽부터 배합표 순서입니다. 칸의 작은 숫자는 바로 앞 배치보다 늘거나 준 양이고, 바뀐 칸은 색으로 표시합니다.</p>
+    <div class="tbl-wrap"><table class="mix bc">
+      <tr><th></th>${r.batches.map((b) => `<th>${esc(b.batch)}${b.isReference ? " *" : ""}${b.plate ? `<small>${esc(b.plate)}</small>` : ""}</th>`).join("")}</tr>
+      ${r.rows.map((x) => `<tr class="${x.changedAny ? "" : "bc-same"}"><th>${x.key.startsWith("ink:") ? inkLabel(x.label) : esc(x.label)}</th>${x.cells.map((c) => cell(c, x.unit)).join("")}</tr>`).join("")}
+      <tr><th>결과</th>${r.batches.map((b) => `<td class="res res-${esc(b.result)}">${esc(RESULT_LABEL[b.result] || "—")}</td>`).join("")}</tr>
+      <tr><th>변경 메모</th>${r.batches.map((b) => `<td class="note">${esc(b.change)}</td>`).join("")}</tr>
+    </table></div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector(".recipe-close").onclick = () => dlg.close();
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.showModal();
+}
+
 export function pigmentTotal(m) {
   const keys = Object.keys(m.inks || {});
   const t = keys.reduce((a, k) => a + (Number(m.inks[k]) || 0), 0);
@@ -281,7 +305,8 @@ export function renderDetail(pid, vid, override) {
         <button class="plate-chip" data-layer-plate="${esc(layer)}" title="이 도수의 동판 — 클릭해서 변경">${plate ? "동판 " + esc(plate) : "동판 지정"}</button>
         ${plate ? `<span class="plate-pats">${((v.layerPatterns || {})[layer]) ? `<b class="cur">${esc(v.layerPatterns[layer])}</b>` : (platePatterns(plate).map((x) => `<b class="${x.id === p.id ? "cur" : ""}">${esc(x.label)}</b>`).join(" · ") || `<b class="cur">${esc(p.pattern.code)}</b>`)}</span>` : ""}
         ${plate ? `<button class="plate-info" data-plate="${esc(plate)}" title="동판 정보" aria-label="동판 ${esc(plate)} 정보">i</button>` : ""}
-        <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span></h4>${mixTable(rows)}</div>`;
+        <span>${rows.length} 배합${extra.length ? " · 예외 " + extra.map(esc).join(", ") : ""}</span>
+        ${rows.length > 1 ? `<button type="button" class="mini-btn" data-batch-compare="${esc(layer)}" title="같은 도수의 배치끼리 무엇을 바꿨는지 나란히">배치 비교</button>` : ""}</h4>${mixTable(rows)}</div>`;
   }).join("");
 
   $("#view").innerHTML = `<div class="wrap">
@@ -389,6 +414,10 @@ export function renderDetail(pid, vid, override) {
     const layer = layers(v)[index];
     bindRecipePreviews(group, mixes.filter((m) => m.layer === layer));
   });
+  $$("[data-batch-compare]").forEach((b) => (b.onclick = () => {
+    const layer = b.dataset.batchCompare;
+    openBatchCompare(`${p.pattern.code} · ${vName(v)} · ${layer}`, mixes.filter((m) => m.layer === layer));
+  }));
   if (sameAsVar) bindRecipePreviews($("#view .sec-mix"), sameAsVar.mixes || []);
   if (isNew) {
     $("#newsave").onclick = () => saveNewPattern();
