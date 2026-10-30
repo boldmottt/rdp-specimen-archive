@@ -931,3 +931,21 @@ a.prop-status.ok:hover{background:#fff}
 .sec-wl .wl-plate{margin-top:10px}
 .sec-wl .wl-plate summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
 .sec-wl .wl-plate summary small{color:var(--ink-3)}
+
+/* 고객 피드백 (확정본 [고객 피드백] · 상세 '제안 이력') */
+.feedback-dialog h3 small{font-size:12px;font-weight:500;color:var(--ink-3);margin-left:6px}
+.feedback-dialog .fb-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.feedback-dialog .fb-row{display:flex;gap:12px;border:1px solid var(--line);border-radius:10px;padding:10px}
+.feedback-dialog .fb-th{width:72px;height:48px;object-fit:cover;border-radius:6px;background:#eceae5;flex:none}
+.feedback-dialog .fb-main{flex:1;display:flex;flex-direction:column;gap:6px;font-size:12.5px;min-width:0}
+.feedback-dialog .fb-seg{display:flex;gap:6px;flex-wrap:wrap}
+.fb-btn{border:1px solid var(--line-2);background:var(--surface);border-radius:999px;font-size:11.5px;padding:3px 10px;cursor:pointer}
+.fb-btn.on.fb-adopted,.fb-tag.fb-adopted{background:#e3f1e6;border-color:#2f7d46;color:#1f5d33}
+.fb-btn.on.fb-revise,.fb-tag.fb-revise{background:#fff1d6;border-color:#b07a12;color:#7a5409}
+.fb-btn.on.fb-rejected,.fb-tag.fb-rejected{background:#f7e1dd;border-color:#a8442f;color:#7d2c1d}
+.feedback-dialog .fb-note{border:1px solid var(--line-2);border-radius:7px;padding:5px 8px;font:inherit;font-size:12px}
+.feedback-dialog .fb-foot{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--ink-3)}
+.fb-tag{display:inline-block;border:1px solid;border-radius:999px;font-size:10.5px;padding:0 7px;margin-left:4px}
+.sec-fb .fb-other{opacity:.65}
+.arch-fb{font-style:normal;margin-left:6px;color:var(--ink-2)}
+@media screen and (max-width:760px){.feedback-dialog .fb-th{display:none}}

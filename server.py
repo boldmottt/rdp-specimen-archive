@@ -1680,7 +1680,58 @@ def proposal_summary(slug, doc):
             "date": doc.get("date") or "", "createdAt": snap.get("createdAt") or doc.get("createdAt") or "",
             "patterns": len(items), "variations": len(vars_),
             "missing": len(snap.get("missing")) if isinstance(snap.get("missing"), list) else 0,
-            "thumb": thumb}
+            "thumb": thumb, "feedback": feedback_counts(doc)}
+
+
+# ---------------------------------------------------------------- 고객 피드백(확정본)
+# 확정본의 내용(스냅샷)은 그대로 두고, 컬러별 고객 반응만 proposal.json 의 feedback 에 따로 적는다.
+FEEDBACK_STATUS = {"": "", "adopted": "채택", "revise": "수정 요청", "rejected": "반려"}
+
+
+def _feedback(doc) -> dict:
+    fb = doc.get("feedback")
+    return {k: v for k, v in fb.items() if isinstance(k, str) and isinstance(v, dict)} if isinstance(fb, dict) else {}
+
+
+def feedback_counts(doc) -> dict:
+    out = {k: 0 for k in FEEDBACK_STATUS if k}
+    for v in _feedback(doc).values():
+        if v.get("status") in out:
+            out[v["status"]] += 1
+    return out
+
+
+def set_feedback(doc, key, status, note) -> dict:
+    """키(시편id::컬러id)가 이 확정본에 있는 컬러일 때만. 상태·메모가 둘 다 비면 그 키를 지운다."""
+    keys = {f"{pid}::{v.get('id')}" for pid, v in _proposal_vars(doc) if pid and v.get("id")}
+    if key not in keys:
+        raise ValueError("이 확정본에 없는 컬러입니다")
+    if status not in FEEDBACK_STATUS:
+        raise ValueError("상태는 채택·수정 요청·반려 중 하나입니다")
+    note = str(note or "").strip()[:500]
+    fb = _feedback(doc)
+    if status or note:
+        fb[key] = {"status": status, "note": note, "at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+    else:
+        fb.pop(key, None)
+    doc["feedback"] = fb
+    return fb
+
+
+def proposals_for(pid) -> list:
+    """이 시편이 들어간 확정본들 — 컬러마다 한 줄 (상세 화면 '제안 이력')."""
+    out = []
+    for slug, doc in load_proposals():
+        fb = _feedback(doc)
+        for p_, v in _proposal_vars(doc):
+            if p_ != pid or not v.get("id"):
+                continue
+            f = fb.get(f"{pid}::{v['id']}") or {}
+            out.append({"slug": slug, "docNo": doc.get("docNo") or "", "rev": str(doc.get("rev") or "0"),
+                        "title": doc.get("title") or "", "client": doc.get("client") or "", "date": doc.get("date") or "",
+                        "vid": v["id"], "name": v.get("name") or v.get("colorName") or v.get("colorCode") or v["id"],
+                        "status": f.get("status") or "", "note": f.get("note") or "", "at": f.get("at") or ""})
+    return out
 
 
 def proposal_shape_error(doc) -> str:
@@ -2319,6 +2370,13 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:   # noqa: BLE001 — 깨진 확정본 하나가 목록 전체를 멈추지 않게
                         print(f"[warn] 제안서 요약 실패 {s_}: {e}")
                 return self.json({"ok": True, "proposals": rows})
+            if p.startswith("/api/proposals-for/"):
+                pid = p[len("/api/proposals-for/"):].strip("/")
+                try:
+                    safe_id(pid)
+                except ValueError as e:
+                    return self.error(400, str(e))
+                return self.json({"ok": True, "items": proposals_for(pid)})
             if p == "/api/proposals/next-no":
                 prefix = (parse_qs(u.query).get("prefix") or [""])[0]
                 if not re.match(r"^[0-9A-Za-z._-]{1,40}$", prefix):   # 날짜를 2026.10.28처럼 써도
@@ -2683,6 +2741,26 @@ class Handler(BaseHTTPRequestHandler):
                                  json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
                 return self.json({"ok": True, "path": os.path.join(d, "proposal.json"),
                                   "slug": os.path.basename(d), "images": len(copied), "missing": missing})
+            if p.startswith("/api/proposals/") and p.endswith("/feedback"):
+                try:
+                    d = proposal_dir(p[len("/api/proposals/"):-len("/feedback")].strip("/"))
+                    body = json.loads(self.read_body() or b"{}")
+                    if not isinstance(body, dict):
+                        raise ValueError("요청 형식 오류")
+                except ValueError as e:
+                    return self.error(400, str(e))
+                path = os.path.join(d, "proposal.json")
+                with PROPOSAL_LOCK:
+                    if not os.path.isfile(path):
+                        return self.error(404, "확정본이 없습니다")
+                    with open(path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    try:
+                        fb = set_feedback(doc, str(body.get("key") or ""), str(body.get("status") or ""), body.get("note"))
+                    except ValueError as e:
+                        return self.error(400, str(e))
+                    atomic_write(path, json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
+                return self.json({"ok": True, "feedback": fb, "counts": feedback_counts(doc)})
             return self.error(404, "not found")
         except Exception as e:
             self.error(500, str(e))

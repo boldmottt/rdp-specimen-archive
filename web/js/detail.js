@@ -9,6 +9,7 @@ import { openEditor } from "./editor.js";
 import { openHistory } from "./history.js";
 import { batchCompare, deltaText } from "./mix-compare.js";
 import { loadWorklogs } from "./worklog-link.js";
+import { loadProposalHistory } from "./feedback.js";
 
 /* ---------------- detail ---------------- */
 export const labOf = (p, v) => Object.assign({}, (p && p.label) || {}, (v && v.label) || {});
@@ -407,6 +408,7 @@ export function renderDetail(pid, vid, override) {
           ${(p.history || []).length ? `<section class="sec sec-hist"><h3>작업일지 <span class="cnt">${p.history.length}</span></h3><ul class="timeline">
             ${p.history.map((h) => `<li><span class="d">${esc(fmtDate(h.date))}</span><div><div>${esc(h.title)}</div>${h.summary ? `<div style="color:#8d9198;font-size:11.5px">${esc(h.summary)}</div>` : ""}</div></li>`).join("")}
           </ul></section>` : ""}
+          ${isNew ? "" : `<section class="sec sec-hist sec-fb" id="fb-sec" data-pid="${esc(p.id)}" hidden></section>`}
           ${isNew ? "" : `<section class="sec sec-hist sec-wl" id="wl-sec" data-pid="${esc(p.id)}" hidden></section>`}
         </div>
       </div>
@@ -416,6 +418,7 @@ export function renderDetail(pid, vid, override) {
     const layer = layers(v)[index];
     bindRecipePreviews(group, mixes.filter((m) => m.layer === layer));
   });
+  if (!isNew) loadProposalHistory(p, v);   // 이 시편이 들어간 확정본과 고객 반응
   if (!isNew) loadWorklogs(p);      // 작업일지(PCCS3)에서 이 시편과 관련된 작업 — 비동기, 없으면 칸을 숨긴 채로
   $$("[data-batch-compare]").forEach((b) => (b.onclick = () => {
     const layer = b.dataset.batchCompare;

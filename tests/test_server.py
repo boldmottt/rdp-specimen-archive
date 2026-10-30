@@ -1228,6 +1228,31 @@ class ProposalTests(Base):
         self.assertEqual(st, 200)                                       # 확정본 사본은 남아 있다
         self.assertEqual(raw, b"\xff\xd8fakejpeg")
 
+    def test_feedback_saved_per_color_and_listed_on_specimen(self):
+        st, r = self.req("POST", "/api/proposals", self.doc())
+        slug = r["slug"]
+        st, r = self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v01", "status": "adopted", "note": " 좋음 "})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["feedback"]["P-W01::v01"]["note"], "좋음")
+        self.assertEqual(r["counts"]["adopted"], 1)
+        snap = self.req("GET", f"/api/proposals/{slug}")[1]["proposal"]
+        self.assertEqual(snap["items"][0]["variations"][0]["name"], "Gray")      # 스냅샷은 그대로
+        self.assertEqual(self.req("GET", "/api/proposals")[1]["proposals"][0]["feedback"]["adopted"], 1)
+        st, r = self.req("GET", "/api/proposals-for/P-W01")
+        self.assertEqual([(x["docNo"], x["vid"], x["status"], x["note"]) for x in r["items"]],
+                         [("RDP-P-20261028-01", "v01", "adopted", "좋음")])
+        self.assertEqual(self.req("GET", "/api/proposals-for/P-X")[1]["items"], [])
+        # 상태·메모를 다 비우면 기록을 지운다
+        st, r = self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v01", "status": "", "note": ""})
+        self.assertEqual(r["feedback"], {})
+
+    def test_feedback_rejects_unknown_color_and_status(self):
+        slug = self.req("POST", "/api/proposals", self.doc())[1]["slug"]
+        self.assertEqual(self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v99", "status": "adopted"})[0], 400)
+        self.assertEqual(self.req("POST", f"/api/proposals/{slug}/feedback", {"key": "P-W01::v01", "status": "maybe"})[0], 400)
+        self.assertEqual(self.req("POST", "/api/proposals/" + urllib.parse.quote("없는것") + "/feedback", {"key": "P-W01::v01", "status": "adopted"})[0], 404)
+        self.assertEqual(self.req("POST", "/api/proposals/..%2Fx/feedback", {"key": "a", "status": ""})[0], 400)
+
     def test_missing_image_needs_confirmation(self):
         st, r = self.req("POST", "/api/proposals", self.doc(images=("gone.jpg",)))
         self.assertEqual(st, 409, r)

@@ -5,6 +5,7 @@ import { rerender } from "./main.js";
 import { groupOrder, movePattern, moveColor, normalizeOrder, movePatternTo, moveColorTo, sortPatterns } from "./cart-order.js";
 import { createHistory, sameItems } from "./order-history.js";
 import { workOf } from "./work.js";
+import { fbCountText, openFeedback } from "./feedback.js";
 
 /* ---------------- 순서 레일 상태 ---------------- */
 // 좁은 화면(1079px 이하)에서는 레일이 화면을 덮는 서랍이다 → 처음엔 접어 두고, 사용자가 고른 적이 있으면 그걸 따른다
@@ -490,7 +491,7 @@ function paintArchive() {
           <span class="arch-thumb">${x.thumb ? html`<img src="${archCtx(x.slug).img(x.thumb.pid, x.thumb.name)}?w=240" alt="" loading="lazy">` : ""}</span>
           <span class="arch-main"><b>${x.title || "제안서"}</b><span>${[x.client, x.by].filter(Boolean).join(" · ") || "—"}</span></span>
           <span class="arch-doc">${x.docNo || "—"} <em>Rev.${x.rev}</em></span>
-          <span class="arch-n">패턴 ${x.patterns} · 컬러 ${x.variations}${x.missing ? html` · <i class="warn">이미지 ${x.missing}장 없음</i>` : ""}</span>
+          <span class="arch-n">패턴 ${x.patterns} · 컬러 ${x.variations}${x.missing ? html` · <i class="warn">이미지 ${x.missing}장 없음</i>` : ""}${fbCountText(x.feedback) ? html`<i class="arch-fb">${fbCountText(x.feedback)}</i>` : ""}</span>
           <span class="arch-date">${x.date ? fmtDate(x.date) : ""}<small>확정 ${stamp(x.createdAt)}</small></span>
         </a>`)}</div>`
     : html`<div class="empty-state"><h2>${list.length ? "찾는 제안서가 없습니다" : "아직 확정한 제안서가 없습니다"}</h2><p>제안서 화면에서 [확정 저장]을 누르면 여기에 보관됩니다.</p></div>`}`);
@@ -517,6 +518,7 @@ export async function renderArchived(slug) {
         <strong class="arch-title">${docLabel(m)}</strong>
         <span class="arch-count">${m.title} · 확정 ${stamp(snap.createdAt || doc.createdAt)}${(snap.missing || []).length ? ` · 이미지 ${(snap.missing || []).length}장 없음` : ""}</span>
         <div class="grow"></div>
+        <button class="btn-line" id="afeedback" title="컬러마다 고객 반응(채택·수정 요청·반려)과 의견을 남깁니다">고객 피드백${fbCountText(feedbackCounts(doc)) ? html` <small>${fbCountText(feedbackCounts(doc))}</small>` : ""}</button>
         <button class="btn-line" id="arevise" title="이 확정본 내용을 작성 중인 제안서로 불러와 개정본(Rev+1)을 만듭니다">개정본 만들기</button>
         <button class="btn-dark" id="aprint">인쇄 / PDF</button>
       </div></div>
@@ -524,7 +526,19 @@ export async function renderArchived(slug) {
   $("#aback").onclick = () => (location.hash = "#/proposals");
   $("#aprint").onclick = () => window.print();
   $("#arevise").onclick = () => reviseFrom(m);
+  $("#afeedback").onclick = () => openFeedback(slug, doc, m, archCtx(slug).img, (counts) => {
+    const b = $("#afeedback");
+    if (b) b.innerHTML = "고객 피드백" + (fbCountText(counts) ? ` <small>${esc(fbCountText(counts))}</small>` : "");
+    const row = (App.archList || []).find((x) => x.slug === slug);
+    if (row) row.feedback = counts;                         // 보관함 목록 숫자도 맞춘다
+  });
 }
+
+const feedbackCounts = (doc) => {
+  const out = {};
+  Object.values(doc.feedback || {}).forEach((f) => { if (f && f.status) out[f.status] = (out[f.status] || 0) + 1; });
+  return out;
+};
 
 // 확정본을 작성 중인 제안서로 불러와 같은 번호의 다음 Rev로 고칠 수 있게 한다
 function reviseFrom(m) {
