@@ -10,6 +10,7 @@ import { openHistory } from "./history.js";
 import { batchCompare, deltaText } from "./mix-compare.js";
 import { loadMixCheck, loadWorklogs } from "./worklog-link.js";
 import { loadProposalHistory } from "./feedback.js";
+import { compareList, inCompare, toggleCompareItem } from "./compare-page.js";
 
 /* ---------------- detail ---------------- */
 export const labOf = (p, v) => Object.assign({}, (p && p.label) || {}, (v && v.label) || {});
@@ -326,6 +327,8 @@ export function renderDetail(pid, vid, override) {
             ? `<button class="btn-dark" id="newsave">저장</button><button class="btn-line" id="newcancel">취소</button>`
             : `<button class="btn-dark${inCart(p.id, v.id) ? " on" : ""}" id="addbtn">${inCart(p.id, v.id) ? "✓ 담김" : "제안서에 담기"}</button>
                  <button class="btn-line${App.meeting ? " on" : ""}" id="meetingbtn" title="고객 미팅용: 메모·배합·작업일지·동판 숨김">${App.meeting ? "미팅 모드 ON" : "미팅 모드"}</button>
+                 <button class="btn-line${inCompare(p.id, v.id) ? " on" : ""}" id="cmpbtn" title="이 컬러를 나란히 비교에 담기/빼기 (최대 4개)">${inCompare(p.id, v.id) ? "✓ 비교" : "비교 +"}</button>
+                 ${compareList().length ? `<a class="btn-line" id="cmpopen" href="#/compare" title="담은 컬러 나란히 보기">비교 보기 ${compareList().length}</a>` : ""}
                  <button class="btn-line" id="histbtn" title="저장할 때마다 남은 이전 상태 보기·되돌리기">이력</button>
                  <button class="btn-line" id="editbtn">편집</button>`}
           </div>
@@ -434,6 +437,8 @@ export function renderDetail(pid, vid, override) {
     if (addBtn) addBtn.onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
     const editBtn = $("#editbtn");
     if (editBtn) editBtn.onclick = async () => { await inlineSettled(pid); openEditor(pid, v.id); };
+    const cmpBtn = $("#cmpbtn");
+    if (cmpBtn) cmpBtn.onclick = () => { toggleCompareItem(p.id, v.id); renderDetail(p.id, v.id); };
     const histBtn = $("#histbtn");
     // 고치던 메모(인라인 저장)가 끝난 뒤 열어야 '지금 상태'와 rev 가 맞는다
     if (histBtn) histBtn.onclick = async () => { await inlineSettled(pid); openHistory(pid, (saved) => renderDetail(pid, (saved.variations || []).some((x) => x.id === v.id) ? v.id : null)); };

@@ -5,6 +5,7 @@ import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
 import { renderBoard } from "./board.js";
 import { renderPlates } from "./plates-page.js";
+import { renderCompare } from "./compare-page.js";
 import { E, closeEditor, newDoc, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
@@ -12,6 +13,7 @@ import { bindCrop } from "./crop.js";
 export function rerender() {
   const h = location.hash.replace(/^#/, "");
   document.body.classList.remove("board-mode");   // 컬러 보드 전용 인쇄 규칙은 이 화면에서만
+  document.body.classList.remove("compare-mode");  // 비교 화면 인쇄 규칙(가로)도 그 화면에서만
   const nav = $("#navhome");
   if (nav) nav.style.display = h ? "" : "none";
   if (h === "/new") {
@@ -22,6 +24,8 @@ export function rerender() {
     const parts = h.slice(3).split("/");
     renderDetail(decodeURIComponent(parts[0]), parts[1] ? decodeURIComponent(parts[1]) : null);
     renderCart();
+  } else if (h === "/compare") {
+    renderCompare();
   } else if (h === "/plates") {
     renderPlates();
   } else if (h.indexOf("/board/") === 0) {
