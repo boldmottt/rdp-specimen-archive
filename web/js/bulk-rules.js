@@ -34,7 +34,7 @@ const low = (v) => s(v).toLowerCase();
 /**
  * 문서 하나에 일괄 편집을 적용한다(문서를 고친다).
  * @param doc   패턴 JSON (clone 해서 넘길 것)
- * @param spec  {status, worker, sop, rev, tagsAdd:[], tagsRemove:[]} — 빈 문자열/빈 배열은 "변경 안 함"
+ * @param spec  {project, status, worker, sop, rev, tagsAdd:[], tagsRemove:[]} — 빈 문자열/빈 배열은 "변경 안 함"
  * @param vids  null = 모든 컬러, Set = 그 컬러 id 만 (컬러 단위 항목에만 적용)
  * @returns 바뀐 칸 수 (0이면 저장할 필요 없음)
  */
@@ -48,6 +48,8 @@ export function applySpec(doc, spec, vids) {
     if (!val) return;                 // 빈 칸 = 변경 안 함
     if (o[k] !== val) { o[k] = val; n++; }
   };
+  // 프로젝트는 패턴 단위 값이다(파일 ID는 건드리지 않는다 — 상세 화면에서 프로젝트만 바꾸는 것과 같다)
+  set(doc, "project", s(spec.project));
   set(doc.work, "worker", s(spec.worker));
   set(doc.work, "sop", s(spec.sop));
 

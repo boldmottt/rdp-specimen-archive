@@ -35,6 +35,16 @@ test("작업자·양산 일정은 시편(패턴) 단위", () => {
   assert.equal(d.work.sop, "2027-01");
 });
 
+test("프로젝트도 일괄로 바꾼다 — 패턴 단위, ID 는 그대로", () => {
+  const d = doc();
+  const n = applySpec(d, { project: "NX5a" }, new Set(["v02"]));
+  assert.equal(n, 1);                        // 컬러 범위와 무관하게 패턴당 1칸
+  assert.equal(d.project, "NX5a");
+  assert.equal(d.id, "P1");                  // 파일 ID 는 건드리지 않는다
+  assert.equal(applySpec(d, { project: "NX5a" }, null), 0);   // 같은 값이면 0칸
+  assert.equal(applySpec(d, { project: "  " }, null), 0);     // 빈 칸은 변경 안 함
+});
+
 test("상태·Rev 는 컬러 범위를 준 컬러에만", () => {
   const d = doc();
   const n = applySpec(d, { status: "합격", rev: "2" }, new Set(["v02"]));

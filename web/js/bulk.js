@@ -73,6 +73,7 @@ function plan(spec, hitsOf) {
 export function openBulkDialog(rerender, hitsOf) {
   if (!App.sel.size) { toast("먼저 시편을 선택하세요"); return; }
   const statuses = [...new Set(App.patterns.flatMap((p) => (p.variations || []).map((v) => v.status)).filter(Boolean))];
+  const projects = [...new Set(App.patterns.map((p) => p.project).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
   let dlg = $("#bulk-dlg");
   if (!dlg) {
@@ -86,6 +87,8 @@ export function openBulkDialog(rerender, hitsOf) {
       <h3>일괄 편집 · ${App.sel.size}개 시편</h3>
       <p class="bulk-hint">${esc(BULK_HINT.trim())}</p>
       <div class="bulk-grid">
+        <label>프로젝트<input name="project" list="bulk-project" placeholder="비우면 그대로" autocomplete="off">
+          <datalist id="bulk-project">${projects.map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label>
         <label>상태<input name="status" list="bulk-status" placeholder="비우면 그대로">
           <datalist id="bulk-status">${statuses.map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label>
         <label>Rev<input name="rev" placeholder="비우면 그대로"></label>
@@ -109,6 +112,7 @@ export function openBulkDialog(rerender, hitsOf) {
   const f = dlg.querySelector("form");
   const list = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
   const read = () => ({
+    project: f.project.value.trim(),
     status: f.status.value.trim(), rev: f.rev.value.trim(),
     worker: f.worker.value.trim(), sop: f.sop.value.trim(),
     tagsAdd: list(f.tagsAdd.value), tagsRemove: list(f.tagsRemove.value),
