@@ -63,3 +63,30 @@ export async function loadWorklogs(p) {
       <ul class="timeline">${plate.map(entryHTML).join("")}</ul></details>` : ""}`;
   now.hidden = false;
 }
+
+/* ---------- 작업일지 ↔ 아카이브 배합 대조 ----------
+ * 같은 동판·도수·배치 코드로 작업일지에 적힌 값과 이 컬러의 배합 값이 다르면 배합 칸 위에 알린다.
+ * 어느 쪽이 맞는지는 사람이 판단한다 — 고치지 않는다. 일지 폴더가 없으면 아무것도 보이지 않는다. */
+const num = (x) => (x == null ? "없음" : String(Math.round(x * 1000) / 1000));
+
+export async function loadMixCheck(p, v) {
+  const box = $("#mixchk");
+  if (!box) return;
+  let r;
+  try { r = await apiGet(`/api/mix-check/${encodeURIComponent(p.id)}`); } catch (e) { return; }
+  const now = $("#mixchk");
+  if (!now || now.dataset.pid !== p.id || now.dataset.vid !== v.id || !r.available || !r.checked) return;
+  const mine = (r.mismatches || []).filter((x) => x.vid === v.id);
+  if (!mine.length) {
+    now.className = "mixchk ok";
+    now.textContent = `작업일지와 대조 — 같은 배치 ${r.checked}건 값이 일치합니다`;
+    now.hidden = false;
+    return;
+  }
+  now.className = "mixchk warn";
+  now.innerHTML = `<b>⚠ 작업일지와 값이 다른 배합 ${mine.length}건</b> <small>어느 쪽이 맞는지 확인해 주세요 (자동으로 고치지 않습니다)</small>
+    <ul>${mine.map((x) => `<li><span class="mc-key">${esc(x.layer)} ${esc(x.batch)} <small>${esc(x.plate)}</small></span>
+      ${x.diffs.map((d) => `<span class="mc-diff">${esc(d.name)} 아카이브 <b>${esc(num(d.archive))}</b> · 일지 <b>${esc(num(d.worklog))}</b></span>`).join("")}
+      <a class="wl-open" href="/pccs/#/file/${encodeURIComponent(x.file)}" target="_blank" rel="noopener">${esc(fmtDate(x.date))} 일지 ↗</a></li>`).join("")}</ul>`;
+  now.hidden = false;
+}

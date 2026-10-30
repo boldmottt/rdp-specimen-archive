@@ -8,7 +8,7 @@ import { workOf, workSource } from "./work.js";
 import { openEditor } from "./editor.js";
 import { openHistory } from "./history.js";
 import { batchCompare, deltaText } from "./mix-compare.js";
-import { loadWorklogs } from "./worklog-link.js";
+import { loadMixCheck, loadWorklogs } from "./worklog-link.js";
 import { loadProposalHistory } from "./feedback.js";
 
 /* ---------------- detail ---------------- */
@@ -401,7 +401,7 @@ export function renderDetail(pid, vid, override) {
         </div>
 
         <div class="span2">
-          <section class="sec sec-mix"><h3>배합 정보 <span class="cnt">${mixes.length} 배합${sameAsVar ? " · " + esc(vName(sameAsVar)) + "과 동일" : ""}</span></h3>${
+          <section class="sec sec-mix"><h3>배합 정보 <span class="cnt">${mixes.length} 배합${sameAsVar ? " · " + esc(vName(sameAsVar)) + "과 동일" : ""}</span></h3>${isNew || !mixes.length ? "" : `<div id="mixchk" data-pid="${esc(p.id)}" data-vid="${esc(v.id)}" hidden></div>`}${
           sameAsVar
             ? `<div class="sameas">${esc(vName(sameAsVar))} 컬러와 <b>같은 배합</b>입니다${sameAsMixCount ? ` (${sameAsMixCount}건)` : ""} — 별도 배합을 넣지 않습니다.</div>${sameAsMixCount ? mixTable(sameAsVar.mixes) : ""}`
             : (byLayer || '<p style="color:#8d9198;font-size:12.5px">등록된 배합이 없습니다.</p>')}</section>
@@ -418,6 +418,7 @@ export function renderDetail(pid, vid, override) {
     const layer = layers(v)[index];
     bindRecipePreviews(group, mixes.filter((m) => m.layer === layer));
   });
+  if (!isNew && mixes.length) loadMixCheck(p, v);   // 작업일지에 적힌 같은 배치와 값이 다른지
   if (!isNew) loadProposalHistory(p, v);   // 이 시편이 들어간 확정본과 고객 반응
   if (!isNew) loadWorklogs(p);      // 작업일지(PCCS3)에서 이 시편과 관련된 작업 — 비동기, 없으면 칸을 숨긴 채로
   $$("[data-batch-compare]").forEach((b) => (b.onclick = () => {
