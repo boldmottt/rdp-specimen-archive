@@ -902,3 +902,13 @@ a.prop-status.ok:hover{background:#fff}
 /* 편집기 안내 링크 (예: 작업일은 「작업」에서 수정) */
 .link-btn{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .link-btn:hover{color:var(--ink-2)}
+
+/* 변경 이력 (상세 [이력]) */
+.history-dialog .hi-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.history-dialog .hi-row{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.history-dialog .hi-top{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.history-dialog .hi-when{font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums}
+.history-dialog .hi-restore{font-size:11.5px;padding:4px 10px}
+.history-dialog .hi-ch{margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--ink-2);line-height:1.6}
+.history-dialog .hi-note{margin-top:6px;font-size:11.5px;color:var(--ink-3)}
+.history-dialog .hi-err{color:var(--ink-3);font-size:12px;display:flex;gap:10px}

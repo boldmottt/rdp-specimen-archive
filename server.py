@@ -1799,6 +1799,66 @@ def image_colors(pid, name, top=3):
     return out
 
 
+# ---------------------------------------------------------------- 이전 버전(_backup)
+# 저장할 때마다 바뀌기 전 파일을 _backup/<id>.<시각>.json 으로 남긴다. 화면에서 보고 되돌릴 수 있게 읽어 준다.
+# 되돌리기는 여기서 하지 않는다 — 화면이 옛 문서를 평소 저장(PUT, rev 검사·백업·동판 추적)으로 보낸다.
+STAMP_RE = r"\d{8}-\d{6}-\d{3}"
+HISTORY_LIMIT = 40
+
+
+def history_versions(pid, limit=HISTORY_LIMIT) -> dict:
+    """{items: [{stamp, doc, missingImages} | {stamp, error}], total} — 최근 것부터 limit개."""
+    safe_id(pid)
+    pat = re.compile(r"^" + re.escape(pid) + r"\.(" + STAMP_RE + r")\.json$")
+    names = []
+    if os.path.isdir(BACKUP):
+        for n in os.listdir(BACKUP):
+            m = pat.match(n)
+            if m:
+                names.append((m.group(1), n))
+    names.sort(reverse=True)
+    items = []
+    for stamp, n in names[:limit]:
+        try:
+            with open(os.path.join(BACKUP, n), encoding="utf-8") as fh:
+                doc = json.load(fh)
+            if not isinstance(doc, dict):
+                raise ValueError("문서가 객체가 아님")
+        except (OSError, ValueError) as e:
+            items.append({"stamp": stamp, "error": f"읽지 못함: {e}"})
+            continue
+        names_in = {str(x) for v in (doc.get("variations") or []) if isinstance(v, dict)
+                    for x in (v.get("images") or []) if x}
+        missing = sorted(x for x in names_in
+                         if not IMAGE_NAME_RE.match(x) or not os.path.isfile(os.path.join(IMAGES, pid, x)))
+        items.append({"stamp": stamp, "doc": doc, "missingImages": missing})
+    return {"items": items, "total": len(names)}
+
+
+def recover_images(pid, names) -> dict:
+    """옛 버전이 쓰던 사진이 휴지통(_trash/<시각>_<id>_<파일>)에 있으면 제자리로 되돌린다."""
+    safe_id(pid)
+    recovered, missing = [], []
+    trash = sorted(os.listdir(TRASH), reverse=True) if os.path.isdir(TRASH) else []   # 최근 것 먼저
+    for name in names if isinstance(names, list) else []:
+        name = str(name)
+        if not IMAGE_NAME_RE.match(name):
+            missing.append(name)
+            continue
+        dst = safe_join(IMAGES, pid, name)
+        if os.path.isfile(dst):
+            continue
+        pat = re.compile(r"^" + STAMP_RE + "_" + re.escape(pid) + "_" + re.escape(name) + r"(~\d+)?$")
+        hit = next((t for t in trash if pat.match(t) and os.path.isfile(os.path.join(TRASH, t))), None)
+        if not hit:
+            missing.append(name)
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(os.path.join(TRASH, hit), dst)
+        recovered.append(name)
+    return {"recovered": recovered, "missing": missing}
+
+
 def parse_lab_ref(raw):
     """?ref=L,a,b → [L,a,b]. 없으면 None, 형식이 틀리면 ValueError."""
     if not raw:
@@ -2220,6 +2280,12 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/patterns":
                 pats, errs = load_all()
                 return self.json({"ok": True, "patterns": pats, "errors": errs, "dataRoot": DATA})
+            if p.startswith("/api/history/"):
+                pid = p[len("/api/history/"):].strip("/")
+                try:
+                    return self.json({"ok": True, **history_versions(pid)})
+                except ValueError as e:
+                    return self.error(400, str(e))
             if p == "/api/colors":
                 qs = parse_qs(urlparse(self.path).query)
                 try:
@@ -2494,6 +2560,16 @@ class Handler(BaseHTTPRequestHandler):
                         return self.json({"ok": True, **res, "skipped": len(plan["skipped"])})
                 except Exception as e:
                     return self.error(500, str(e))
+            if p.startswith("/api/history/") and p.endswith("/recover-images"):
+                pid = p[len("/api/history/"):-len("/recover-images")].strip("/")
+                try:
+                    safe_id(pid)
+                    body = json.loads(self.read_body() or b"{}")
+                    with pid_lock(pid):
+                        res = recover_images(pid, (body or {}).get("images"))
+                except ValueError as e:
+                    return self.error(400, str(e))
+                return self.json({"ok": True, **res})
             if p.startswith("/api/rdp/sync/"):
                 pid = p[len("/api/rdp/sync/"):].strip("/")
                 return self.sync_pattern(pid)

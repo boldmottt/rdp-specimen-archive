@@ -1620,3 +1620,52 @@ class VarWorkTests(Base):
         got = next(x for x in r["patterns"] if x["id"] == "P-WORK")
         self.assertEqual(got["variations"][1]["work"], {"place": "API", "worker": "이석희", "volume": "5"})
         self.assertNotIn("work", got["variations"][0])
+
+
+class HistoryTests(Base):
+    """이전 버전(_backup) 목록과 휴지통 사진 되살리기 — 되돌리기 자체는 화면이 평소 저장(PUT)으로 한다."""
+
+    def test_versions_newest_first_and_restore_via_put(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "status": "검토"}])
+        st, r = self.put("P-W01", doc, create=True)
+        self.assertEqual(st, 200, r)
+        for status in ("가승인", "승인"):
+            doc["variations"][0]["status"] = status
+            st, r = self.put("P-W01", doc, rev=r["rev"])
+            self.assertEqual(st, 200, r)
+            time.sleep(0.002)             # 백업 파일 이름(밀리초)이 겹치지 않게
+        st, h = self.req("GET", "/api/history/P-W01")
+        self.assertEqual(st, 200, h)
+        self.assertEqual(h["total"], 2)
+        self.assertEqual([it["doc"]["variations"][0]["status"] for it in h["items"]], ["가승인", "검토"])
+        # 화면처럼: 가장 옛 버전을 지금 rev 로 다시 저장 → 지금 상태가 또 백업된다
+        old = h["items"][-1]["doc"]
+        st, r2 = self.put("P-W01", old, rev=r["rev"])
+        self.assertEqual(st, 200, r2)
+        self.assertEqual(self.read_pattern("P-W01")["variations"][0]["status"], "검토")
+        self.assertEqual(self.req("GET", "/api/history/P-W01")[1]["total"], 3)
+
+    def test_other_ids_with_same_prefix_are_not_mixed(self):
+        os.makedirs(server.BACKUP, exist_ok=True)
+        for n in ("P-W01.20261030-101010-001.json", "P-W01.x.20261030-101010-002.json", "P-W011.20261030-101010-003.json"):
+            with open(os.path.join(server.BACKUP, n), "w", encoding="utf-8") as f:
+                json.dump(pattern("X", "P", "W01", []), f)
+        st, h = self.req("GET", "/api/history/P-W01")
+        self.assertEqual([it["stamp"] for it in h["items"]], ["20261030-101010-001"])
+        self.assertEqual(self.req("GET", "/api/history/..%2Fx")[0], 400)
+
+    def test_missing_images_are_reported_and_recovered_from_trash(self):
+        os.makedirs(server.BACKUP, exist_ok=True)
+        with open(os.path.join(server.BACKUP, "P-W01.20261030-101010-001.json"), "w", encoding="utf-8") as f:
+            json.dump(pattern("P-W01", "P", "W01", [{"id": "v01", "images": ["v01-1.jpg", "v01-2.jpg"]}]), f)
+        os.makedirs(server.TRASH, exist_ok=True)
+        with open(os.path.join(server.TRASH, "20261030-111111-000_P-W01_v01-1.jpg"), "wb") as f:
+            f.write(b"jpg")
+        st, h = self.req("GET", "/api/history/P-W01")
+        self.assertEqual(h["items"][0]["missingImages"], ["v01-1.jpg", "v01-2.jpg"])
+        st, r = self.req("POST", "/api/history/P-W01/recover-images", {"images": ["v01-1.jpg", "v01-2.jpg", "../x.jpg"]})
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["recovered"], ["v01-1.jpg"])
+        self.assertEqual(r["missing"], ["v01-2.jpg", "../x.jpg"])
+        self.assertTrue(os.path.isfile(os.path.join(server.IMAGES, "P-W01", "v01-1.jpg")))
+        self.assertEqual(os.listdir(server.TRASH), [])
