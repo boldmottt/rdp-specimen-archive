@@ -219,6 +219,44 @@ class Index:
         return sorted(out, key=lambda e: (e["date"], e["file"], str(e.get("seq") or "")))
 
 
+def norm_code(x) -> str:
+    """패턴 코드 비교용: 대소문자·기호 무시, 숫자 앞 0 무시 — 'DEMO-W1' = 'demo_w01' = 'DEMOW01'."""
+    t = re.sub(r"[^0-9A-Z가-힣]", "", str(x or "").upper())
+    return re.sub(r"(^|[^0-9])0+(?=[0-9])", r"\1", t)
+
+
+def related_entries(index, codes, lots, limit=60):
+    """아카이브 시편과 관련된 작업 기록.
+    codes: 시편 패턴 코드 후보(코드, 프로젝트-코드, 도수별 패턴 코드) — 동판 도수의 패턴 코드와 같으면 '이 패턴'
+    lots : 시편이 쓰는 동판 — 코드는 다르지만 같은 동판이면 '같은 동판'(2패턴 동판의 다른 패턴일 수 있다)"""
+    want = {norm_code(c) for c in codes or [] if norm_code(c)}
+    lots = {str(x).strip() for x in lots or [] if str(x).strip()}
+    out = []
+    for e in index.timeline_entries():
+        hit_layers = [k for k, c in (e.get("layers") or {}).items() if norm_code(c) in want]
+        if hit_layers:
+            match = "code"
+        elif e.get("lot") in lots:
+            match = "plate"
+        else:
+            continue
+        w = next((x for x in index.logs if x.name == e.get("file")), None)
+        fm = (w.fm if w is not None and isinstance(w.fm, dict) else {}) or {}
+        samples = e.get("samples") or []
+        out.append({
+            "date": e.get("date") or "", "file": e.get("file"), "kind": e.get("kind"), "match": match,
+            "lot": e.get("lot"), "layers": e.get("layers") or {}, "matchedLayers": hit_layers,
+            "title": e.get("title") or "", "stage": e.get("stage") or "", "status": e.get("status") or "",
+            "place": str(fm.get("place") or ""), "worker": str(fm.get("worker") or ""),
+            "batches": [{"layer": b.get("layer"), "code": b.get("code"), "status": b.get("status")}
+                        for b in e.get("batches") or [] if not hit_layers or b.get("layer") in (None, *hit_layers)],
+            "samples": {"n": len(samples), "qty": sum(_qty(s.get("qty")) for s in samples),
+                        "evals": sorted({str(s.get("eval")) for s in samples if s.get("eval")})},
+        })
+    out.sort(key=lambda x: (x["date"], x["file"]), reverse=True)
+    return out[:limit]
+
+
 def load_folder(folder):
     logs = []
     if folder and os.path.isdir(folder):

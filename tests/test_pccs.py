@@ -132,6 +132,43 @@ class TimelineTests(Folder):
         self.assertEqual(p["DEMO_002"]["patterns"], ["DEMO-E1", "DEMO-E2"])
 
 
+class RelatedTests(Folder):
+    """아카이브 상세 화면용 — 시편(코드·동판)과 관련된 작업 기록."""
+
+    def test_norm_code_ignores_case_symbols_and_leading_zeros(self):
+        self.assertEqual(worklog.norm_code("DEMO-W1"), worklog.norm_code("demo_w01"))
+        self.assertNotEqual(worklog.norm_code("W1"), worklog.norm_code("W11"))
+        self.assertEqual(worklog.norm_code(""), "")
+
+    def test_code_match_newest_first(self):
+        idx = worklog.load_folder(self.dir)
+        ents = worklog.related_entries(idx, ["W01", "DEMO-W01"], [])
+        self.assertEqual([(e["date"], e["match"]) for e in ents],
+                         [("2026-01-15", "code"), ("2026-01-10", "code"), ("2025-12-20", "code")])
+        self.assertEqual(ents[1]["place"], "API 산업")
+        self.assertEqual(ents[1]["samples"]["qty"], 9)
+
+    def test_two_pattern_plate_only_shows_matching_layer_batches(self):
+        idx = worklog.load_folder(self.dir)
+        ents = [e for e in worklog.related_entries(idx, ["DEMO-E2"], []) if e["kind"] == "v3"]
+        self.assertTrue(ents)
+        for e in ents:
+            self.assertEqual(e["matchedLayers"], ["1도"])
+            self.assertTrue(all(b["layer"] in (None, "1도") for b in e["batches"]), e["batches"])
+
+    def test_plate_only_match_is_marked(self):
+        idx = worklog.load_folder(self.dir)
+        ents = worklog.related_entries(idx, ["NOPE"], ["DEMO_002"])
+        self.assertTrue(ents)
+        self.assertTrue(all(e["match"] == "plate" and e["lot"] == "DEMO_002" for e in ents))
+        self.assertEqual(worklog.related_entries(idx, [], []), [])
+
+    def test_api_route(self):
+        st, r = api.handle("/api/pccs/related", {"code": ["DEMO-W1"], "lot": []}, {"worklogDir": self.dir})
+        self.assertEqual(st, 200)
+        self.assertEqual(len(r["entries"]), 3)
+
+
 class ApiTests(Folder):
     def test_files_and_file(self):
         cfg = {"worklogDir": self.dir}
