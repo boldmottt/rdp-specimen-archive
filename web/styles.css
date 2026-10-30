@@ -488,7 +488,12 @@ a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
   .cov-foot,.p-foot{flex-wrap:wrap;gap:2mm;font-size:7.5px;line-height:1.4}
   .cov-foot .ruler,.p-foot .ruler{display:none}
   .p-title h2{font-size:22px}
-  .cov-thumbs{grid-template-columns:repeat(2,1fr)}
+  /* 좁은 화면에서 표지 썸네일 격자가 최소 폭을 밀어내던 문제 —
+     1fr 은 minmax(auto,1fr) 이라 캡션(nowrap) 폭이 열 최소폭이 되고, 그 합이 화면보다 넓어
+     페이지 전체가 가로로 넘쳤다. 열을 0 기준으로 두고 캡션은 줄바꿈을 허용한다. */
+  .cov-thumbs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cov-thumbs figcaption{white-space:normal;overflow-wrap:anywhere}
+  .sheets,.sheet{min-width:0}
   .cartbar{justify-content:center;padding:0 12px 12px}
   .cart-thumbs{display:none}
 }
