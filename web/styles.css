@@ -785,10 +785,15 @@ textarea.inline-input{min-height:64px;resize:vertical}
 .bd-cell .bd-de{color:var(--ink-3);font-size:11px}
 .bd-empty{color:var(--ink-3);font-size:13px}
 
-/* 컬러 보드 인쇄 — 이 화면에서만 건다(제안서 인쇄 규칙과 섞이지 않게 body.board-mode 로 범위 제한) */
+/* 컬러 보드 인쇄 — 이 화면에서만 건다(제안서 인쇄 규칙과 섞이지 않게 body.board-mode 로 범위 제한)
+   제안서용 @page 는 여백 0(시트가 스스로 여백을 가진다)이라, 보드는 이름 붙인 페이지로 여백을 따로 준다
+   — 안 그러면 종이 끝까지 찍혀 프린터가 가장자리를 잘랐다. 견본 칸은 페이지 사이에서 쪼개지지 않게. */
+@page board{size:A4;margin:12mm}
 @media print{
   body.board-mode .topbar,body.board-mode .cartbar,body.board-mode .noprint{display:none!important}
   body.board-mode .wrap{padding:0;max-width:none}
+  body.board-mode .wrap.board{page:board}
+  body.board-mode .bd-cell{break-inside:avoid}
   body.board-mode .bd-grid{grid-template-columns:repeat(4,1fr);gap:8mm}
   body.board-mode .bd-sw{height:22mm;print-color-adjust:exact;-webkit-print-color-adjust:exact}
   body.board-mode .bd-head h1{font-size:15pt}
