@@ -657,8 +657,9 @@ def read_rdp_mixes(project: str, code: str):
         if not code_enum and "예정" in res:
             code_enum = "plan"
         inks = {}
+        cols = r.keys()
         for k, col in INK_COLS:
-            v = r[col]
+            v = r[col] if col in cols else None   # bl·vl 칼럼을 아직 늘리지 않은 DB도 읽는다
             if v not in (None, 0, 0.0):
                 inks[k] = v
         out.append({
@@ -759,6 +760,28 @@ PCT_COLS = (("mattingPct", "matting_agent_pct"), ("mattingG", "matting_agent_g")
 
 
 DB_INKS = {k for k, _ in INK_COLS}
+
+
+def rdp_ink_cols(con) -> tuple:
+    """이 rdp.db에 실제로 있는 잉크 칼럼만. bl·vl은 나중에 늘린 칼럼이라 예전 DB(다른 PC·백업)에는 없다."""
+    have = {r[1] for r in con.execute("PRAGMA table_info(rdp_mixes)")}
+    return tuple((k, c) for k, c in INK_COLS if c in have)
+
+
+def rdp_missing_ink_cols() -> dict:
+    """{잉크 코드: 칼럼} — 이 rdp.db에 없는 잉크 칼럼. DB가 없거나 못 열면 빈 dict(다른 곳에서 알린다)."""
+    path = rdp_db_path()
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            have = {c for _, c in rdp_ink_cols(con)}
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return {}
+    return {k: c for k, c in INK_COLS if c not in have}
 
 
 def doc_code(doc) -> str:
@@ -980,6 +1003,15 @@ def plan_push(doc, assigned, old_rows=0, old_key=None, taken=None):
     if issues:
         return {"updates": [], "inserts": [], "moves": [], "skipped": issues, "ink_errors": issues,
                 "blocked": "DB에 연결되지 않은 잉크 또는 중복 연결이 있습니다. 컬러연구소에서 연결을 확인하세요. 전체 전송을 중단합니다."}
+    missing = rdp_missing_ink_cols()
+    used = sorted({k for v in prepared.get("variations") or [] for m in v.get("mixes") or []
+                   for k, x in (m.get("inks") or {}).items() if k in missing and float(x or 0)})
+    if used:
+        cols = ", ".join(missing[k] for k in used)
+        fix = "; ".join(f"ALTER TABLE rdp_mixes ADD COLUMN {missing[k]} REAL DEFAULT 0" for k in used)
+        return {"updates": [], "inserts": [], "moves": [], "skipped": [],
+                "blocked": f"이 rdp.db에는 {cols} 칼럼이 없어 {', '.join(used)} 잉크를 보낼 수 없습니다. "
+                           f"DB를 백업한 뒤 칼럼을 먼저 늘리세요: {fix}"}
     vs = {v["id"]: v for v in prepared.get("variations") or []}
     mapped = [(vs[v["id"]], rows) for v, rows in assigned]
     plan = _plan_push(prepared, mapped, old_rows, old_key, taken)
@@ -1152,6 +1184,7 @@ def apply_push(project, code, doc, plan):
     try:
         cur = con.cursor()
         cur.execute("BEGIN IMMEDIATE")
+        ink_cols = rdp_ink_cols(con)   # 계획 단계에서 없는 칼럼에 쓸 값은 이미 막았다 — 있는 칼럼만 넣는다
         n_upd = n_ins = n_mov = 0
         failed = []
         bad_ids = set()
@@ -1200,18 +1233,18 @@ def apply_push(project, code, doc, plan):
             m = by_key.get((ins["vid"], ins["layer"], ins["batch"], ins["plate"]))
             if not m:
                 continue
-            inks = {k: float((m.get("inks") or {}).get(k) or 0) for k, _ in INK_COLS}
+            inks = [float((m.get("inks") or {}).get(k) or 0) for k, _ in ink_cols]
             cur.execute("SAVEPOINT ins_row")
             try:
-                cur.execute("""INSERT INTO rdp_mixes
+                cur.execute(f"""INSERT INTO rdp_mixes
                 (date, project, pattern_code, plate, layer, batch_no, is_base,
-                 mt, bk, wh, ye, rd, cl, ye_d, bl, vl,
+                 {", ".join(c for _, c in ink_cols)},
                  matting_agent_pct, matting_agent_g, thinner_pct, thinner_g, hardener_pct, hardener_g,
                  result, change_summary, notes, coating_code)
-                VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?, {",".join("?" * len(ink_cols))}, ?,?,?,?,?,?, ?,?,?,?)""",
                 (m.get("date") or datetime.now().strftime("%Y-%m-%d"), project, ins.get("code") or code, ins["plate"], ins["layer"], ins["batch"],
                  1 if m.get("isReference") else 0,
-                 inks["MT"], inks["BK"], inks["WH"], inks["YE"], inks["RD"], inks["CL"], inks["YE-D"], inks["BL"], inks["VL"],
+                 *inks,
                  m.get("mattingPct"), m.get("mattingG"), m.get("thinnerPct"), m.get("thinnerG"),
                  m.get("hardenerPct"), m.get("hardenerG"),
                  RESULT_TO_DB.get(m.get("result") or "", ""), m.get("change") or "", m.get("note") or "",

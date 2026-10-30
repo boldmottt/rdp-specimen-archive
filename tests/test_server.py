@@ -777,6 +777,39 @@ class PushTests(Base):
         self.assertEqual(con.execute("SELECT bl, vl FROM rdp_mixes").fetchone(), (5.0, 2.0))
         con.close()
 
+    def old_schema_db(self):
+        """bl·vl 칼럼을 아직 늘리지 않은 rdp.db (다른 PC·백업에서 되살린 DB)"""
+        con = sqlite3.connect(self.db)
+        con.execute("DROP TABLE rdp_mixes")
+        con.execute(SCHEMA.replace(", bl REAL, vl REAL", ""))
+        con.execute("INSERT INTO rdp_mixes (project, pattern_code, plate, layer, batch_no, mt, result)"
+                    " VALUES ('P','W01','26_001','1도','B1',30,'')")
+        con.commit()
+        con.close()
+
+    def test_old_schema_db_still_reads_and_pushes_known_inks(self):
+        self.old_schema_db()
+        self.assertEqual(server.read_rdp_mixes("P", "W01")[0]["inks"], {"MT": 30})
+        m = {"layer": "1도", "batch": "B2", "plate": "26_001", "inks": {"MT": 10.0}, "result": "", "isReference": False}
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [m]}]))
+        st, r = self.push("P-W01")
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["inserted"], 1, r)
+
+    def test_old_schema_db_blocks_blue_with_clear_message(self):
+        self.old_schema_db()
+        m = {"layer": "1도", "batch": "B2", "plate": "26_001", "inks": {"BL": 5.0}, "result": "", "isReference": False}
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [m]}]))
+        st, pv = self.req("GET", "/api/rdp/push-preview/P-W01")
+        self.assertEqual(st, 200, pv)
+        self.assertIn("ADD COLUMN bl", pv.get("blocked", ""), pv)
+        st, r = self.push("P-W01")
+        self.assertEqual(st, 409, r)
+        self.assertIn("ADD COLUMN bl", r["error"])
+        con = sqlite3.connect(self.db)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM rdp_mixes").fetchone()[0], 1)   # 아무것도 안 들어갔다
+        con.close()
+
     def test_insert_keeps_coating_so_sync_round_trips(self):
         doc = pattern("P-W01", "P", "W01", [
             {"id": "v01", "colorCode": "K-1", "mixes": []},
