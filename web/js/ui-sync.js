@@ -18,12 +18,16 @@
  * @param {(withFolders:boolean)=>object} io.getBody  요청 본문 만들기
  * @param {(state:object)=>void} io.onAdopt  409 뒤 서버 상태를 받아들임
  * @param {(json:any)=>void} io.onRev  성공 응답의 새 rev 반영
+ * @param {(state:object)=>void} [io.onRebase]  409 인데 서버에 저장된 검색이 아예 없을 때(파일 초기화·새 데이터 폴더)
+ *        — 서버 rev 로 맞춘 뒤 내 목록을 다시 보낸다. 안 그러면 내 rev 가 서버보다 커서 영원히 409 가 났다.
  */
-export function createUiSync({ send, fetchState, getBody, onAdopt, onRev }) {
+export function createUiSync({ send, fetchState, getBody, onAdopt, onRev, onRebase }) {
   let gen = 0;          // 폴더 변경이 일어날 때마다 +1
   let inflight = false; // 지금 요청이 오가는 중인가
   let again = false;    // 오가는 동안 또 요청이 왔는가(끝나면 한 번 더)
   let dirty = false;    // 폴더가 바뀌어 아직 서버에 못 보냈는가
+  let cartOnly = false; // 다음 한 번은 폴더 없이(서버 상태를 못 읽어 rev 를 모를 때 — 같은 409 반복 방지)
+  let rebased = false;  // 이번 409 복구에서 이미 rev 를 맞췄는가(그래도 409 면 더 시도하지 않는다)
 
   const api = {
     /** 폴더를 바꿨다 — 다음 push 에 smartFolders 를 싣는다.
@@ -36,17 +40,28 @@ export function createUiSync({ send, fetchState, getBody, onAdopt, onRev }) {
       if (inflight) { again = true; return; }     // 한 번에 하나만
       inflight = true;
       const sent = gen;
-      const withFolders = dirty;
+      const withFolders = dirty && !cartOnly;
+      cartOnly = false;
       try {
         const r = await send(getBody(withFolders));
         if (r.status === 409) {
-          // 다른 곳에서 먼저 바꿨다 → 서버 것을 받아들이고, 장바구니만 다시 보낸다
-          dirty = false;
+          // 409 는 요청 전체를 거절한다 — 같이 보낸 장바구니도 저장되지 않았으니 어느 경우든 한 번 더 보낸다
           const state = await fetchState();
-          // 서버 목록을 실제로 받았을 때만 받아들인다 — 빈 응답으로 덮어쓰면 폴더가 지워진다.
-          if (state && Array.isArray(state.smartFolders)) onAdopt(state);
+          if (state && Array.isArray(state.smartFolders)) {
+            // 다른 곳에서 먼저 바꿨다 → 서버 것을 받아들이고, 장바구니만 다시 보낸다
+            dirty = false;
+            onAdopt(state);
+          } else if (state && !rebased && onRebase) {
+            // 서버에 저장된 검색이 아예 없다(초기화) → 서버 rev 로 맞추고 내 목록을 다시 보낸다
+            rebased = true;
+            onRebase(state);
+          } else {
+            // 서버 상태를 못 읽었다 — 바꾼 폴더는 남겨 두고(다음 저장 때 다시), 이번엔 장바구니만
+            cartOnly = true;
+          }
           again = true;
         } else if (r.status >= 200 && r.status < 300) {
+          rebased = false;
           if (withFolders) onRev(r.json);
           // 보낸 뒤에 또 바뀌었으면(sent !== gen) dirty 를 남겨 다음 요청에 싣는다
           if (withFolders && sent === gen) dirty = false;
