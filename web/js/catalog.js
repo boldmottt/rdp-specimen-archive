@@ -364,6 +364,7 @@ export function renderCatalog() {
               <button type="button" data-act="sync">DB 동기화</button>
               <button type="button" data-act="none">결과 빼기 (${hitCount}개)</button>
               <button type="button" data-act="board">${App.project === "all" ? "컬러 보드 (프로젝트 선택)" : `${esc(App.project)} 컬러 보드`}</button>
+              <button type="button" data-act="plates">동판 대장</button>
               <button type="button" data-act="help">검색 문법</button>
             </div>
           </div>
@@ -500,6 +501,7 @@ export function renderCatalog() {
       if (act === "csv") downloadCsv(list, (pid) => HITS.get(pid));
       else if (act === "none") removeAll("#morebtn");
       else if (act === "help") toast(QUERY_HELP, 6500);
+      else if (act === "plates") location.hash = "#/plates";
       else if (act === "sync") doSyncAll();
       else if (act === "board") {
         // 좁은 화면에서는 결과 줄의 보드 링크가 숨으므로 메뉴가 유일한 진입로다

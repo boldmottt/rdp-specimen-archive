@@ -4,6 +4,7 @@ import { renderCatalog } from "./catalog.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
 import { renderBoard } from "./board.js";
+import { renderPlates } from "./plates-page.js";
 import { E, closeEditor, newDoc, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
@@ -21,6 +22,8 @@ export function rerender() {
     const parts = h.slice(3).split("/");
     renderDetail(decodeURIComponent(parts[0]), parts[1] ? decodeURIComponent(parts[1]) : null);
     renderCart();
+  } else if (h === "/plates") {
+    renderPlates();
   } else if (h.indexOf("/board/") === 0) {
     renderBoard(decodeURIComponent(h.slice("/board/".length)));
   } else if (h === "/proposal") {

@@ -1694,3 +1694,39 @@ class HistoryTests(Base):
         self.assertEqual(r["missing"], ["v01-2.jpg", "../x.jpg"])
         self.assertTrue(os.path.isfile(os.path.join(server.IMAGES, "P-W01", "v01-1.jpg")))
         self.assertEqual(os.listdir(server.TRASH), [])
+
+
+class PlateListTests(Base):
+    """동판 대장 — rdp.db 동판 표 전체와 그 동판에 들어간 패턴."""
+
+    def make_tables(self):
+        con = sqlite3.connect(self.db)
+        con.executescript("""
+            CREATE TABLE projects (id INTEGER PRIMARY KEY, code TEXT);
+            CREATE TABLE patterns (id INTEGER PRIMARY KEY, code TEXT, project_id INTEGER);
+            CREATE TABLE plates (id INTEGER PRIMARY KEY, lot_no TEXT, size TEXT, type TEXT, note TEXT, created_date TEXT);
+            CREATE TABLE plate_patterns (id INTEGER PRIMARY KEY, plate_id INTEGER, pattern_id INTEGER, layer TEXT);
+            INSERT INTO projects VALUES (1, 'P');
+            INSERT INTO patterns VALUES (1, 'W01', 1), (2, 'W02', 1);
+            INSERT INTO plates VALUES (1, '26_001', '100x100', '부식', '메모', '2026-01-02'), (2, '26_002', '', '', '', '');
+            INSERT INTO plate_patterns VALUES (1, 1, 1, '1도'), (2, 1, 2, '2도');
+        """)
+        con.commit()
+        con.close()
+
+    def test_lists_plates_with_patterns(self):
+        self.make_tables()
+        st, r = self.req("GET", "/api/plates")
+        self.assertEqual(st, 200, r)
+        self.assertNotIn("dbError", r)
+        self.assertEqual([p["lot"] for p in r["plates"]], ["26_001", "26_002"])
+        self.assertEqual(r["plates"][0]["usedBy"], [
+            {"id": "P-W01", "project": "P", "code": "W01", "layer": "1도"},
+            {"id": "P-W02", "project": "P", "code": "W02", "layer": "2도"}])
+        self.assertEqual(r["plates"][1]["usedBy"], [])
+
+    def test_db_without_plate_tables_says_why(self):
+        st, r = self.req("GET", "/api/plates")         # 테스트 DB 에는 rdp_mixes 만 있다
+        self.assertEqual(st, 200)
+        self.assertEqual(r["plates"], [])
+        self.assertIn("동판 표", r["dbError"])

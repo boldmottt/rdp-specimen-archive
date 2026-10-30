@@ -1377,6 +1377,34 @@ def read_plate_info(lot: str):
     }
 
 
+def list_plates() -> dict:
+    """rdp.db 의 동판 전체 + 그 동판에 들어간 패턴(프로젝트·코드·도수). 동판 표가 없는 DB면 빈 목록과 이유."""
+    path = rdp_db_path()
+    if not path or not os.path.isfile(path):
+        return {"plates": [], "dbError": f"rdp.db를 찾을 수 없습니다: {path or '(경로 미설정)'}"}
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            rows = con.execute("SELECT id, lot_no, size, type, note, created_date FROM plates ORDER BY lot_no").fetchall()
+            used = con.execute("""
+                SELECT pp.plate_id, pr.code AS project, pa.code AS pattern_code, pp.layer
+                FROM plate_patterns pp
+                JOIN patterns pa ON pa.id = pp.pattern_id
+                JOIN projects pr ON pr.id = pa.project_id
+                ORDER BY pr.code, pa.code, pp.layer""").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        return {"plates": [], "dbError": f"rdp.db에 동판 표가 없거나 읽지 못했습니다 ({e})"}
+    by = {}
+    for u in used:
+        by.setdefault(u["plate_id"], []).append({"id": f"{u['project']}-{u['pattern_code']}", "project": u["project"],
+                                                 "code": u["pattern_code"], "layer": u["layer"] or ""})
+    return {"plates": [{"lot": r["lot_no"], "size": r["size"] or "", "type": r["type"] or "", "note": r["note"] or "",
+                        "created": r["created_date"] or "", "usedBy": by.get(r["id"], [])} for r in rows if r["lot_no"]]}
+
+
 def load_all():
     out, errors = [], []
     if not os.path.isdir(PATTERNS):
@@ -2296,6 +2324,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"ok": True, **diff_db(doc, load_doc_rows(doc))})
                 except Exception as e:
                     return self.error(400, str(e))
+            if p == "/api/plates":
+                return self.json({"ok": True, **list_plates()})
             if p.startswith("/api/plate/"):
                 lot = p[len("/api/plate/"):].strip("/")
                 try:
