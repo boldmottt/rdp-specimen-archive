@@ -1475,6 +1475,24 @@ class UiStateTests(Base):
 
     SF = [{"id": "sf1", "name": "세미나", "q": "#컬러세미나 -@MQ5", "project": "all", "sort": "recent"}]
 
+    def test_concurrent_cart_save_does_not_drop_folder_save(self):
+        """서버는 요청마다 스레드 — 읽기·병합·쓰기 사이에 다른 저장이 끼면 먼저 쓴 쪽이 사라졌다."""
+        import threading
+        orig = server.merge_ui_state
+
+        def slow_merge(cur, body):
+            time.sleep(0.15)               # 읽은 뒤 쓰기 전에 다른 요청이 들어올 틈을 넓힌다
+            return orig(cur, body)
+
+        with mock.patch.object(server, "merge_ui_state", slow_merge):
+            a = threading.Thread(target=self.req, args=("PUT", "/api/ui", {"smartFolders": self.SF, "smartFoldersRev": 0}))
+            b = threading.Thread(target=self.req, args=("PUT", "/api/ui", {"cart": [{"pid": "A", "vid": "v01"}], "ts": 2}))
+            a.start(); time.sleep(0.05); b.start()
+            a.join(); b.join()
+        st, r = self.req("GET", "/api/ui")
+        self.assertEqual(r["state"].get("smartFolders"), self.SF)
+        self.assertEqual(r["state"].get("cart"), [{"pid": "A", "vid": "v01"}])
+
     def test_folders_saved_and_not_wiped_by_cart_only_save(self):
         st, r = self.req("PUT", "/api/ui", {"cart": [], "prop": {}, "ts": 1, "smartFolders": self.SF, "smartFoldersRev": 0})
         self.assertEqual(st, 200, r)

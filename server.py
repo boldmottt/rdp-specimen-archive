@@ -324,6 +324,9 @@ def _str_list(x):
 UI_KEYS = ("cart", "prop", "ts", "smartFolders", "smartFoldersRev")
 
 
+UI_LOCK = threading.Lock()   # 요청마다 스레드 — 읽기·병합·쓰기 사이에 다른 저장이 끼어 서로 덮지 않게
+
+
 class UIStateConflict(Exception):
     """다른 곳에서 먼저 바뀐 저장된 검색을 덮어쓰려 할 때."""
 
@@ -2304,18 +2307,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(400, f"JSON 파싱 실패: {e}")
                 if not isinstance(body, dict):
                     return self.error(400, "UI 상태는 객체여야 합니다")
-                cur = {}
-                if os.path.exists(UI_STATE):
+                with UI_LOCK:
+                    cur = {}
+                    if os.path.exists(UI_STATE):
+                        try:
+                            with open(UI_STATE, encoding="utf-8") as f:
+                                cur = json.load(f)
+                        except Exception:
+                            cur = {}
                     try:
-                        with open(UI_STATE, encoding="utf-8") as f:
-                            cur = json.load(f)
-                    except Exception:
-                        cur = {}
-                try:
-                    merged = merge_ui_state(cur, body)
-                except UIStateConflict as e:
-                    return self.error(409, str(e))
-                atomic_write(UI_STATE, json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8"))
+                        merged = merge_ui_state(cur, body)
+                    except UIStateConflict as e:
+                        return self.error(409, str(e))
+                    atomic_write(UI_STATE, json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8"))
                 return self.json({"ok": True, "state": merged})
             if p.startswith("/api/patterns/"):
                 pid = p[len("/api/patterns/"):].strip("/")
