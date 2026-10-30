@@ -28,7 +28,7 @@ class ModelError(ValueError):
 
 
 # 아카이브와 컬러연구소가 함께 사용하는 이름/DB 연결 규칙. 별칭은 제품을 추측하지 않는다.
-DB_INK_CODES = ("MT", "BK", "WH", "YE", "RD", "CL", "YE-D")
+DB_INK_CODES = ("MT", "BK", "WH", "YE", "RD", "CL", "YE-D", "BL", "VL")
 
 
 def ink_key(value):

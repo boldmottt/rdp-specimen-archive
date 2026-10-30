@@ -27,7 +27,7 @@ import server  # noqa: E402
 SCHEMA = """CREATE TABLE rdp_mixes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, project TEXT, pattern_code TEXT,
   plate TEXT, layer TEXT, batch_no TEXT, is_base INTEGER DEFAULT 0,
-  mt REAL, bk REAL, wh REAL, ye REAL, rd REAL, cl REAL, ye_d REAL,
+  mt REAL, bk REAL, wh REAL, ye REAL, rd REAL, cl REAL, ye_d REAL, bl REAL, vl REAL,
   matting_agent_pct REAL, matting_agent_g REAL, thinner_pct REAL, thinner_g REAL,
   hardener_pct REAL, hardener_g REAL,
   result TEXT, change_summary TEXT, notes TEXT, coating_code TEXT,
@@ -764,6 +764,17 @@ class PushTests(Base):
         self.assertEqual(r["updated"], 1)
         con = sqlite3.connect(self.db)
         self.assertEqual(con.execute("SELECT bk FROM rdp_mixes WHERE batch_no='B9'").fetchone()[0], 20.0)
+        con.close()
+
+    def test_blue_and_violet_are_written_to_their_columns(self):
+        m = {"layer": "1도", "batch": "B1", "plate": "26_001", "inks": {"BL": 5.0, "VL": 2.0},
+             "result": "", "isReference": False}
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "colorCode": "K-1", "mixes": [m]}])
+        self.write_pattern(doc)
+        st, r = self.push("P-W01")
+        self.assertEqual(r["inserted"], 1, r)
+        con = sqlite3.connect(self.db)
+        self.assertEqual(con.execute("SELECT bl, vl FROM rdp_mixes").fetchone(), (5.0, 2.0))
         con.close()
 
     def test_insert_keeps_coating_so_sync_round_trips(self):

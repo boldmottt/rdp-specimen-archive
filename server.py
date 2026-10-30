@@ -126,7 +126,7 @@ CFG_OVERRIDES = {}
 RDP_SCHEMA = """CREATE TABLE IF NOT EXISTS rdp_mixes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, project TEXT, pattern_code TEXT,
   plate TEXT, layer TEXT, batch_no TEXT, is_base INTEGER DEFAULT 0,
-  mt REAL, bk REAL, wh REAL, ye REAL, rd REAL, cl REAL, ye_d REAL,
+  mt REAL, bk REAL, wh REAL, ye REAL, rd REAL, cl REAL, ye_d REAL, bl REAL, vl REAL,
   matting_agent_pct REAL, matting_agent_g REAL, thinner_pct REAL, thinner_g REAL,
   hardener_pct REAL, hardener_g REAL,
   result TEXT, change_summary TEXT, notes TEXT, coating_code TEXT,
@@ -657,7 +657,7 @@ def read_rdp_mixes(project: str, code: str):
         if not code_enum and "예정" in res:
             code_enum = "plan"
         inks = {}
-        for k, col in (("MT", "mt"), ("BK", "bk"), ("WH", "wh"), ("YE", "ye"), ("RD", "rd"), ("CL", "cl"), ("YE-D", "ye_d")):
+        for k, col in INK_COLS:
             v = r[col]
             if v not in (None, 0, 0.0):
                 inks[k] = v
@@ -751,7 +751,8 @@ def merge_mixes(v, db_mixes):
 
 
 RESULT_TO_DB = {"ok": "✅", "warn": "⚠️", "ng": "❌", "plan": PLAN_LABEL, "planned": PLAN_LABEL, "": ""}
-INK_COLS = (("MT", "mt"), ("BK", "bk"), ("WH", "wh"), ("YE", "ye"), ("RD", "rd"), ("CL", "cl"), ("YE-D", "ye_d"))
+INK_COLS = (("MT", "mt"), ("BK", "bk"), ("WH", "wh"), ("YE", "ye"), ("RD", "rd"), ("CL", "cl"), ("YE-D", "ye_d"),
+            ("BL", "bl"), ("VL", "vl"))
 PCT_COLS = (("mattingPct", "matting_agent_pct"), ("mattingG", "matting_agent_g"),
             ("thinnerPct", "thinner_pct"), ("thinnerG", "thinner_g"),
             ("hardenerPct", "hardener_pct"), ("hardenerG", "hardener_g"))
@@ -1204,13 +1205,13 @@ def apply_push(project, code, doc, plan):
             try:
                 cur.execute("""INSERT INTO rdp_mixes
                 (date, project, pattern_code, plate, layer, batch_no, is_base,
-                 mt, bk, wh, ye, rd, cl, ye_d,
+                 mt, bk, wh, ye, rd, cl, ye_d, bl, vl,
                  matting_agent_pct, matting_agent_g, thinner_pct, thinner_g, hardener_pct, hardener_g,
                  result, change_summary, notes, coating_code)
-                VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)""",
                 (m.get("date") or datetime.now().strftime("%Y-%m-%d"), project, ins.get("code") or code, ins["plate"], ins["layer"], ins["batch"],
                  1 if m.get("isReference") else 0,
-                 inks["MT"], inks["BK"], inks["WH"], inks["YE"], inks["RD"], inks["CL"], inks["YE-D"],
+                 inks["MT"], inks["BK"], inks["WH"], inks["YE"], inks["RD"], inks["CL"], inks["YE-D"], inks["BL"], inks["VL"],
                  m.get("mattingPct"), m.get("mattingG"), m.get("thinnerPct"), m.get("thinnerG"),
                  m.get("hardenerPct"), m.get("hardenerG"),
                  RESULT_TO_DB.get(m.get("result") or "", ""), m.get("change") or "", m.get("note") or "",
