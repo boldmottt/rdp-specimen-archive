@@ -1736,6 +1736,21 @@ def _srgb8_to_lab(rgb):
     return [round(x, 2) for x in cm.rgb_lin_to_lab(tuple(lin))]
 
 
+def render_thumb(src, dst, w):
+    """축소본 캐시(dst)가 원본(src)보다 오래됐거나 없으면 Lanczos 로 다시 만든다.
+    카드 축소본(serve_thumb)과 대표색(ensure_thumb)이 같은 캐시 파일을 쓰므로 만드는 법도 하나여야 한다."""
+    if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+        return
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        h = max(1, round(w * im.height / im.width))
+        im = im.resize((w, h), Image.LANCZOS)
+        tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"   # 같은 축소본을 동시에 만들어도 서로의 반쯤 쓴 파일을 옮기지 않게
+        im.save(tmp, "JPEG", quality=82, optimize=True)
+        os.replace(tmp, dst)
+
+
 def ensure_thumb(pid, name, w=240):
     """축소본 경로를 돌려준다(없으면 만든다).
     serve_thumb 과 같은 캐시 규칙(_thumb/<pid>/<w>-<name>)을 쓴다 — 대표색을 뽑을 때
@@ -1747,18 +1762,8 @@ def ensure_thumb(pid, name, w=240):
     src = safe_join(IMAGES, pid, name)
     if not os.path.isfile(src):
         raise FileNotFoundError(name)
-    dst_dir = safe_join(THUMBS, pid)
-    dst = os.path.join(dst_dir, f"{w}-{name}")
-    if not (os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src)):
-        from PIL import Image
-        os.makedirs(dst_dir, exist_ok=True)
-        with Image.open(src) as im:
-            im = im.convert("RGB")
-            h = max(1, round(w * im.height / im.width))
-            im = im.resize((w, h), Image.LANCZOS)
-            tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"
-            im.save(tmp, "JPEG", quality=82, optimize=True)
-            os.replace(tmp, dst)
+    dst = os.path.join(safe_join(THUMBS, pid), f"{w}-{name}")
+    render_thumb(src, dst, w)
     return dst, src
 
 
@@ -2814,18 +2819,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(400, str(e))
         if not os.path.isfile(src):
             return self.error(404, "이미지 없음")
-        if not (os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src)):
-            try:
-                from PIL import Image
-                os.makedirs(dst_dir, exist_ok=True)
-                im = Image.open(src).convert("RGB")
-                h = max(1, round(w * im.height / im.width))
-                im = im.resize((w, h), Image.LANCZOS)
-                tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"   # 같은 축소본을 동시에 만들어도 서로의 반쯤 쓴 파일을 옮기지 않게
-                im.save(tmp, "JPEG", quality=82, optimize=True)
-                os.replace(tmp, dst)
-            except Exception:
-                return self.serve_image(f"{pid}/{name}", base, cache)
+        try:
+            render_thumb(src, dst, w)
+        except Exception:
+            return self.serve_image(f"{pid}/{name}", base, cache)
         with open(dst, "rb") as f:
             body = f.read()
         self.send_response(200)
