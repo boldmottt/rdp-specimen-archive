@@ -1730,3 +1730,46 @@ class PlateListTests(Base):
         self.assertEqual(st, 200)
         self.assertEqual(r["plates"], [])
         self.assertIn("동판 표", r["dbError"])
+
+
+class MixWorklogCheckTests(Base):
+    """작업일지 ↔ 아카이브 배합 대조 — 같은 동판·도수·배치 코드인데 값이 다르면 알린다(읽기만)."""
+
+    def setUp(self):
+        super().setUp()
+        wl = os.path.join(self.tmp, "worklogs")
+        shutil.copytree(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pccs", "sample-worklogs"), wl)
+        server.CFG["worklogDir"] = wl
+
+    def check(self, mixes, plate="DEMO_001"):
+        self.write_pattern(pattern("P-W01", "P", "W01", [{"id": "v01", "layerPlates": {"1도": plate, "2도": plate}, "mixes": mixes}]))
+        st, r = self.req("GET", "/api/mix-check/P-W01")
+        self.assertEqual(st, 200, r)
+        return r
+
+    def test_same_values_are_not_reported(self):
+        r = self.check([{"layer": "1도", "batch": "A", "inks": {"MT": 60}, "thinnerPct": 30, "hardenerG": 12}])
+        self.assertTrue(r["available"])
+        self.assertEqual((r["checked"], r["mismatches"]), (1, []))
+
+    def test_ink_and_additive_differences(self):
+        r = self.check([{"layer": "2도", "batch": "나", "inks": {"MT": 35, "CL": 15, "BK": 11, "WH": 10}, "thinnerG": 20}])
+        self.assertEqual(r["checked"], 1)
+        d = r["mismatches"][0]
+        self.assertEqual((d["layer"], d["batch"], d["plate"]), ("2도", "나", "DEMO_001"))
+        self.assertEqual(d["diffs"], [{"name": "BK", "archive": 11.0, "worklog": 10.0},
+                                      {"name": "신나 g", "archive": 20.0, "worklog": 21.0}])
+        self.assertTrue(d["file"].endswith(".md") and d["date"])
+
+    def test_missing_ink_on_one_side_and_same_as_batch(self):
+        # DEMO_002 1도 '나' 는 값 없이 same_as: DEMO_001/2도/나 — 원본 값으로 비교한다
+        r = self.check([{"layer": "1도", "batch": "나", "inks": {"MT": 35, "CL": 15, "BK": 10}}], plate="DEMO_002")
+        self.assertEqual(r["checked"], 1)
+        self.assertEqual(r["mismatches"][0]["diffs"], [{"name": "WH", "archive": None, "worklog": 10.0}])
+
+    def test_unknown_batch_is_not_checked_and_no_folder_is_unavailable(self):
+        r = self.check([{"layer": "1도", "batch": "Z9", "inks": {"MT": 1}}])
+        self.assertEqual((r["checked"], r["mismatches"]), (0, []))
+        server.CFG["worklogDir"] = os.path.join(self.tmp, "없음")
+        self.assertFalse(self.req("GET", "/api/mix-check/P-W01")[1]["available"])
+        self.assertEqual(self.req("GET", "/api/mix-check/P-X")[0], 404)

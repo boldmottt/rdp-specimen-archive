@@ -44,6 +44,7 @@ export function selectionBarHTML() {
   if (!App.sel.size) return "";
   return `<div class="selbar" id="selbar"><b>${App.sel.size}개 시편 선택</b>` +
     `<button class="tool" id="bulk-open">일괄 편집</button>` +
+    `<button class="tool" id="sel-compare" title="고른 시편의 컬러를 나란히 (최대 4개)">나란히 비교</button>` +
     `<button class="tool" id="sel-clear">선택 해제</button>` +
     `<span class="selhint">Shift 로 범위 · Cmd/Ctrl 로 하나씩</span></div>`;
 }

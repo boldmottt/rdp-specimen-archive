@@ -8,6 +8,7 @@ import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk
 // 색 정렬에서 "가장 가까운 컬러"를 고르는 규칙 — 정렬 키와 카드 표시가 같은 함수를 쓴다
 import { bestVar, deLabel, baseVid, badgeFor } from "./color-rules.js";
 import { autoFacets } from "./facets.js";
+import { compareFromSelection } from "./compare-page.js";
 import { workOf } from "./work.js";
 
 /* ---------------- catalog ---------------- */
@@ -365,6 +366,7 @@ export function renderCatalog() {
               <button type="button" data-act="none">결과 빼기 (${hitCount}개)</button>
               <button type="button" data-act="board">${App.project === "all" ? "컬러 보드 (프로젝트 선택)" : `${esc(App.project)} 컬러 보드`}</button>
               <button type="button" data-act="plates">동판 대장</button>
+              <button type="button" data-act="compare">나란히 비교</button>
               <button type="button" data-act="help">검색 문법</button>
             </div>
           </div>
@@ -502,6 +504,7 @@ export function renderCatalog() {
       else if (act === "none") removeAll("#morebtn");
       else if (act === "help") toast(QUERY_HELP, 6500);
       else if (act === "plates") location.hash = "#/plates";
+      else if (act === "compare") location.hash = "#/compare";
       else if (act === "sync") doSyncAll();
       else if (act === "board") {
         // 좁은 화면에서는 결과 줄의 보드 링크가 숨으므로 메뉴가 유일한 진입로다
@@ -525,6 +528,8 @@ export function renderCatalog() {
   bindPicks(list.map((p) => p.id), renderCatalog);
   const bulkBtn = $("#bulk-open");
   if (bulkBtn) bulkBtn.onclick = () => openBulkDialog(renderCatalog, (pid) => HITS.get(pid));
+  const cmpSel = $("#sel-compare");
+  if (cmpSel) cmpSel.onclick = () => compareFromSelection(list.map((p) => p.id), (pid) => HITS.get(pid));
 
   // 기준색(사진 대표색) — 카드의 ◎ 를 누르면 그 컬러가 기준이 되고 '색 가까운 순'으로 바뀐다
   paintRefDots();

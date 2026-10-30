@@ -1377,6 +1377,96 @@ def read_plate_info(lot: str):
     }
 
 
+# ---------------------------------------------------------------- 작업일지 ↔ 아카이브 배합 대조
+# 아카이브 배합(→ rdp.db)과 작업일지에 적힌 같은 배치(동판·도수·배치 코드)의 값이 다르면 알린다.
+# 옮겨 적다 생긴 오타를 잡으려는 것 — 읽기만 하고 어느 쪽도 고치지 않는다.
+MIX_TOL = 0.01   # g·% 반올림 차이는 같은 값으로 본다
+
+
+def _wl_amount(x):
+    """작업일지 첨가제 {g, pct} 또는 숫자 → (g, pct)"""
+    if isinstance(x, dict):
+        return _num_or_none(x.get("g")), _num_or_none(x.get("pct"))
+    return _num_or_none(x), None
+
+
+def _num_or_none(x):
+    try:
+        v = float(x)
+        return v if math.isfinite(v) and not isinstance(x, bool) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _wl_values(index, w, b, seen=()):
+    """배치의 실제 값 — 값 없이 same_as 만 적힌 배치는 원본 배치 값을 따라간다."""
+    from pccs import worklog as wl
+    if wl.has_values(b):
+        return b
+    ref = wl.parse_ref(b.get("same_as"))
+    if not ref or ref in seen:
+        return None
+    for w2, b2 in reversed(index.find(ref, before_date=w.date)):
+        got = _wl_values(index, w2, b2, seen + (ref,))
+        if got:
+            return got
+    return None
+
+
+def mix_worklog_check(doc) -> dict:
+    """{available, checked, mismatches:[{vid, layer, batch, plate, file, date, diffs:[{name, archive, worklog}]}]}"""
+    folder = pccs_api.worklog_dir(CFG)
+    if not os.path.isdir(folder) or not pccs_api.worklog.yaml_available():
+        return {"available": False, "checked": 0, "mismatches": []}
+    index = pccs_api.get_index(folder)
+    registry = ink_registry()
+    canon = lambda n: registry.resolve(n)   # noqa: E731 — MT·800MT 처럼 별칭이 달라도 같은 잉크
+    plates = [str(x).strip() for x in ((doc.get("work") or {}).get("plate") or []) if str(x).strip()]
+    checked, out = 0, []
+    for v in doc.get("variations") or []:
+        if not isinstance(v, dict):
+            continue
+        for m in v.get("mixes") or []:
+            if not isinstance(m, dict) or not str(m.get("batch") or "").strip():
+                continue
+            layer = str(m.get("layer") or "")
+            lot = _mplate(m) or str((v.get("layerPlates") or {}).get(layer) or "").strip() or (plates[0] if plates else "")
+            key = (lot, layer, str(m.get("batch")).strip())
+            found = None
+            for w, b in reversed(index.batches.get(key, [])):          # 가장 최근 일지부터
+                vals = _wl_values(index, w, b)
+                if vals:
+                    found = (w, vals)
+                    break
+            if not found:
+                continue
+            checked += 1
+            w, vals = found
+            diffs = []
+            a_inks, w_inks = {}, {}
+            for name, g in (m.get("inks") or {}).items():
+                if _num_or_none(g):
+                    a_inks[canon(name)] = a_inks.get(canon(name), 0) + float(g)
+            for name, g in ((vals.get("inks") or {}) if isinstance(vals.get("inks"), dict) else {}).items():
+                if _num_or_none(g):
+                    w_inks[canon(name)] = w_inks.get(canon(name), 0) + float(g)
+            for name in sorted(set(a_inks) | set(w_inks)):
+                a, b_ = a_inks.get(name), w_inks.get(name)
+                if a is None or b_ is None or abs(a - b_) > MIX_TOL:
+                    diffs.append({"name": name, "archive": a, "worklog": b_})
+            for key2, label in (("thinner", "신나"), ("hardener", "경화제"), ("matting", "소광제")):
+                wg, wp = _wl_amount(vals.get(key2))
+                ag, ap = _num_or_none(m.get(key2 + "G")), _num_or_none(m.get(key2 + "Pct"))
+                if ag is not None and wg is not None and abs(ag - wg) > MIX_TOL:
+                    diffs.append({"name": label + " g", "archive": ag, "worklog": wg})
+                elif ap is not None and wp is not None and abs(ap - wp) > MIX_TOL:
+                    diffs.append({"name": label + " %", "archive": ap, "worklog": wp})
+            if diffs:
+                out.append({"vid": v.get("id"), "layer": layer, "batch": key[2], "plate": lot,
+                            "file": w.name, "date": w.date, "diffs": diffs})
+    return {"available": True, "checked": checked, "mismatches": out}
+
+
 def list_plates() -> dict:
     """rdp.db 의 동판 전체 + 그 동판에 들어간 패턴(프로젝트·코드·도수). 동판 표가 없는 DB면 빈 목록과 이유."""
     path = rdp_db_path()
@@ -2324,6 +2414,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"ok": True, **diff_db(doc, load_doc_rows(doc))})
                 except Exception as e:
                     return self.error(400, str(e))
+            if p.startswith("/api/mix-check/"):
+                pid = p[len("/api/mix-check/"):].strip("/")
+                try:
+                    safe_id(pid)
+                    with open(safe_join(PATTERNS, pid + ".json"), encoding="utf-8") as f:
+                        doc = json.load(f)
+                except (ValueError, OSError) as e:
+                    return self.error(404 if isinstance(e, OSError) else 400, str(e))
+                return self.json({"ok": True, **mix_worklog_check(doc)})
             if p == "/api/plates":
                 return self.json({"ok": True, **list_plates()})
             if p.startswith("/api/plate/"):
