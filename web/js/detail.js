@@ -11,6 +11,7 @@ import { batchCompare, deltaText } from "./mix-compare.js";
 import { loadMixCheck, loadWorklogs } from "./worklog-link.js";
 import { loadProposalHistory } from "./feedback.js";
 import { compareList, inCompare, toggleCompareItem } from "./compare-page.js";
+import { openWorklogPicker } from "./from-worklog.js";
 
 /* ---------------- detail ---------------- */
 export const labOf = (p, v) => Object.assign({}, (p && p.label) || {}, (v && v.label) || {});
@@ -324,7 +325,7 @@ export function renderDetail(pid, vid, override) {
           </div>
           <div class="d-actions">
             ${isNew
-            ? `<button class="btn-dark" id="newsave">저장</button><button class="btn-line" id="newcancel">취소</button>`
+            ? `<button class="btn-dark" id="newsave">저장</button><button class="btn-line" id="newfromwl" title="작업일지의 작업 하나로 칸을 채웁니다">작업일지에서 불러오기</button><button class="btn-line" id="newcancel">취소</button>`
             : `<button class="btn-dark${inCart(p.id, v.id) ? " on" : ""}" id="addbtn">${inCart(p.id, v.id) ? "✓ 담김" : "제안서에 담기"}</button>
                  <button class="btn-line${App.meeting ? " on" : ""}" id="meetingbtn" title="고객 미팅용: 메모·배합·작업일지·동판 숨김">${App.meeting ? "미팅 모드 ON" : "미팅 모드"}</button>
                  <button class="btn-line${inCompare(p.id, v.id) ? " on" : ""}" id="cmpbtn" title="이 컬러를 나란히 비교에 담기/빼기 (최대 4개)">${inCompare(p.id, v.id) ? "✓ 비교" : "비교 +"}</button>
@@ -431,6 +432,7 @@ export function renderDetail(pid, vid, override) {
   if (sameAsVar) bindRecipePreviews($("#view .sec-mix"), sameAsVar.mixes || []);
   if (isNew) {
     $("#newsave").onclick = () => saveNewPattern();
+    $("#newfromwl").onclick = () => openWorklogPicker();
     $("#newcancel").onclick = () => { if (confirm("작성을 취소할까요?")) { App.newDraft = null; location.hash = ""; } };
   } else {
     const addBtn = $("#addbtn");
