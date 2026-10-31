@@ -1433,7 +1433,11 @@ def mix_worklog_check(doc) -> dict:
             lot = _mplate(m) or str((v.get("layerPlates") or {}).get(layer) or "").strip() or (plates[0] if plates else "")
             key = (lot, layer, str(m.get("batch")).strip())
             found = None
-            for w, b in reversed(index.batches.get(key, [])):          # 가장 최근 일지부터
+            cands = list(reversed(index.batches.get(key, [])))          # 가장 최근 일지부터
+            mdate = str(m.get("date") or "")[:10]
+            # 배합에 작업일이 있으면 그날 일지와 비교한다 — 같은 배치를 다른 날 다시 만든 기록과 비교하면 헛경보가 났다
+            same_day = [(w, b) for w, b in cands if mdate and str(w.date) == mdate]
+            for w, b in same_day + cands:
                 vals = _wl_values(index, w, b)
                 if vals:
                     found = (w, vals)
@@ -1465,6 +1469,127 @@ def mix_worklog_check(doc) -> dict:
                 out.append({"vid": v.get("id"), "layer": layer, "batch": key[2], "plate": lot,
                             "file": w.name, "date": w.date, "diffs": diffs})
     return {"available": True, "checked": checked, "mismatches": out}
+
+
+# ---------------------------------------------------------------- 작업일지 → 새 시편 초안
+# 작업일지(v3)의 작업 하나 × 패턴 코드 하나로 새 시편 초안을 만든다. 저장은 하지 않는다 —
+# 화면이 평소 '새 시편' 흐름(빈칸 채우고 저장)으로 보여 준다.
+def _wl_index():
+    folder = pccs_api.worklog_dir(CFG)
+    if not os.path.isdir(folder) or not pccs_api.worklog.yaml_available():
+        return None
+    return pccs_api.get_index(folder)
+
+
+def _archive_code_map():
+    """정규화한 코드 → 아카이브 시편 id (코드 · 프로젝트-코드 · 도수별 패턴 코드)"""
+    norm = pccs_api.worklog.norm_code
+    out = {}
+    for d in load_all()[0]:
+        code = (d.get("pattern") or {}).get("code") or ""
+        for c in [code, f"{d.get('project') or ''}-{code}"] + [
+                c2 for v in d.get("variations") or [] if isinstance(v, dict)
+                for c2 in (v.get("layerPatterns") or {}).values()]:
+            if norm(c):
+                out.setdefault(norm(c), d.get("id"))
+    return out
+
+
+def worklog_jobs(limit=200) -> dict:
+    """{available, jobs:[{file, date, seq, title, customer, project, stage, lot, code, layers, batches, samples, existing}]}"""
+    idx = _wl_index()
+    if idx is None:
+        return {"available": False, "jobs": []}
+    norm = pccs_api.worklog.norm_code
+    have = _archive_code_map()
+    out = []
+    for w in reversed(idx.logs):
+        if w.kind != "v3":
+            continue
+        for j in w.jobs:
+            plate = j.get("plate") if isinstance(j.get("plate"), dict) else {}
+            layers = plate.get("layers") if isinstance(plate.get("layers"), dict) else {}
+            codes = {}
+            for layer, code in layers.items():
+                if str(code or "").strip():
+                    codes.setdefault(str(code).strip(), []).append(str(layer))
+            batches = [b for b in (j.get("batches") or []) if isinstance(b, dict)]
+            for code, ls in codes.items():
+                out.append({"file": w.name, "date": w.date, "seq": j.get("seq"), "title": str(j.get("title") or ""),
+                            "customer": str(j.get("customer") or ""), "project": str(j.get("project") or ""),
+                            "stage": str(j.get("stage") or ""), "lot": str(plate.get("lot") or ""), "code": code,
+                            "layers": ls, "batches": sum(1 for b in batches if str(b.get("layer")) in ls),
+                            "samples": len([x for x in (j.get("samples") or []) if isinstance(x, dict)]),
+                            "existing": have.get(norm(code), "")})
+                if len(out) >= limit:
+                    return {"available": True, "jobs": out}
+    return {"available": True, "jobs": out}
+
+
+def worklog_draft(file, seq, code) -> dict:
+    """작업 하나 × 패턴 코드 하나 → 새 시편 초안(저장 안 함). 찾지 못하면 ValueError."""
+    idx = _wl_index()
+    if idx is None:
+        raise ValueError("작업일지 폴더를 읽을 수 없습니다 (config.worklogDir · PyYAML)")
+    norm = pccs_api.worklog.norm_code
+    w = next((x for x in idx.logs if x.name == file and x.kind == "v3"), None)
+    job = w and next((j for j in w.jobs if str(j.get("seq")) == str(seq)), None)
+    if not job:
+        raise ValueError("그 작업을 찾지 못했습니다")
+    fm = w.fm if isinstance(w.fm, dict) else {}
+    plate = job.get("plate") if isinstance(job.get("plate"), dict) else {}
+    lot = str(plate.get("lot") or "").strip()
+    layers = plate.get("layers") if isinstance(plate.get("layers"), dict) else {}
+    mine = [str(L) for L, c in layers.items() if norm(c) == norm(code)]
+    if not mine:
+        raise ValueError(f"이 작업의 동판에 {code} 도수가 없습니다")
+    project = str(job.get("project") or "").strip()
+    if project in ("", "-"):
+        project = str(fm.get("project") or "").strip()
+    pcode = str(code).strip()
+    if not project and "-" in pcode:
+        # 프로젝트가 안 적힌 작업: 코드 앞부분이 아카이브에 이미 있는 프로젝트일 때만 그걸로 (추측해서 새 프로젝트를 만들지 않는다)
+        head = pcode.split("-", 1)[0]
+        known = {str(d.get("project") or "") for d in load_all()[0]}
+        project = next((k for k in known if k and k.upper() == head.upper()), "")
+    if project and pcode.upper().startswith(project.upper() + "-"):
+        pcode = pcode[len(project) + 1:]                   # DEMO-W1 + 프로젝트 DEMO → W1
+    registry = ink_registry()
+    mixes = []
+    for b in job.get("batches") or []:
+        if not isinstance(b, dict) or str(b.get("layer")) not in mine:
+            continue
+        vals = _wl_values(idx, w, b) or {}
+        inks = {}
+        for name, g in (vals.get("inks") or {}).items() if isinstance(vals.get("inks"), dict) else []:
+            if _num_or_none(g):
+                inks[registry.resolve(name)] = float(g)
+        m = {"layer": str(b.get("layer")), "batch": str(b.get("code") or "").strip(), "plate": lot,
+             "inks": inks, "result": "", "date": w.date,
+             "note": " · ".join(x for x in (str(b.get("status") or ""), str(b.get("note") or "")) if x)}
+        for key in ("thinner", "hardener", "matting"):
+            g, pct = _wl_amount(vals.get(key))
+            if g is not None:
+                m[key + "G"] = g
+            if pct is not None:
+                m[key + "Pct"] = pct
+        mixes.append(m)
+    eq = fm.get("equipment") if isinstance(fm.get("equipment"), dict) else {}
+    clean = lambda x: "" if str(x or "").strip() in ("", "-") else str(x).strip()   # noqa: E731
+    samples = [x for x in (job.get("samples") or []) if isinstance(x, dict)]
+    return {
+        "existing": _archive_code_map().get(norm(code), ""),
+        "source": {"file": w.name, "date": w.date, "seq": job.get("seq"), "title": str(job.get("title") or "")},
+        "draft": {
+            "project": project, "client": clean(job.get("customer")),
+            "pattern": {"code": pcode},
+            "work": {"place": clean(fm.get("place")), "worker": clean(fm.get("worker")),
+                     "machine": clean(eq.get("machine")), "pad": clean(eq.get("pad")), "plate": [lot] if lot else []},
+            "variation": {"date": w.date, "layerPlates": {L: lot for L in mine} if lot else {}, "mixes": mixes,
+                          "note": f"작업일지 {w.date} #{job.get('seq')} {str(job.get('title') or '')}".strip()
+                                  + (f" · 시편 {len(samples)}종" if samples else "")},
+        },
+    }
 
 
 def list_plates() -> dict:
@@ -2414,6 +2539,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"ok": True, **diff_db(doc, load_doc_rows(doc))})
                 except Exception as e:
                     return self.error(400, str(e))
+            if p == "/api/worklog-jobs":
+                return self.json({"ok": True, **worklog_jobs()})
+            if p == "/api/worklog-draft":
+                qs = parse_qs(u.query)
+                try:
+                    return self.json({"ok": True, **worklog_draft((qs.get("file") or [""])[0], (qs.get("seq") or [""])[0],
+                                                                   (qs.get("code") or [""])[0])})
+                except ValueError as e:
+                    return self.error(404, str(e))
             if p.startswith("/api/mix-check/"):
                 pid = p[len("/api/mix-check/"):].strip("/")
                 try:
