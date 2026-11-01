@@ -1511,7 +1511,7 @@ def _archive_code_map():
     return out
 
 
-def worklog_jobs(limit=200) -> dict:
+def worklog_jobs(limit=3000) -> dict:
     """{available, jobs:[{file, date, seq, title, customer, project, stage, lot, code, layers, batches, samples, existing}]}"""
     idx = _wl_index()
     if idx is None:
@@ -1548,6 +1548,8 @@ def worklog_draft(file, seq, code) -> dict:
     if idx is None:
         raise ValueError("작업일지 폴더를 읽을 수 없습니다 (config.worklogDir · PyYAML)")
     norm = pccs_api.worklog.norm_code
+    if not norm(code):
+        raise ValueError("패턴 코드가 비어 있습니다")
     w = next((x for x in idx.logs if x.name == file and x.kind == "v3"), None)
     job = w and next((j for j in w.jobs if str(j.get("seq")) == str(seq)), None)
     if not job:
@@ -1579,7 +1581,8 @@ def worklog_draft(file, seq, code) -> dict:
         inks = {}
         for name, g in (vals.get("inks") or {}).items() if isinstance(vals.get("inks"), dict) else []:
             if _num_or_none(g):
-                inks[registry.resolve(name)] = float(g)
+                k = registry.resolve(name)
+                inks[k] = inks.get(k, 0.0) + float(g)      # 별칭이 같은 잉크로 풀리면 더한다(덮어쓰면 양이 줄었다)
         m = {"layer": str(b.get("layer")), "batch": str(b.get("code") or "").strip(), "plate": lot,
              "inks": inks, "result": "", "date": w.date,
              "note": " · ".join(x for x in (str(b.get("status") or ""), str(b.get("note") or "")) if x)}

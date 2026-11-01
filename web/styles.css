@@ -1044,19 +1044,29 @@ a.prop-status.ok:hover{background:#fff}
 .vt-tools .dt-hint{margin-left:auto}
 .dt-cols{display:flex;flex-direction:column;gap:4px;padding:8px 10px;min-width:150px}
 .dt-cols label{font-size:12.5px;display:flex;gap:6px;align-items:center;white-space:nowrap}
-.dt-wrap{max-height:none}
+/* 표는 자기 상자 안에서 스크롤한다 — 머리줄이 붙어 있고, 가로 스크롤 막대가 수천 px 아래가 아니라 화면 안에 있다 */
+.dt-wrap{max-height:calc(100vh - 150px);min-height:240px;overflow:auto;border:1px solid var(--line);border-radius:8px}
 .dtable{border-collapse:collapse;width:100%;font-size:12.5px;background:var(--surface)}
 .dtable th,.dtable td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:middle;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
-.dtable thead th{position:sticky;top:0;background:#f4f2ed;font-size:11.5px;font-weight:650;color:var(--ink-2);cursor:pointer;user-select:none;z-index:1}
+.dtable thead th{position:sticky;top:0;background:#f4f2ed;font-size:11.5px;font-weight:650;color:var(--ink-2);cursor:pointer;user-select:none;z-index:4}
 .dtable thead th:hover{color:var(--ink)}
 .dtable .c-th{width:56px;padding:3px 6px}
 .dtable .c-th img{width:48px;height:22px;object-fit:cover;border-radius:4px;display:block}
-.dtable td.ed{cursor:text}
+.dtable td.ed{cursor:text;position:relative}
+.dtable td.ed.shared{color:var(--ink-2);background-image:linear-gradient(90deg,var(--line-2) 50%,transparent 0);background-size:4px 1px;background-repeat:repeat-x;background-position:8px calc(100% - 5px)}
 .dtable td.ed:hover{background:#faf8f3;box-shadow:inset 0 0 0 1px var(--line-2)}
 .dtable td.ed:focus{outline:2px solid var(--ink);outline-offset:-2px}
 .dtable td.saving{color:var(--ink-3)}
 .dtable td.saved{background:#e3f1e6;transition:background .6s}
-.dtable .dt-in{width:100%;min-width:90px;border:1px solid var(--ink);border-radius:4px;padding:3px 5px;font:inherit;font-size:12.5px;background:#fff}
+/* 편집칸은 칸 위에 겹쳐 띄운다 — 칸 너비·줄 높이가 그대로라 옆 버튼을 누르려던 클릭이 빗나가지 않는다 */
+.dtable td.editing{overflow:visible;color:transparent}
+.dtable .dt-in{position:absolute;left:2px;top:50%;transform:translateY(-50%);width:calc(100% - 4px);min-width:150px;z-index:3;box-sizing:border-box;
+  border:1px solid var(--ink);border-radius:4px;padding:3px 5px;font:inherit;font-size:12.5px;background:#fff;color:var(--ink);box-shadow:0 4px 14px -6px rgba(0,0,0,.35)}
+.dtable .c-cart{width:34px;padding:3px 4px;text-align:center}
+.dtable thead th.c-cart{font-size:10.5px;cursor:default}
+.dt-cart{width:24px;height:22px;border:1px solid var(--line-2);border-radius:6px;background:#fff;color:var(--ink-3);font-size:13px;line-height:1;cursor:pointer;padding:0}
+.dt-cart:hover{border-color:var(--ink);color:var(--ink)}
+.dt-cart.on{background:var(--ink);border-color:var(--ink);color:#fff}
 .dtable a{text-decoration:underline;text-underline-offset:2px}
 .dtable tr:hover td{background:#fcfbf8}
 .vt-tools .menu{left:0;right:auto}
@@ -1098,6 +1108,11 @@ a.prop-status.ok:hover{background:#fff}
 .kcard img,.kcard .kc-noimg{width:100%;aspect-ratio:170/60;object-fit:cover;border-radius:6px;display:block;background:#eceae5}
 .kcard .kc-t{display:block;margin-top:6px;color:var(--ink)}
 .kcard .kc-m{color:var(--ink-3);font-size:11px;margin:2px 0 4px}
+.kcard .kc-foot{display:flex;align-items:center;gap:6px;justify-content:space-between}
+.kcard .kc-st{max-width:96px;height:24px;border:1px solid var(--line);border-radius:6px;background:#faf9f6;font:inherit;font-size:11px;color:var(--ink-2);padding:0 4px;cursor:pointer}
+.kcard .kc-st:hover,.kcard .kc-st:focus{border-color:var(--ink);color:var(--ink)}
+.kcol h3 .kc-del{margin-left:auto;border:0;background:none;color:var(--ink-3);font-size:15px;line-height:1;cursor:pointer;padding:0 2px}
+.kcol h3 .kc-del:hover{color:#a1301e}
 .dt-cols[hidden]{display:none}
 .segbtn.on:hover{background:var(--ink)}
 
@@ -1146,3 +1161,6 @@ a.prop-status.ok:hover{background:#fff}
 .td-tags .tg-new{width:130px;border:1px solid var(--line-2);border-radius:6px;padding:4px 7px;font:inherit;font-size:12px}
 .tool.danger{color:#a1301e;border-color:#e3b8b0}
 .tool.danger:hover{background:#fbeae6}
+.td-undo{display:flex;align-items:center;gap:12px;margin:0 0 12px;padding:8px 12px;border-radius:10px;background:#eef4ea;border:1px solid #cfe1c5;font-size:12.5px}
+.td-undo .tool{padding:5px 12px;background:#fff}
+.td-table .before,.td-table .after{white-space:pre-wrap}

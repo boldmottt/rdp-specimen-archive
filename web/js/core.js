@@ -230,6 +230,23 @@ export function normalizeDoc(p) {
   return p;
 }
 export const markSaved = (doc, r) => { if (r.savedAt) doc.updatedAt = r.savedAt; if (r.rev) doc.rev = r.rev; return normalizeDoc(doc); };
+/**
+ * 저장이 409(다른 곳에서 먼저 저장)로 막혔을 때 서버가 함께 보낸 최신본으로 화면 사본을 바꾼다.
+ * 안 바꾸면 화면이 옛 버전을 들고 있어 새로고침 전까지 같은 시편 저장이 계속 409 가 났다.
+ * @returns 바꾼 문서 (최신본이 없으면 null)
+ */
+export function adoptServerCopy(err) {
+  const cur = err && err.status === 409 && err.payload && err.payload.current;
+  if (!isObj(cur) || !cur.id) return null;
+  const doc = normalizeDoc(JSON.parse(JSON.stringify(cur)));
+  doc._mtime = Date.now();
+  const i = App.patterns.findIndex((x) => x.id === doc.id);
+  if (i < 0) return null;
+  if (App.patterns[i]._sel) doc._sel = App.patterns[i]._sel;
+  App.patterns[i] = doc;
+  invalidateColors(doc.id);          // 다른 곳에서 사진을 바꿨을 수도 있다
+  return doc;
+}
 export const varOf = (p, vid) => (p ? (p.variations || []).find((v) => v.id === vid) || (p.variations || [])[0] : null);
 export const imgUrl = (pid, name) => `/img/${encodeURIComponent(pid)}/${encodeURIComponent(name)}`;
 export const thumbUrl = (pid, name, w) => `/api/thumb/${encodeURIComponent(pid)}/${encodeURIComponent(name)}?w=${w}`;

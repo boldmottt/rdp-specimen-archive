@@ -36,6 +36,29 @@ export const COLUMNS = [
 export const COL = Object.fromEntries(COLUMNS.map((c) => [c.key, c]));
 export const DEFAULT_HIDDEN = ["rev", "place", "note", "updated"];
 
+/**
+ * 이 칸이 '시편 공통값'인가 — 고치면 같은 시편의 다른 컬러에도 똑같이 보인다(고객·태그, 컬러별 값이 없는 작업자·장소).
+ * 컬러가 하나뿐인 시편은 공통이어도 헷갈릴 일이 없어 false.
+ */
+export function isShared(c, p, v) {
+  if (!c || !c.edit || (p.variations || []).length < 2) return false;
+  if (c.edit === "tags" || c.edit.startsWith("p.")) return true;
+  if (c.edit.startsWith("work.")) return !own(v, c.edit.slice(5));
+  return false;
+}
+
+/** 입력 도우미: 그 칸에 이미 쓰인 값(많이 쓴 순, 최대 limit) — 같은 뜻을 다르게 적어 값이 갈라지는 걸 줄인다 */
+export function suggestValues(patterns, key, limit = 40) {
+  const c = COL[key];
+  if (!c || !c.edit || c.edit === "tags" || c.type === "date") return [];
+  const m = new Map();
+  (patterns || []).forEach((p) => (p.variations || []).forEach((v) => {
+    const x = t(c.get(p, v));
+    if (x) m.set(x, (m.get(x) || 0) + 1);
+  }));
+  return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")).slice(0, limit).map(([x]) => x);
+}
+
 /** 표 줄: 검색에 걸린 컬러만, 화면 순서 그대로 */
 export function tableRows(list, hitsOf) {
   const out = [];

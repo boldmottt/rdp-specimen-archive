@@ -13,7 +13,7 @@ export const FIELDS = [
   { key: "colorName", label: "컬러명", scope: "v" },
   { key: "colorCode", label: "컬러코드", scope: "v" },
   { key: "status", label: "상태", scope: "v" },
-  { key: "note", label: "컬러 메모", scope: "v" },
+  { key: "note", label: "컬러 메모", scope: "v", multiline: true },
   { key: "client", label: "고객", scope: "p" },
   { key: "name", label: "패턴명", scope: "pattern" },
   { key: "nameKo", label: "패턴 한글명", scope: "pattern" },
@@ -65,13 +65,18 @@ export function makeFinder({ find, regex = false, caseSensitive = false, whole =
   catch (e) { throw new Error("정규식이 올바르지 않습니다: " + e.message); }
 }
 
-/** 바꾼 글자 (바뀐 게 없으면 원래 글자) — 앞뒤 공백은 다듬는다 */
-export function replaceText(s, finder, repl) {
+/**
+ * 바꾼 글자 (바뀐 게 없으면 원래 글자).
+ * 한 줄 칸은 바꾸다 생긴 겹친 공백·앞뒤 공백을 다듬는다. 여러 줄 칸(메모)은 줄바꿈·빈 줄을 그대로 둔다
+ * (예전엔 메모의 빈 줄까지 공백 하나로 합쳐 버렸다).
+ */
+export function replaceText(s, finder, repl, multiline = false) {
   if (!finder) return s;
   finder.lastIndex = 0;
   if (!finder.test(s)) return s;
   finder.lastIndex = 0;
-  return s.replace(finder, repl).replace(/\s{2,}/g, " ").trim();
+  const out = s.replace(finder, repl);
+  return multiline ? out : out.replace(/\s{2,}/g, " ").trim();
 }
 
 /**
@@ -84,7 +89,7 @@ export function findMatches(patterns, opts, fields) {
   const keys = fields && fields.length ? fields : FIELDS.map((f) => f.key);
   const out = [];
   (patterns || []).forEach((p) => keys.forEach((k) => slotsOf(p, k).forEach((s) => {
-    const before = s.get(), after = replaceText(before, finder, opts.repl || "");
+    const before = s.get(), after = replaceText(before, finder, opts.repl || "", FIELD[k].multiline);
     if (after !== before) out.push({ pid: p.id, slot: s.id, field: k, vid: s.vid, before, after });
   })));
   return out;
@@ -97,7 +102,7 @@ export function applyReplace(doc, slotIds, opts) {
   let changed = false;
   new Set(slotIds.map((id) => id.split("|")[0])).forEach((k) => slotsOf(doc, k).forEach((s) => {
     if (!want.has(s.id)) return;
-    const before = s.get(), after = replaceText(before, finder, opts.repl || "");
+    const before = s.get(), after = replaceText(before, finder, opts.repl || "", FIELD[k].multiline);
     if (after !== before) { s.set(after); changed = true; }
   }));
   cleanTags(doc);
@@ -216,4 +221,20 @@ export function tidySpaces(doc) {
   }));
   cleanTags(doc);
   return changed;
+}
+
+/* ---------- 방금 바꾼 것 되돌리기 ---------- */
+
+const KEEP = new Set(["id", "rev", "updatedAt"]);
+/**
+ * 문서 내용을 old(고치기 전 사본)로 되돌린다 (saveMany 의 mutate). id·rev·updatedAt 과 '_' 칸은 지금 것 그대로 —
+ * 그래야 평소 저장의 rev 검사를 거친다(그 사이 다른 곳에서 고쳤으면 409 로 막힌다).
+ */
+export function restoreDoc(doc, old) {
+  if (!old) return false;
+  const clean = (o) => JSON.stringify(Object.keys(o).filter((k) => !k.startsWith("_") && !KEEP.has(k)).sort().map((k) => [k, o[k]]));
+  if (clean(doc) === clean(old)) return false;
+  Object.keys(doc).forEach((k) => { if (!k.startsWith("_") && !KEEP.has(k)) delete doc[k]; });
+  Object.keys(old).forEach((k) => { if (!k.startsWith("_") && !KEEP.has(k)) doc[k] = JSON.parse(JSON.stringify(old[k])); });
+  return true;
 }

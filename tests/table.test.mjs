@@ -60,3 +60,21 @@ test("칸반 칸 — 상태 없음이 맨 앞, 기본 칸은 비어도 보인다
   const cols = kanbanColumns(tableRows([P1, P2]), ["재작업"]);
   assert.deepEqual(cols.map((c) => `${c.label}:${c.rows.length}`), ["상태 없음:1", "샘플:1", "가승인:0", "승인:1", "재작업:0"]);
 });
+
+test("공통값 칸 표시 — 고객·태그·상속한 작업자는 공통, 컬러 값이 있는 작업자·컬러 칸은 아님", async () => {
+  const { isShared, COL: C } = await import("../web/js/table-rules.js");
+  assert.equal(isShared(C.client, P1, P1.variations[0]), true);
+  assert.equal(isShared(C.tags, P1, P1.variations[0]), true);
+  assert.equal(isShared(C.worker, P1, P1.variations[0]), true);    // v1 은 공통 작업자를 물려받음
+  assert.equal(isShared(C.worker, P1, P1.variations[1]), false);   // v2 는 자기 값이 있음
+  assert.equal(isShared(C.status, P1, P1.variations[0]), false);
+  assert.equal(isShared(C.client, P2, P2.variations[0]), false);   // 컬러 하나뿐
+});
+
+test("입력 도우미 — 많이 쓴 값 순, 날짜·태그 칸은 없음", async () => {
+  const { suggestValues } = await import("../web/js/table-rules.js");
+  const ps = [P1, P2, { ...P2, id: "C", variations: [{ id: "v1", status: "승인" }] }];
+  assert.deepEqual(suggestValues(ps, "status"), ["승인", "샘플"]);
+  assert.deepEqual(suggestValues(ps, "date"), []);
+  assert.deepEqual(suggestValues(ps, "tags"), []);
+});

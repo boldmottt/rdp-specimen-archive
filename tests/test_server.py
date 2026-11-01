@@ -1830,6 +1830,31 @@ class WorklogDraftTests(Base):
         self.assertEqual([(m["layer"], m["batch"]) for m in mx], [("1도", "나")])
         self.assertEqual(mx[0]["inks"], {"MT": 35.0, "CL": 15.0, "BK": 10.0, "WH": 10.0})   # same_as 원본 값
 
+    def test_same_ink_twice_is_added_and_empty_code_rejected(self):
+        wl = server.CFG["worklogDir"]
+        with open(os.path.join(wl, "2026-02-01_합산.md"), "w", encoding="utf-8") as f:
+            f.write("""---
+schema: worklog/v3
+date: '2026-02-01'
+place: P
+worker: W
+jobs:
+  - seq: 1
+    title: 합산
+    plate:
+      lot: 'X_001'
+      layers: {1도: X-A1}
+    batches:
+      - {layer: 1도, code: 'A', inks: {MT: 10, 'MT ': 5, BK: 2}}
+---
+""")
+        q = "file=" + urllib.parse.quote("2026-02-01_합산.md") + "&seq=1&code=X-A1"
+        st, r = self.req("GET", "/api/worklog-draft?" + q)
+        self.assertEqual(st, 200, r)
+        self.assertEqual(r["draft"]["variation"]["mixes"][0]["inks"], {"MT": 15.0, "BK": 2.0})
+        q = "file=" + urllib.parse.quote("2026-02-01_합산.md") + "&seq=1&code="
+        self.assertEqual(self.req("GET", "/api/worklog-draft?" + q)[0], 404, "빈 코드는 도수를 고르지 못한다")
+
     def test_unknown_job_and_no_folder(self):
         self.assertEqual(self.req("GET", "/api/worklog-draft?file=x.md&seq=1&code=A")[0], 404)
         q = "file=" + urllib.parse.quote(self.FILE) + "&seq=1&code=NOPE"

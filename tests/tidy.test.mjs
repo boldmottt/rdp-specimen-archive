@@ -76,3 +76,26 @@ test("정리할 것 — 공백·코드 중복·날짜 형식·이름 없음·비
   assert.equal(d.variations[1].colorName, "Light Oak");
   assert.equal(tidySpaces(d), false);
 });
+
+test("메모 찾아 바꾸기 — 줄바꿈·빈 줄은 그대로, 한 줄 칸은 겹친 공백 정리", async () => {
+  const { findMatches, applyReplace } = await import("../web/js/tidy-rules.js");
+  const p = { id: "N", pattern: { code: "X" }, work: {}, variations: [{ id: "v1", colorName: "Dark Oak Brown", note: "1차 광택\n\n2차:  광택 낮춤" }] };
+  const m = findMatches([p], { find: "광택", repl: "광" }, ["note"]);
+  assert.equal(m[0].after, "1차 광\n\n2차:  광 낮춤");
+  const d = clone(p);
+  applyReplace(d, ["note|v1"], { find: "광택", repl: "광" });
+  assert.equal(d.variations[0].note, "1차 광\n\n2차:  광 낮춤");
+  assert.equal(findMatches([p], { find: "Oak", repl: "" }, ["colorName"])[0].after, "Dark Brown");
+});
+
+test("되돌리기 — 고치기 전 사본으로, rev·updatedAt 은 지금 것", async () => {
+  const { restoreDoc, tidySpaces } = await import("../web/js/tidy-rules.js");
+  const old = { ...clone(mk()[0]), rev: "r1", updatedAt: "t1", _mtime: 1 };
+  const d = clone(old);
+  tidySpaces(d);
+  d.rev = "r2"; d.updatedAt = "t2"; d.extra = "새 칸";
+  assert.equal(restoreDoc(d, old), true);
+  assert.equal(d.variations[1].colorName, "Light  Oak ");
+  assert.deepEqual([d.rev, d.updatedAt, d.extra], ["r2", "t2", undefined]);
+  assert.equal(restoreDoc(d, old), false);                 // 이미 같으면 저장 안 함
+});

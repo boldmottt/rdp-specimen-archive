@@ -67,3 +67,13 @@ test("내보낸 CSV 를 그대로 다시 올리면 오류 없이 모두 '이미 
   assert.deepEqual(r.plans[0].skipped.map((s) => s.color), ["=K-1"], "수식 방지 ' 를 떼고 비교");
   assert.equal(r.plans[0].add.length, 0);
 });
+
+test("작업일 — 스프레드시트가 흔히 쓰는 꼴도 받는다", () => {
+  assert.equal(normDate("2026. 10. 31"), "2026-10-31");     // 구글 시트 한국어
+  assert.equal(normDate("2026. 1. 5."), "2026-01-05");
+  assert.equal(normDate("2026-10-31 0:00"), "2026-10-31");   // 엑셀 날짜+시간
+  assert.equal(normDate("2026-10-31T09:30:00"), "2026-10-31");
+  assert.equal(normDate("20261031"), "2026-10-31");
+  assert.equal(normDate("2026-02-30"), null);
+  assert.equal(normDate("10/31/2026"), null);
+});

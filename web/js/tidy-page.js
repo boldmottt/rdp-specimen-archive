@@ -9,11 +9,11 @@
  *
  * 되돌리기: main.js 의 #/tidy 라우트, 목차 ⋯ 메뉴의 '정리 도구', 이 파일과 tidy-rules.js 를 지우면 된다.
  */
-import { $, $$, App, byId, esc, vName } from "./core.js";
+import { $, $$, App, byId, clone, esc, toast, vName } from "./core.js";
 import { saveMany, reportSave } from "./save-many.js";
 import { setView } from "./views.js";
 import {
-  FIELDS, FIELD, CHECKS, findMatches, applyReplace, clusterValues, valueCounts, mergeValues, tagUsage, qualityIssues, tidySpaces,
+  FIELDS, FIELD, CHECKS, findMatches, applyReplace, clusterValues, valueCounts, mergeValues, tagUsage, qualityIssues, tidySpaces, restoreDoc,
 } from "./tidy-rules.js";
 
 const S = {
@@ -31,15 +31,40 @@ const pLabel = (pid, vid) => {
   return `<a href="#/p/${encodeURIComponent(pid)}${v ? "/" + encodeURIComponent(v.id) : ""}">${esc(p.project)} ${esc(p.pattern.code)}${v ? " · " + esc(vName(v)) : ""}</a>`;
 };
 
-/** 저장 공통 — 확인 → 차례로 저장 → 결과 알림 → 다시 그리기 */
+/* 방금 한 일괄 수정 — [되돌리기]로 한 번에 원래대로 (이 화면에 있는 동안, 마지막 한 번만) */
+let LAST = null;   // {what, before: Map(pid → 고치기 전 사본), pids}
+
+/** 저장 공통 — 확인 → 차례로 저장 → 결과 알림 → 다시 그리기 (되돌리기용으로 고치기 전 사본을 남긴다) */
 async function run(items, what) {
   if (!items.length) return;
-  if (!confirm(`${items.length}개 시편을 고칩니다. ${what}\n\n(시편마다 [이력]에서 되돌릴 수 있어요) 계속할까요?`)) return;
+  if (!confirm(`${items.length}개 시편을 고칩니다. ${what}\n\n(바로 뒤 [되돌리기]로 한 번에, 또는 시편마다 [이력]에서 되돌릴 수 있어요) 계속할까요?`)) return;
+  const before = new Map(items.map((it) => [it.pid, byId(it.pid) && clone(byId(it.pid))]));
   const st = $("#td-status");
   const res = await saveMany(items, (i, n) => { if (st) st.textContent = `저장 중… ${i} / ${n}`; });
   if (st) st.textContent = "";
   reportSave(res);
+  LAST = res.ok.length ? { what, before, pids: res.ok } : null;
   paint();
+}
+
+async function undoLast() {
+  if (!LAST) return;
+  const { what, before, pids } = LAST;
+  if (!confirm(`방금 고친 ${pids.length}개 시편을 고치기 전으로 되돌립니다.\n(${what})\n\n그 사이 다른 곳에서 고친 시편은 되돌리지 않고 알려 드려요. 계속할까요?`)) return;
+  const st = $("#td-status");
+  const res = await saveMany(pids.map((pid) => ({ pid, label: (byId(pid) || { pattern: {} }).pattern.code || pid, mutate: (d) => restoreDoc(d, before.get(pid)) })),
+    (i, n) => { if (st) st.textContent = `되돌리는 중… ${i} / ${n}`; });
+  if (st) st.textContent = "";
+  LAST = null;
+  if (res.fails.length) reportSave(res);
+  else if (res.ok.length) toast(`${res.ok.length}개 시편을 되돌렸습니다`, 2500);
+  else toast("되돌릴 것이 없습니다 — 이미 원래대로예요");
+  paint();
+}
+
+function undoBarHTML() {
+  return LAST ? `<div class="td-undo" role="status"><span>방금: ${esc(LAST.what)} — ${LAST.pids.length}개 시편</span>
+      <button type="button" class="tool" id="td-undo">되돌리기</button></div>` : "";
 }
 
 /* ---------- 정리할 것 ---------- */
@@ -220,6 +245,12 @@ function paint() {
   const body = $("#td-body");
   if (!body) return;
   $$("[data-tdtab]").forEach((b) => b.classList.toggle("on", b.dataset.tdtab === S.tab));
+  const slot = $("#td-undo-slot");
+  if (slot) {
+    slot.innerHTML = undoBarHTML();
+    const u = $("#td-undo", slot);
+    if (u) u.onclick = undoLast;
+  }
   if (S.tab === "check") { body.innerHTML = checkHTML(); bindCheck(body); }
   else if (S.tab === "fr") { body.innerHTML = frHTML(); bindFr(); }
   else if (S.tab === "merge") { body.innerHTML = mergeHTML(); bindMerge(body); }
@@ -230,6 +261,7 @@ function paint() {
 export function renderTidy() {
   document.body.classList.remove("prop-mode");
   if (S.scope === null) S.scope = App.project || "all";
+  LAST = null;   // 되돌리기는 이 화면에 있는 동안만 — 다른 화면에서 고친 뒤 돌아와 되돌리면 그 사이 고친 것까지 덮을 수 있다
   const projects = [...new Set(App.patterns.map((p) => p.project).filter(Boolean))].sort();
   $("#view").innerHTML = `<div class="wrap tidy-page">
       <div class="pl-head"><h1>정리 도구</h1>
@@ -239,6 +271,7 @@ export function renderTidy() {
         <label>범위 <select id="td-scope"><option value="all">전체</option>${projects.map((x) => `<option${S.scope === x ? " selected" : ""}>${esc(x)}</option>`).join("")}</select></label>
         <span id="td-status" class="td-status" aria-live="polite"></span>
       </div>
+      <div id="td-undo-slot"></div>
       <div id="td-body"></div>
     </div>`;
   $$("[data-tdtab]").forEach((b) => (b.onclick = () => { S.tab = b.dataset.tdtab; paint(); }));

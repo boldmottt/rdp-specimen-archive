@@ -44,11 +44,15 @@ const LOOKUP = Object.fromEntries(Object.entries(COLS).flatMap(([f, names]) => n
 const clean = (x) => String(x == null ? "" : x).replace(/^'(?=[=+\-@\t\r])/, "").trim();   // 내보내기의 수식 방지 ' 를 뗀다
 const low = (x) => clean(x).toLowerCase();
 
-/** 'YYYY-MM-DD' · 'YYYY.MM.DD' · 'YYYY/M/D' → 'YYYY-MM-DD', 빈 값은 "", 틀리면 null */
+/**
+ * 'YYYY-MM-DD' · 'YYYY.MM.DD' · 'YYYY/M/D' → 'YYYY-MM-DD', 빈 값은 "", 틀리면 null.
+ * 스프레드시트가 흔히 내보내는 꼴도 받는다: '2026. 10. 31'(구글 시트 한국어) · '2026-10-31 0:00'(엑셀 날짜+시간) · '20261031'.
+ * 표 보기의 작업일 칸도 이 함수로 읽는다(views.js).
+ */
 export function normDate(x) {
   const t = clean(x);
   if (!t) return "";
-  const m = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})$/.exec(t);
+  const m = /^(\d{4})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})\.?(?:[ T].*)?$/.exec(t) || /^(\d{4})(\d{2})(\d{2})$/.exec(t);
   if (!m) return null;
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
   const dt = new Date(Date.UTC(y, mo - 1, d));
