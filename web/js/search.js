@@ -27,11 +27,13 @@
 
 import { workOf } from "./work.js";
 
-const KEYED = /^(tag|project|plate|color|status|client|place|code|layers):([\s\S]*)$/i;
+const KEYED = /^(tag|project|plate|color|status|client|place|code|layers|has|date|updated|rating|flag|있음|날짜|수정|별점|깃발):([\s\S]*)$/i;
+/* 한글 접두 → 영문 키 */
+const ALIAS = { 있음: "has", 날짜: "date", 수정: "updated", 별점: "rating", 깃발: "flag" };
 const low = (s) => String(s == null ? "" : s).toLowerCase().trim();
 
 /** 컬러(베리에이션) 단위로만 판정되는 문법 — 나머지(tag·project)는 시편 단위 */
-export const VAR_KEYS = new Set(["plate", "color", "status", "place", "layers"]);
+export const VAR_KEYS = new Set(["plate", "color", "status", "place", "layers", "has", "date", "rating", "flag"]);
 
 /* 토큰 자르기. -제외 / #태그 / @프로젝트 / "따옴표" 를 붙여 쓸 수 있다.
    raw 는 토큰을 다시 지울 때(칩 토글) 원문을 그대로 되살리기 위해 남긴다. */
@@ -56,14 +58,15 @@ export function parseQuery(raw) {
   const terms = [], notText = [], words = [];
   tokenize(raw).forEach((t) => {
     let key = "", val = t.text;
-    const KNOWN = ["tag", "project", "plate", "color", "status", "client", "place", "code", "layers"];
+    const KNOWN = ["tag", "project", "plate", "color", "status", "client", "place", "code", "layers", "has", "date", "updated", "rating", "flag"];
     if (t.prefix && KNOWN.includes(t.prefix)) key = t.prefix;   // 아는 키일 때만 접두로 인정
+    else if (!t.prefix && !t.sigil && /^★/.test(t.text)) { key = "rating"; val = t.text.slice(1); }   // ★3 · ★3+
     else if (t.prefix) { val = `${t.prefix}:${t.text}`; }        // RAL:9005 같은 건 그냥 단어로
     else if (t.sigil === "#") key = "tag";
     else if (t.sigil === "@") key = "project";
     else {
       const m = KEYED.exec(t.text);
-      if (m) { key = m[1].toLowerCase(); val = m[2]; }
+      if (m) { key = ALIAS[m[1]] || m[1].toLowerCase(); val = m[2]; }
     }
     val = low(val);
     if (key && val) terms.push({ key, val, neg: t.neg });
@@ -86,8 +89,45 @@ export function patternHay(p) {
     .join(" ").toLowerCase();
 }
 
+/* has: 값 → 판정 (사진·배합·동판·메모·태그·작업일) */
+const HAS = {
+  사진: (p, v) => (v.images || []).length > 0, photo: (p, v) => (v.images || []).length > 0,
+  배합: (p, v) => (v.mixes || []).length > 0, mix: (p, v) => (v.mixes || []).length > 0,
+  동판: (p, v) => Object.values(v.layerPlates || {}).some(Boolean) || ((p.work || {}).plate || []).length > 0
+    || (v.mixes || []).some((m) => m && m.plate),
+  메모: (p, v) => !!String(v.note || "").trim(), note: (p, v) => !!String(v.note || "").trim(),
+  태그: (p) => ((p.pattern || {}).tags || []).length > 0, tag: (p) => ((p.pattern || {}).tags || []).length > 0,
+  작업일: (p, v) => !!String(v.date || "").trim(), date: (p, v) => !!String(v.date || "").trim(),
+};
+HAS.plate = HAS.동판;
+
+/** date: 값 — '2026-10'(앞부분) · '>2026-09-01' · '<=2026.10' */
+function testDate(d, val) {
+  const m = /^(>=|<=|>|<)?(.*)$/.exec(String(val).replace(/\./g, "-").replace(/\//g, "-"));
+  const op = m[1] || "", x = m[2];
+  const day = String(d || "").slice(0, 10);
+  if (!day) return false;                    // 날짜 없는 컬러는 비교에서 빠진다
+  if (!op) return day.startsWith(x);
+  if (op === ">") return day > x && !day.startsWith(x);
+  if (op === ">=") return day >= x;
+  if (op === "<") return day < x;
+  return day <= x || day.startsWith(x);
+}
+
+/** rating: 값 — '3'(정확히) · '3+'(이상) · '0'(없음) */
+function testRating(r, val) {
+  const m = /^(\d)(\+)?$/.exec(String(val));
+  if (!m) return false;
+  const n = Number(m[1]), have = Number(r || 0);
+  return m[2] ? have >= n : have === n;
+}
+
 /** 컬러(베리에이션)가 조건에 맞는가 */
 function testVar(p, v, t) {
+  if (t.key === "has") { const f = HAS[t.val]; return f ? f(p, v) : false; }
+  if (t.key === "date") return testDate(v.date, t.val);
+  if (t.key === "rating") return testRating(v.rating, t.val);
+  if (t.key === "flag") return ["on", "있음", "1", "true", "y"].includes(t.val) ? !!v.flag : !v.flag;
   if (t.key === "color") return low(v.colorCode).includes(t.val) || low(v.colorName).includes(t.val);
   if (t.key === "status") return low(v.status) === t.val;
   // 작업장소는 컬러별 유효값(workOf)으로 판정 — 같은 패턴의 다른 컬러는 걸리지 않는다
@@ -106,6 +146,14 @@ function testVar(p, v, t) {
   return true;
 }
 
+/** 수정: N일 이내 — 패턴 updatedAt 기준 (now 는 테스트용) */
+function updatedWithin(p, val, now) {
+  const n = parseInt(String(val), 10);
+  const t = Date.parse(String(p.updatedAt || ""));
+  if (!Number.isFinite(n) || !Number.isFinite(t)) return false;
+  return (now || Date.now()) - t <= n * 86400000;
+}
+
 /**
  * 시편이 검색에 걸리는가. 걸리면 "남는 컬러 id 배열", 안 걸리면 null.
  * 컬러 문법(color:·status:·plate:)이 없으면 컬러는 전부 남는다.
@@ -121,7 +169,8 @@ export function matchVars(p, Q) {
           : t.key === "code" ? (/^[a-z]+$/.test(t.val)
             ? (String(p.pattern.code).match(/^[A-Za-z]+/) || [""])[0].toLowerCase() === t.val
             : low(p.pattern.code).startsWith(t.val))
-            : true;
+            : t.key === "updated" ? updatedWithin(p, t.val, Q.now)
+              : true;
     // neg=false → 걸려야 한다 / neg=true → 걸리면 안 된다. 둘 중 하나만 어긋나도 탈락.
     if (hit === t.neg) return null;
   }
@@ -160,6 +209,8 @@ export function hasToken(raw, token) {
 export const QUERY_HELP =
   "검색 문법 — #태그  @프로젝트  plate:26_015  color:E3940  status:가승인\n" +
   "고객사 client:현대자동차 · 계열 code:G · 작업장소 place:API · 도수 layers:2\n" +
+  "있음 has:사진/배합/동판/메모/태그 · 날짜 date:2026-10 / date:>2026-09-01 · 수정:7 (7일 이내)\n" +
+  "별점 ★3 · ★3+ · rating:0(없음) · 깃발 flag:on/off\n" +
   "앞에 - 를 붙이면 제외 (예: #컬러세미나 -@MQ5) · 공백이 있는 태그는 #\"메탈 브라운\"";
 
 /* ---------- 화면 도우미 (DOM 사용) ---------- */
