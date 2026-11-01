@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 편집 서랍 (기본 · 컬러 · 배합 · 이미지 · JSON) */
-import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, deriveId, esc, imgUrl, markSaved, normalizeDoc, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
+import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, confirmDialog, deriveId, esc, imgUrl, markSaved, normalizeDoc, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { addInkTag, bindRecipePreviews, inkInfo, inkLabel, inkOrder, inkPool, labOf, labText, labToCss, layerCodeOf, layerPlate, loadInkCatalog, mixTable, platePatterns, setLayerPlate, syncLayerPlates } from "./detail.js";
 import { renderCart } from "./proposal.js";
@@ -605,9 +605,13 @@ export function renderDrawer() {
       src.mixes = (src.mixes || []).map(freshCopy);
       d.variations.push(src); E.vIdx = d.variations.length - 1; renderDrawer();
     };
-    $("#del-var").onclick = () => {
+    $("#del-var").onclick = async () => {
       if (d.variations.length <= 1) return;
-      if (!confirm(vName(d.variations[E.vIdx]) + " 베리에이션을 삭제할까요? 이미지는 유지됩니다.")) return;
+      if (!(await confirmDialog({
+        title: `${vName(d.variations[E.vIdx])} 컬러를 삭제할까요?`,
+        body: "배합·라벨도 함께 사라집니다. 이미지는 유지됩니다.",
+        ok: "삭제", danger: true,
+      }))) return;
       d.variations.splice(E.vIdx, 1); E.vIdx = 0; renderDrawer();
     };
     $$("[data-c]").forEach((el) => (el.oninput = () => {
@@ -955,9 +959,13 @@ export function renderDrawer() {
       input.onchange = () => { const f = input.files[0]; if (f) startCrop(f, { slot: i + 1 }); };
       input.click();
     }));
-    $$("[data-delimg]").forEach((el) => (el.onclick = () => {
+    $$("[data-delimg]").forEach((el) => (el.onclick = async () => {
       const i = Number(el.dataset.delimg);
-      if (!confirm("이 이미지를 뺄까요? 저장하면 파일은 _trash로 정리됩니다.")) return;
+      if (!(await confirmDialog({
+        title: "이 이미지를 뺄까요?",
+        body: "저장하면 파일은 _trash로 정리됩니다.",
+        ok: "빼기", danger: true,
+      }))) return;
       v.images.splice(i, 1);
       renderDrawer();
       toast("이미지 제외 — 저장을 눌러 반영");
@@ -978,7 +986,12 @@ export function renderDrawer() {
 
   const del = $("#del-pattern");
   if (del) del.onclick = async () => {
-    if (!confirm("이 시편을 삭제할까요? JSON·이미지·업로드 원본이 _trash로 이동합니다.")) return;
+    const okDel = await confirmDialog({
+      title: "시편을 삭제할까요?",
+      body: `${d.code || E.draft.id} · 컬러 ${(E.draft.variations || []).length}개\nJSON·이미지·업로드 원본이 _trash로 이동합니다(되돌릴 수 있음).`,
+      ok: "삭제", danger: true,
+    });
+    if (!okDel) return;
     try {
       await apiDelete(`/api/patterns/${encodeURIComponent(E.draft.id)}`, revOf(byId(E.draft.id)));
       App.patterns = App.patterns.filter((x) => x.id !== E.draft.id);

@@ -180,6 +180,45 @@ export async function apiPut(path, body, rev, create, renameFrom) {
   if (String(path).startsWith("/api/patterns/")) invalidateColors(decodeURIComponent(String(path).slice("/api/patterns/".length)));
   return j;
 }
+/**
+ * 확인 대화상자 — 브라우저 confirm() 대신 앱 안에서 묻는다.
+ *   브라우저가 "이 페이지에서 추가 대화상자를 표시하지 않음" 으로 막아 두면 confirm() 은
+ *   아무것도 보여 주지 않고 바로 false/true 를 돌려줘, 삭제 확인이 사라진 것처럼 보인다.
+ *   기본 초점은 안전한 쪽(취소).
+ */
+export function confirmDialog({ title = "확인", body = "", ok = "확인", cancel = "취소", danger = false } = {}) {
+  return new Promise((resolve) => {
+    let dlg = document.getElementById("confirm-dlg");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "confirm-dlg";
+      dlg.className = "confirm-dialog";
+      document.body.appendChild(dlg);
+    }
+    dlg.innerHTML = `<form method="dialog">
+      <h3>${esc(title)}</h3>
+      ${body ? `<p>${esc(body)}</p>` : ""}
+      <div class="cf-actions">
+        <button type="button" class="btn-line" data-cf="no">${esc(cancel)}</button>
+        <button type="button" class="btn-dark${danger ? " cf-danger" : ""}" data-cf="yes">${esc(ok)}</button>
+      </div>
+    </form>`;
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { dlg.close(); } catch (e) {}
+      resolve(v);
+    };
+    dlg.querySelector('[data-cf="no"]').onclick = () => finish(false);
+    dlg.querySelector('[data-cf="yes"]').onclick = () => finish(true);
+    dlg.oncancel = (e) => { e.preventDefault(); finish(false); };   // Esc = 취소
+    dlg.onclose = () => finish(false);
+    dlg.showModal();
+    dlg.querySelector('[data-cf="no"]').focus();
+  });
+}
+
 export async function apiDelete(path, rev) {
   const r = await fetch(path, { method: "DELETE", headers: rev ? { "X-Base-Rev": rev } : {} });
   const j = await r.json().catch(() => ({}));
