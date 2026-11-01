@@ -326,14 +326,14 @@ export function renderCatalog() {
     const chip = (t, label, n) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(label)}<span class="n">${n}</span></button>`;
     const groupHTML = split.groups.map((g) => `<span class="auto-group tag-group"><span class="auto-lbl">${esc(g.name)}</span>${
       g.items.slice(0, 12).map((i) => chip(i.tag, i.value, i.n)).join("")}</span>`).join("");
-    const modeHTML = multiKind
-      ? `<span class="tb-mode" role="group" aria-label="조건 조합"><span class="tb-lbl">조합</span>` +
-        `<button class="tb-m${App.prop.tagMode === "or" ? "" : " on"}" data-tagmode="and" title="같은 종류를 2개 골랐을 때 모두 만족해야 함">모두</button>` +
-        `<button class="tb-m${App.prop.tagMode === "or" ? " on" : ""}" data-tagmode="or" title="같은 종류를 2개 골랐을 때 하나라도 만족하면 됨(종류가 다르면 그대로 모두)">하나라도</button></span>`
-      : "";
-    return `<div class="tagbar">${tags.length ? '<span class="tb-lbl">태그</span>' : ""}${
+    // 조합 선택은 **항상** 보인다. 조건을 고를 때만 나타나면 그 순간 칩들이 밀려 버튼 위치가 바뀐다.
+    //   지금은 효과가 없을 때(같은 종류를 2개 미만 골랐을 때)만 흐리게 표시한다.
+    const modeHTML = `<span class="tb-mode${multiKind ? "" : " is-idle"}" role="group" aria-label="조건 조합"><span class="tb-lbl">조합</span>` +
+      `<button class="tb-m${(App.prop.tagMode || "and") === "or" ? "" : " on"}" data-tagmode="and" title="같은 종류를 여러 개 골랐을 때 모두 만족">모두</button>` +
+      `<button class="tb-m${(App.prop.tagMode || "and") === "or" ? " on" : ""}" data-tagmode="or" title="같은 종류를 여러 개 골랐을 때 하나라도 만족(종류가 다르면 그대로 모두)">하나라도</button></span>`;
+    return `<div class="tagbar">${modeHTML}${tags.length ? '<span class="tb-lbl">태그</span>' : ""}${
       tags.map(([t, n]) => chip(t, t, n)).join("")
-    }${modeHTML}${groupHTML}${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
+    }${groupHTML}${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
   })();
 
   function autoTagHTML() {
