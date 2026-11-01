@@ -175,7 +175,8 @@ const foot = (m, right) => html`<div class="p-foot"><span>${m.company} · <span 
 
 function coverSheet(m, ctx) {
   const flat = m.items.reduce((a, it) => a.concat(it.variations.map((v) => ({ pt: it.pattern, v }))), []);
-  const cols = flat.length <= 4 ? Math.max(1, flat.length) : 4;
+  // 표지 썸네일 칸 수 — 개수가 적을수록 크게(한 장에 다 들어가게): ≤6개 2칸 · ≤12개 3칸 · ≤24개 4칸 · 그 이상 5칸
+  const cols = flat.length <= 1 ? 1 : flat.length <= 6 ? 2 : flat.length <= 12 ? 3 : flat.length <= 24 ? 4 : 5;
   return html`<section class="sheet s-cover">
       <div class="cov-top"><div class="cov-brand">${m.brand}<span>${m.brandSub}</span></div>
       <div class="dt">${fmtDate(m.date)}<br><span class="docno">${docLabel(m)}</span></div></div>
@@ -185,10 +186,10 @@ function coverSheet(m, ctx) {
         ${m.client ? html`<div><dt>Client</dt><dd>${m.client}</dd></div>` : ""}
         ${m.by ? html`<div><dt>Prepared by</dt><dd>${m.by}</dd></div>` : ""}
       </div>` : ""}
-      <div class="cov-list"><div class="cl-h">SELECTED PATTERNS</div>
+      <div class="cov-list cols-${cols}"><div class="cl-h">SELECTED PATTERNS</div>
         <div class="cov-thumbs" style="grid-template-columns:repeat(${cols},1fr)">${flat.map(({ pt, v }) => html`<figure>
       ${imgTag(ctx, pt, v, "", '<div style="aspect-ratio:170/70;background:#efede8"></div>')}
-      <figcaption>${pt.code}${v.name && v.name !== "기본" ? " · " + v.name : ""}</figcaption></figure>`)}</div></div>
+      <figcaption><b>${pt.code}</b>${v.name && v.name !== "기본" ? html`<span>${v.name}</span>` : ""}</figcaption></figure>`)}</div></div>
       <div class="cov-foot"><span>${m.company} · <span class="docno">${docLabel(m)}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
 }
@@ -203,6 +204,8 @@ function pageSingle(m, ctx, it, v, idx, total) {
         <div class="pname">${pname(pt)}</div>
       </div>
       ${imgTag(ctx, pt, v, "p-img", '<div class="p-img"></div>')}
+      ${v.images && v.images.length ? html`<figure class="p-zoom"><div class="pz-box"><img src="${ctx.img(pt.id, v.images[0])}" alt=""></div>
+        <figcaption><span>DETAIL ×2</span>가운데 부분 2배 확대 — 질감 확인용(실물 크기 아님)</figcaption></figure>` : ""}
       <div class="p-spec">
         <div><span>COLOR</span>${v.name}</div>
         <div><span>ITEM</span>${dash(v.item)}</div>

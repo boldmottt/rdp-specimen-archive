@@ -218,3 +218,88 @@ a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
   .cat-main .resbar{flex-wrap:wrap}
 }
 }
+
+/* ── 제안서 (A4) ───────────────────────────────────────────
+ * 화면 미리보기와 인쇄가 같은 모양이어야 하므로 이 블록은 @media screen 밖에 둔다.
+ * 좌우 여백 20mm → 본문 폭 170mm = 시편 실물 크기(170×70mm). 사진·선·표가 한 폭에 맞는다.
+ * 글자색은 토큰으로: 라벨 ink-3, 보조 ink-2, 본문 ink. (예전 #8d9198 은 흰 바탕 3.2:1 이라 바꿈) */
+.sheet{padding:16mm 20mm 12mm;border-radius:0}
+.sheet .p-img,.sheet .cmp-cell img,.cov-thumbs img{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+/* 표지 */
+.s-cover .cov-top{border-bottom:0;padding-bottom:0;align-items:center}
+.cov-brand{display:flex;align-items:center;gap:2.6mm;font-size:10px;letter-spacing:.22em;font-weight:700;color:var(--ink)}
+.cov-brand:before{content:"";width:5mm;height:5mm;border-radius:1.2mm;background:var(--ink);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cov-brand span{display:inline;margin:0 0 0 1mm;font-size:8.5px;letter-spacing:.16em;color:var(--ink-3);font-weight:500}
+.cov-top .dt{font-size:9px;color:var(--ink-3);text-align:right;line-height:1.6}
+.s-cover h1{margin:30mm 0 3mm;max-width:150mm;font-size:44px;line-height:1.08;letter-spacing:-.045em;font-weight:700;color:var(--ink)}
+.s-cover .cov-sub{font-size:12.5px;color:var(--ink-2)}
+.cov-client{margin-top:12mm;grid-template-columns:repeat(2,1fr);gap:0 8mm;border-top:1px solid var(--ink)}
+.cov-client div{border-top:0;padding-top:3.2mm}
+.cov-client dt{font-size:7.5px;letter-spacing:.16em;color:var(--ink-3);margin-bottom:1.6mm}
+.cov-client dd{font-size:13.5px;font-weight:500;color:var(--ink)}
+.cov-list{margin-top:14mm}
+.cov-list .cl-h{font-size:7.5px;letter-spacing:.16em;color:var(--ink-3);padding-bottom:2.4mm;margin-bottom:4mm;border-bottom:1px solid var(--line)}
+.cov-thumbs{gap:5mm 4mm}
+.cov-thumbs img{border-radius:1mm;background:var(--surface-2)}
+.cov-thumbs figcaption{display:flex;gap:2mm;align-items:baseline;margin-top:1.8mm;font-family:inherit;font-size:9.5px;color:var(--ink-2)}
+.cov-thumbs figcaption b{font-family:var(--mono);font-weight:650;color:var(--ink);font-size:9.5px}
+.cov-list.cols-4 figcaption,.cov-list.cols-5 figcaption,.cov-list.cols-4 figcaption b,.cov-list.cols-5 figcaption b{font-size:8px}
+.cov-foot{border-top:1px solid var(--line);color:var(--ink-3);font-size:7.5px}
+
+/* 패턴 페이지 */
+.s-page .p-head{border-bottom:0;padding:0;margin:0 0 3mm}
+.p-head .pn{font-size:8.5px;color:var(--ink-3);letter-spacing:.14em;margin:0}
+.p-title{border-bottom:1px solid var(--ink);padding-bottom:3.5mm;margin-bottom:6mm}
+.p-title span{font-size:7.5px;letter-spacing:.16em;color:var(--ink-3)}
+.p-title h2{margin:1.2mm 0 0;font-size:34px;font-weight:650;letter-spacing:-.03em;color:var(--ink)}
+.p-title .pname{font-size:12.5px;color:var(--ink-2);margin-top:1.4mm}
+.p-img{background:var(--surface-2)}
+
+/* 스펙: 4칸 한 줄 (라벨 위 · 값 아래) */
+.p-spec{margin-top:6mm;border-top:0;display:grid;grid-template-columns:repeat(4,1fr);gap:0 5mm}
+.p-spec>div{display:flex;flex-direction:column;gap:1.4mm;padding:2.8mm 0 0;border-bottom:0;border-top:1px solid var(--ink);font-size:11px;font-weight:500;color:var(--ink);line-height:1.4}
+.p-spec span{font-size:7.5px;letter-spacing:.16em;color:var(--ink-3);font-weight:400}
+.p-spec>div:first-child{font-weight:650}
+
+/* 여러 컬러 비교 */
+.cmp-stack{gap:4mm}
+.cmp-cell .ab{left:3mm;top:3mm;background:rgba(255,255,255,.94);color:var(--ink);border-radius:1mm;padding:1.6mm 2.4mm;font-size:8.5pt;letter-spacing:.08em;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cmp-legend{margin-top:5mm;gap:0;border-top:1px solid var(--ink)}
+.cmp-legend>div{grid-template-columns:8mm 60mm auto;padding:2.2mm 0;border-bottom:1px solid var(--line);font-size:10.5px;color:var(--ink-2)}
+.cmp-legend .lg-head{font-size:7.5px;letter-spacing:.16em;color:var(--ink-3);border-bottom:1px solid var(--line);padding:2mm 0 1.6mm;margin:0}
+.cmp-legend b{color:var(--ink);font-size:10.5px}
+.cmp-legend .cn{color:var(--ink);font-weight:650;font-size:11px}
+.p-strip{margin-top:5mm;padding-top:0;border-top:0;gap:3mm 8mm;font-size:10.5px;color:var(--ink)}
+.p-strip span{font-size:7.5px;letter-spacing:.16em;color:var(--ink-3)}
+
+/* 제안 포인트 · 주의 · 바닥글 */
+.p-comment{margin-top:6mm;padding-top:0;border-top:0}
+.p-comment h4{font-size:7.5px;letter-spacing:.16em;color:var(--ink-3);font-weight:400;margin-bottom:2mm}
+.p-comment .c{font-size:11px;line-height:1.75;border-left:2px solid var(--ink);padding:.6mm 0 .6mm 3.5mm;color:var(--ink)}
+.caution{margin-top:5mm;font-size:7.5px;color:var(--ink-3)}
+.s-page .p-foot{border-top:1px solid var(--line);color:var(--ink-3);font-size:7.5px}
+.ruler{color:var(--ink-3)}
+.ruler i,.ruler i:before,.ruler i:after{background:var(--line-control)}
+
+@media print{
+  .sheet{padding:16mm 20mm 12mm}
+}
+
+/* 제안서 화면 (미리보기 둘레) */
+@media screen{
+  .prop-toolbar{top:56px;background:rgba(247,246,243,.92);border-bottom:1px solid var(--line)}
+  .prop-toolbar-in{max-width:none;padding:10px var(--sp-6);gap:var(--sp-2)}
+  .field{font-size:12px;color:var(--ink-3)}
+  .field input,.field select{height:var(--ctl-h);padding:0 10px;font-size:13px;border-radius:var(--r-sm);background:var(--surface)}
+  .sheets{gap:var(--sp-6)}
+  .sheet{box-shadow:0 1px 2px rgba(28,27,25,.06),0 24px 48px -28px rgba(28,27,25,.35);border-radius:2px}
+  .order-rail{border:0;border-radius:var(--r-lg);box-shadow:var(--sh-raise);background:var(--surface)}
+}
+
+/* 한 컬러 페이지: 실물 크기 사진 아래에 가운데 2배 확대(질감 확인용) — 빈 아래쪽을 쓸모 있게 */
+.p-zoom{margin:4mm 0 0}
+.p-zoom .pz-box{position:relative;width:170mm;height:52mm;overflow:hidden;background:var(--surface-2)}
+.p-zoom img{position:absolute;width:340mm;height:140mm;left:-85mm;top:-44mm;object-fit:cover;max-width:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.p-zoom figcaption{display:flex;gap:2.5mm;align-items:baseline;margin-top:1.6mm;font-size:8px;color:var(--ink-3)}
+.p-zoom figcaption span{letter-spacing:.16em;color:var(--ink);font-weight:600;font-size:7.5px}
