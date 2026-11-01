@@ -204,8 +204,6 @@ function pageSingle(m, ctx, it, v, idx, total) {
         <div class="pname">${pname(pt)}</div>
       </div>
       ${imgTag(ctx, pt, v, "p-img", '<div class="p-img"></div>')}
-      ${v.images && v.images.length ? html`<figure class="p-zoom"><div class="pz-box"><img src="${ctx.img(pt.id, v.images[0])}" alt=""></div>
-        <figcaption><span>DETAIL ×2</span>가운데 부분 2배 확대 — 질감 확인용(실물 크기 아님)</figcaption></figure>` : ""}
       <div class="p-spec">
         <div><span>COLOR</span>${v.name}</div>
         <div><span>ITEM</span>${dash(v.item)}</div>

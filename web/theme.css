@@ -297,9 +297,3 @@ a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
   .order-rail{border:0;border-radius:var(--r-lg);box-shadow:var(--sh-raise);background:var(--surface)}
 }
 
-/* 한 컬러 페이지: 실물 크기 사진 아래에 가운데 2배 확대(질감 확인용) — 빈 아래쪽을 쓸모 있게 */
-.p-zoom{margin:4mm 0 0}
-.p-zoom .pz-box{position:relative;width:170mm;height:52mm;overflow:hidden;background:var(--surface-2)}
-.p-zoom img{position:absolute;width:340mm;height:140mm;left:-85mm;top:-44mm;object-fit:cover;max-width:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.p-zoom figcaption{display:flex;gap:2.5mm;align-items:baseline;margin-top:1.6mm;font-size:8px;color:var(--ink-3)}
-.p-zoom figcaption span{letter-spacing:.16em;color:var(--ink);font-weight:600;font-size:7.5px}
