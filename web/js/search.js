@@ -172,36 +172,65 @@ function updatedWithin(p, val, now) {
  * 컬러 문법(color:·status:·plate:)이 없으면 컬러는 전부 남는다.
  * 부르는 쪽(catalog.js)이 이 배열을 그대로 담기(#selall)·CSV에 쓴다 → "걸린 컬러만" 동작이 여기서 결정된다.
  */
-export function matchVars(p, Q) {
-  const hay = patternHay(p);
-  // 태그를 '하나라도(or)' 로 볼 때는 태그 조건을 모아 한 번에 판정한다
-  const orTags = Q.tagMode === "or" ? Q.terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val) : [];
-  for (const t of Q.terms) {
-    if (VAR_KEYS.has(t.key)) continue;
-    if (orTags.length && t.key === "tag" && !t.neg) continue;
+/** 시편(패턴) 단위 조건 하나 — 태그·프로젝트·고객사·계열·수정일 */
+function testPattern(p, t) {
+  if (t.key === "tag") return (p.pattern.tags || []).some((x) => low(x) === t.val);
+  if (t.key === "project") return low(p.project) === t.val || low(p.projectName) === t.val;
+  if (t.key === "client") return low(p.client || (p.label || {}).company) === t.val;
+  if (t.key === "code") {
+    return /^[a-z]+$/.test(t.val)
+      ? (String(p.pattern.code).match(/^[A-Za-z]+/) || [""])[0].toLowerCase() === t.val
+      : low(p.pattern.code).startsWith(t.val);
+  }
+  if (t.key === "updated") return updatedWithin(p, t.val, Q_NOW);
+  return true;
+}
+let Q_NOW;   // matchVars 호출 시 채운다(테스트가 now 를 넘길 수 있게)
 
-    const hit = t.key === "tag" ? (p.pattern.tags || []).some((x) => low(x) === t.val)
-      : t.key === "project" ? low(p.project) === t.val || low(p.projectName) === t.val
-        : t.key === "client" ? low((p.client || (p.label || {}).company)) === t.val
-          : t.key === "code" ? (/^[a-z]+$/.test(t.val)
-            ? (String(p.pattern.code).match(/^[A-Za-z]+/) || [""])[0].toLowerCase() === t.val
-            : low(p.pattern.code).startsWith(t.val))
-            : t.key === "updated" ? updatedWithin(p, t.val, Q.now)
-              : true;
-    // neg=false → 걸려야 한다 / neg=true → 걸리면 안 된다. 둘 중 하나만 어긋나도 탈락.
-    if (hit === t.neg) return null;
+/**
+ * 조건 묶음을 판정한다.
+ *   orKeys 에 든 키는 **같은 키끼리 '하나라도'(OR)**, 서로 다른 키끼리는 '모두'(AND).
+ *   예) 고객사 2개 + 계열 1개 → (고객사 A 또는 B) 이고 계열 G.
+ *   제외(-) 조건은 언제나 개별로 '걸리면 안 됨'.
+ */
+function evalTerms(list, orKeys, ok) {
+  const groups = new Map();
+  for (const t of list) {
+    if (!t.neg && orKeys.has(t.key)) {
+      if (!groups.has(t.key)) groups.set(t.key, []);
+      groups.get(t.key).push(t);
+    } else if (!ok(t)) return false;
   }
-  if (orTags.length) {
-    const tags = (p.pattern.tags || []).map(low);
-    if (!tags.some((x) => orTags.includes(x))) return null;   // 하나도 안 걸리면 탈락
+  for (const arr of groups.values()) if (!arr.some(ok)) return false;
+  return true;
+}
+
+/**
+ * 시편이 검색에 걸리는가. 걸리면 "남는 컬러 id 배열", 안 걸리면 null.
+ * 컬러 문법(color:·status:·plate:)이 없으면 컬러는 전부 남는다.
+ * 부르는 쪽(catalog.js)이 이 배열을 그대로 담기(#selall)·CSV에 쓴다 → "걸린 컬러만" 동작이 여기서 결정된다.
+ */
+export function matchVars(p, Q) {
+  Q_NOW = Q.now;
+  const hay = patternHay(p);
+  // '하나라도' 모드에서 같은 종류를 2개 이상 골랐으면 그 종류만 OR 로 묶는다(다른 종류는 그대로 AND)
+  const orKeys = new Set();
+  if (Q.tagMode === "or") {
+    const seen = new Map();
+    Q.terms.forEach((t) => { if (!t.neg) seen.set(t.key, (seen.get(t.key) || 0) + 1); });
+    seen.forEach((n, k) => { if (n > 1) orKeys.add(k); });
   }
+
+  const pt = Q.terms.filter((t) => !VAR_KEYS.has(t.key));
+  if (!evalTerms(pt, orKeys, (t) => testPattern(p, t) !== t.neg)) return null;
+
   if (Q.text && hay.indexOf(Q.text) < 0) return null;
   if (Q.notText.some((w) => hay.indexOf(w) >= 0)) return null;
 
   const vt = Q.terms.filter((t) => VAR_KEYS.has(t.key));
   const vars = p.variations || [];
   if (!vt.length) return vars.map((v) => v.id);
-  const vids = vars.filter((v) => vt.every((t) => testVar(p, v, t) !== t.neg)).map((v) => v.id);
+  const vids = vars.filter((v) => evalTerms(vt, orKeys, (t) => testVar(p, v, t) !== t.neg)).map((v) => v.id);
   return vids.length ? vids : null;
 }
 

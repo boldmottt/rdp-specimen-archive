@@ -277,3 +277,29 @@ test("도수는 layerPlates 와 배합 도수의 합집합 — 동판이 비어�
   assert.ok(matchVars(p, parseQuery("layers:2")));
   assert.equal(matchVars(p, parseQuery("layers:1")), null);
 });
+
+test("속성 태그도 같은 종류끼리 하나라도(OR) — 다른 종류는 그대로 모두", () => {
+  const vars = [{ id: "v01", layerPlates: { "1도": "26_012" } }];
+  const a = Object.assign(mk("A", "G-1", "P", [], vars), { client: "현대자동차", work: { plate: ["26_012"], place: "API" } });
+  const b = Object.assign(mk("B", "M-1", "P", [], vars), { client: "기아자동차", work: { plate: ["26_012"], place: "API" } });
+  const c = Object.assign(mk("C", "T-1", "P", [], vars), { client: "현대자동차", work: { plate: ["26_012"], place: "미성통상" } });
+
+  const q = "client:현대자동차 client:기아자동차";
+  // AND 는 한 시편이 두 고객사를 동시에 가질 수 없으니 아무것도 안 남는다(그래서 OR 토글이 필요하다)
+  assert.deepEqual([a, b, c].map((p) => !!matchVars(p, parseQuery(q))), [false, false, false]);
+  assert.deepEqual([a, b, c].map((p) => !!matchVars(p, parseQuery(q, { tagMode: "or" }))), [true, true, true]);
+
+  // 종류가 다르면 OR 모드에서도 모두 만족해야 한다 — (현대 또는 기아) 이고 장소=API
+  const mixed = "client:현대자동차 client:기아자동차 place:API";
+  assert.deepEqual([a, b, c].map((p) => !!matchVars(p, parseQuery(mixed, { tagMode: "or" }))), [true, true, false]);
+});
+
+test("도수 두 개를 하나라도(OR) — 1도 또는 2도 컬러가 남는다", () => {
+  const p = mk("A", "G-1", "P", [], [
+    { id: "v01", layerPlates: { "1도": "26_012" } },
+    { id: "v02", layerPlates: { "1도": "26_012", "2도": "26_013" } },
+    { id: "v03", layerPlates: { "1도": "26_012", "2도": "26_013", "3도": "26_014" } },
+  ]);
+  assert.deepEqual(matchVars(p, parseQuery("layers:1도 layers:2도", { tagMode: "or" })), ["v01", "v02"]);
+  assert.equal(matchVars(p, parseQuery("layers:1도 layers:2도")), null);   // AND 는 1도이면서 2도 = 없음
+});

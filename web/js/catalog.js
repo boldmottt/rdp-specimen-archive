@@ -317,14 +317,19 @@ export function renderCatalog() {
     const split = splitTagGroups(tagCounts(App.patterns, App.project));
     const tags = split.plain.slice(0, 20);
     if (!tags.length && !split.groups.length && !autoRows.length) return "";
-    const on = new Set(parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val));
+    const posTerms = parseQuery(App.q).terms.filter((t) => !t.neg);
+    const on = new Set(posTerms.filter((t) => t.key === "tag").map((t) => t.val));
+    // 같은 종류(태그·고객사·계열·작업장소·도수 …)를 2개 이상 골랐을 때만 조합 선택이 의미가 있다
+    const kindCount = new Map();
+    posTerms.forEach((t) => kindCount.set(t.key, (kindCount.get(t.key) || 0) + 1));
+    const multiKind = [...kindCount.values()].some((n) => n > 1);
     const chip = (t, label, n) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(label)}<span class="n">${n}</span></button>`;
     const groupHTML = split.groups.map((g) => `<span class="auto-group tag-group"><span class="auto-lbl">${esc(g.name)}</span>${
       g.items.slice(0, 12).map((i) => chip(i.tag, i.value, i.n)).join("")}</span>`).join("");
-    const modeHTML = on.size > 1
-      ? `<span class="tb-mode" role="group" aria-label="태그 조합"><span class="tb-lbl">조합</span>` +
-        `<button class="tb-m${App.prop.tagMode === "or" ? "" : " on"}" data-tagmode="and" title="고른 태그를 모두 만족">모두</button>` +
-        `<button class="tb-m${App.prop.tagMode === "or" ? " on" : ""}" data-tagmode="or" title="고른 태그 중 하나라도">하나라도</button></span>`
+    const modeHTML = multiKind
+      ? `<span class="tb-mode" role="group" aria-label="조건 조합"><span class="tb-lbl">조합</span>` +
+        `<button class="tb-m${App.prop.tagMode === "or" ? "" : " on"}" data-tagmode="and" title="같은 종류를 2개 골랐을 때 모두 만족해야 함">모두</button>` +
+        `<button class="tb-m${App.prop.tagMode === "or" ? " on" : ""}" data-tagmode="or" title="같은 종류를 2개 골랐을 때 하나라도 만족하면 됨(종류가 다르면 그대로 모두)">하나라도</button></span>`
       : "";
     return `<div class="tagbar">${tags.length ? '<span class="tb-lbl">태그</span>' : ""}${
       tags.map(([t, n]) => chip(t, t, n)).join("")
