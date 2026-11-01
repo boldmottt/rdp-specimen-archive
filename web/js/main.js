@@ -110,9 +110,14 @@ async function boot() {
     if (!location.hash || location.hash === "#") renderCatalog();
   });
 
+  // 시편이 많으면(표 보기 수백 줄) 글자마다 다시 그리면 한글 입력이 끊긴다(한 글자에 입력 이벤트가 여러 번) → 잠깐 모아서 그린다
+  let qTimer = 0;
   $("#search").addEventListener("input", (e) => {
     App.q = e.target.value;
-    if (location.hash && location.hash !== "#") location.hash = ""; else renderCatalog();
+    clearTimeout(qTimer);
+    if (location.hash && location.hash !== "#") location.hash = "";
+    else if (App.patterns.length > 150) qTimer = setTimeout(() => { if (!location.hash || location.hash === "#") renderCatalog(); }, 120);
+    else renderCatalog();
   });
   document.addEventListener("keydown", (e) => {
     const ae = document.activeElement;

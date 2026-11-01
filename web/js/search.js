@@ -27,9 +27,13 @@
 
 import { workOf } from "./work.js";
 
-const KEYED = /^(tag|project|plate|color|status|client|place|code|layers|has|date|updated|rating|flag|있음|날짜|수정|별점|깃발):([\s\S]*)$/i;
-/* 한글 접두 → 영문 키 */
-const ALIAS = { 있음: "has", 날짜: "date", 수정: "updated", 별점: "rating", 깃발: "flag" };
+/* 한글 접두 → 영문 키. '상태:보류'처럼 한글로 쓴 조건도 같은 뜻으로 읽는다(예전엔 status: 만 됐다) */
+const ALIAS = {
+  있음: "has", 날짜: "date", 작업일: "date", 수정: "updated", 별점: "rating", 깃발: "flag",
+  상태: "status", 고객: "client", 고객사: "client", 동판: "plate", 컬러: "color", 색: "color",
+  장소: "place", 작업장소: "place", 코드: "code", 계열: "code", 도수: "layers", 태그: "tag", 프로젝트: "project",
+};
+const KEYED = new RegExp(`^(tag|project|plate|color|status|client|place|code|layers|has|date|updated|rating|flag|${Object.keys(ALIAS).join("|")}):([\\s\\S]*)$`, "i");
 const low = (s) => String(s == null ? "" : s).toLowerCase().trim();
 
 /** 컬러(베리에이션) 단위로만 판정되는 문법 — 나머지(tag·project)는 시편 단위 */
@@ -212,6 +216,7 @@ export const QUERY_HELP =
   "검색 문법 — #태그  @프로젝트  plate:26_015  color:E3940  status:가승인\n" +
   "고객사 client:현대자동차 · 계열 code:G · 작업장소 place:API · 도수 layers:2\n" +
   "있음 has:사진/배합/동판/메모/태그/상태/고객 · 날짜 date:2026-10 / date:>2026-09-01 · 수정:7 (7일 이내)\n" +
+  "한글로도: 상태:보류 · 고객:가온 · 동판:26_015 · 컬러:블랙 · 장소:1공장 · 계열:G · 도수:2 · 태그:우드 · 프로젝트:HX5\n" +
   "별점 ★3 · ★3+ · rating:0(없음) · 깃발 flag:on/off\n" +
   "앞에 - 를 붙이면 제외 (예: #컬러세미나 -@MQ5) · 공백이 있는 태그는 #\"메탈 브라운\"";
 

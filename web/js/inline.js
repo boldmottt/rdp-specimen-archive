@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 상세 화면 인라인 편집 */
-import { App, apiPut, byId, clone, colorNameFor, markSaved, revOf, toast, varOf } from "./core.js";
+import { App, adoptServerCopy, apiPut, byId, clone, colorNameFor, markSaved, revOf, toast, varOf } from "./core.js";
 import { renderDetail } from "./detail.js";
 import { openEditor } from "./editor.js";
 
@@ -10,6 +10,15 @@ function queueSave(pid, fn) {
   const next = prev.then(fn, fn);
   saveChain.set(pid, next.catch(() => {}));
   return next;
+}
+
+/**
+ * 같은 시편의 저장을 한 줄로 세운다 — 인라인 편집·별점·표 칸·칸반·정리 도구(saveMany)가 같은 줄을 쓴다.
+ * 줄을 안 서면 같은 시편을 거의 동시에 두 번 저장할 때 둘 다 옛 버전 기준이라 하나가 409 로 사라졌다.
+ * fn 은 차례가 오면 불린다(그때 byId 로 최신 사본을 읽어야 한다).
+ */
+export function withSaveQueue(pid, fn) {
+  return queueSave(pid, () => fn());
 }
 
 export async function inlineSave(pid, mutate) {
@@ -38,7 +47,10 @@ async function doInlineSave(pid, mutate) {
     if (i >= 0) App.patterns[i] = saved;
     toast("저장됨");
   } catch (e) {
-    if (e.status === 409) toast("다른 곳에서 먼저 저장되었습니다 — 새로고침하세요");
+    if (e.status === 409) {
+      adoptServerCopy(e);
+      toast("다른 곳에서 먼저 저장되어 최신 내용으로 바꿨어요 — 다시 해 주세요", 3500);
+    }
     else toast("저장 실패: " + e.message);
   }
 }

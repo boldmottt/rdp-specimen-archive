@@ -48,3 +48,19 @@ test("작업 검색", () => {
   assert.ok(!jobMatches(j, "E2"));
   assert.ok(jobMatches(j, ""));
 });
+
+test("작성 중인 초안에 채우기 — 적어 둔 컬러명·태그·사진은 남고, 빈 배합 목록으로 덮지 않고, 메모는 덧붙인다", async () => {
+  const { applyWorklogDraft, draftHasContent } = await import("../web/js/worklog-draft.js");
+  const base = { project: "", client: "", pattern: { code: "", tags: ["내 태그"] }, work: {},
+    variations: [{ id: "v01", colorName: "내 컬러", colorCode: "MY-1", images: ["a.jpg"], mixes: [{ layer: "1도", inks: { BK: 1 } }], note: "내 메모" }] };
+  assert.equal(draftHasContent(base), true);
+  applyWorklogDraft(base, { project: "DEMO", pattern: { code: "W1" }, variation: { date: "2026-01-10", mixes: [], note: "작업일지 2026-01-10 #1" } });
+  const v = base.variations[0];
+  assert.deepEqual([base.project, base.pattern.code, base.pattern.tags[0]], ["DEMO", "W1", "내 태그"]);
+  assert.deepEqual([v.colorName, v.colorCode, v.images.length, v.mixes.length], ["내 컬러", "MY-1", 1, 1]);
+  assert.equal(v.note, "내 메모\n작업일지 2026-01-10 #1");
+  applyWorklogDraft(base, { variation: { note: "작업일지 2026-01-10 #1" } });   // 같은 일지를 두 번 불러도 메모가 겹치지 않는다
+  assert.equal(v.note, "내 메모\n작업일지 2026-01-10 #1");
+  assert.equal(draftHasContent({ pattern: { code: "" }, variations: [{ colorName: "", images: [], mixes: [] }] }), false);
+  assert.equal(draftHasContent(null), false);
+});

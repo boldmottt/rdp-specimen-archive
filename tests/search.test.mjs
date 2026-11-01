@@ -234,3 +234,13 @@ test("그룹 태그 검색 — 한글·영문 그룹 모두 태그로", async ()
   assert.deepEqual(g.groups.map((x) => [x.name, x.items.map((i) => [i.tag, i.value, i.n])]),
     [["질감", [["질감:우드", "우드", 3], ["질감:메탈", "메탈", 1]]], ["finish", [["finish:matte", "matte", 1]]]]);
 });
+
+test("한글 접두 — 상태·고객·동판·컬러·장소·계열·도수·태그·프로젝트", async () => {
+  const { parseQuery } = await import("../web/js/search.js");
+  const keys = (q) => parseQuery(q).terms.map((t) => `${t.neg ? "-" : ""}${t.key}=${t.val}`);
+  assert.deepEqual(keys("상태:보류 -고객:가온 동판:26_015"), ["status=보류", "-client=가온", "plate=26_015"]);
+  assert.deepEqual(keys("컬러:블랙 장소:1공장 계열:G 도수:2"), ["color=블랙", "place=1공장", "code=g", "layers=2"]);
+  assert.deepEqual(keys("태그:우드 프로젝트:HX5 작업일:2026-10"), ["tag=우드", "project=hx5", "date=2026-10"]);
+  assert.deepEqual(keys("#용도:도어"), ["tag=용도:도어"]);            // # 을 붙이면 그룹 태그 그대로
+  assert.deepEqual(parseQuery("RAL:9005").terms, []);                // 모르는 접두는 그냥 단어
+});
