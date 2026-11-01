@@ -428,6 +428,22 @@ def normalize_shape(doc: dict, coerce: bool = False) -> list:
                 del v[key]
             elif key in v and not isinstance(v[key], dict):
                 bad(v, key, f"{where}: {key}가 객체가 아닙니다", {})
+        # 별점(0~5 정수)·깃발(참/거짓) — 정리·분류용 표시
+        if "rating" in v:
+            r = v["rating"]
+            if r in (None, "", 0, "0"):
+                del v["rating"]
+            elif isinstance(r, bool) or not isinstance(r, (int, float, str)) or not str(r).isdigit() or not 1 <= int(r) <= 5:
+                bad(v, "rating", f"{where}: 별점은 1~5 정수입니다", 0)
+                if not v.get("rating"):
+                    v.pop("rating", None)
+            else:
+                v["rating"] = int(r)
+        if "flag" in v:
+            if v["flag"] in (None, False, 0, ""):
+                del v["flag"]
+            elif v["flag"] is not True:
+                bad(v, "flag", f"{where}: 깃발은 true/false 입니다", True)
     return problems
 
 

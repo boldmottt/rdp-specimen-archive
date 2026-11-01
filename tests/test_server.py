@@ -1836,3 +1836,20 @@ class WorklogDraftTests(Base):
         self.assertEqual(self.req("GET", "/api/worklog-draft?" + q)[0], 404)
         server.CFG["worklogDir"] = os.path.join(self.tmp, "없음")
         self.assertFalse(self.req("GET", "/api/worklog-jobs")[1]["available"])
+
+
+class RatingFlagTests(Base):
+    """별점(1~5)·깃발 — 정리·분류용. 0/False 는 키를 지운다, 범위 밖은 저장 거부."""
+
+    def test_rating_and_flag_round_trip_and_validation(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "rating": "4", "flag": True}, {"id": "v02", "rating": 0, "flag": False}])
+        st, r = self.put("P-W01", doc, create=True)
+        self.assertEqual(st, 200, r)
+        d = self.read_pattern("P-W01")
+        self.assertEqual((d["variations"][0]["rating"], d["variations"][0]["flag"]), (4, True))
+        self.assertNotIn("rating", d["variations"][1])
+        self.assertNotIn("flag", d["variations"][1])
+        for bad in ({"rating": 7}, {"rating": "많이"}, {"rating": True}, {"flag": "yes"}):
+            doc2 = pattern("P-W02", "P", "W02", [dict({"id": "v01"}, **bad)])
+            st, r = self.put("P-W02", doc2, create=True)
+            self.assertEqual(st, 400, (bad, r))

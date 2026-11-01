@@ -11,6 +11,7 @@ import { autoFacets } from "./facets.js";
 import { compareFromSelection } from "./compare-page.js";
 import { openWorklogPicker } from "./from-worklog.js";
 import { openCsvImport } from "./import-csv.js";
+import { bindRate, rateHTML } from "./rating.js";
 import { workOf } from "./work.js";
 
 /* ---------------- catalog ---------------- */
@@ -164,6 +165,11 @@ function showVar(card, p, v) {
     if (cur) cur.replaceWith(next); else media.prepend(next);
   }
   paintBadge(card, p, v);
+  const rate = card.querySelector(".card-rate");
+  if (rate && !rate.querySelector(`[data-rate="${CSS.escape(p.id + "::" + v.id)}"]`)) {
+    rate.innerHTML = rateHTML(p.id, v.id, true);     // 별점은 '지금 보이는 컬러' 것
+    bindRate(rate);
+  }
 }
 
 /* 배지를 '지금 보이는 컬러'에 맞춘다 — 사진과 배지가 서로 다른 컬러를 가리키지 않게.
@@ -248,6 +254,7 @@ function cardHTML(p) {
         <div class="card-meta">${meta}<button class="refdot" data-pid="${p.id}" data-ref="${v ? v.id : ""}"
           aria-label="이 색을 기준으로" title="이 컬러를 기준색으로 삼아 '색 가까운 순' 정렬">◎</button></div>
         <div class="vchips">${chips}</div>
+        ${v ? raw(`<div class="card-rate">${rateHTML(p.id, v.id, true)}</div>`) : ""}
       </div>
     </article>`);
 }
@@ -538,6 +545,7 @@ export function renderCatalog() {
   if (cmpSel) cmpSel.onclick = () => compareFromSelection(list.map((p) => p.id), (pid) => HITS.get(pid));
 
   // 기준색(사진 대표색) — 카드의 ◎ 를 누르면 그 컬러가 기준이 되고 '색 가까운 순'으로 바뀐다
+  bindRate($("#view"));
   paintRefDots();
   $$(".refdot").forEach((el) => (el.onclick = (e) => {
     e.preventDefault(); e.stopPropagation();

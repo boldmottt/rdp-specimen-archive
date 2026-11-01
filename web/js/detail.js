@@ -12,6 +12,7 @@ import { loadMixCheck, loadWorklogs } from "./worklog-link.js";
 import { loadProposalHistory } from "./feedback.js";
 import { compareList, inCompare, toggleCompareItem } from "./compare-page.js";
 import { openWorklogPicker } from "./from-worklog.js";
+import { bindRate, rateHTML } from "./rating.js";
 
 /* ---------------- detail ---------------- */
 export const labOf = (p, v) => Object.assign({}, (p && p.label) || {}, (v && v.label) || {});
@@ -351,6 +352,7 @@ export function renderDetail(pid, vid, override) {
               <span data-f="v.date">${esc(v.date ? fmtDate(v.date) : "날짜")}</span>
               ${App.meeting ? "" : `<span>${mixes.length} 배합</span>`}
             </div>
+            ${isNew || App.meeting ? "" : `<div class="cc-rate">${rateHTML(p.id, v.id)}</div>`}
           </div>
           <section class="sec sec-tight"><h3>도장</h3>
             ${(v.coating || []).length ? (v.coating || []).map((c) => `<div style="margin-bottom:8px;font-size:12.5px"><b style="font-family:var(--mono);font-weight:600">${esc(c.code || "—")}</b><div style="color:#8d9198;font-size:11.5px">${esc([c.maker, c.lot].filter(Boolean).join(" · ") || "")}</div></div>`).join("") : '<p style="color:#8d9198;font-size:12.5px">—</p>'}
@@ -423,6 +425,7 @@ export function renderDetail(pid, vid, override) {
     bindRecipePreviews(group, mixes.filter((m) => m.layer === layer));
   });
   if (!isNew && mixes.length) loadMixCheck(p, v);   // 작업일지에 적힌 같은 배치와 값이 다른지
+  if (!isNew) bindRate($("#view"));
   if (!isNew) loadProposalHistory(p, v);   // 이 시편이 들어간 확정본과 고객 반응
   if (!isNew) loadWorklogs(p);      // 작업일지(PCCS3)에서 이 시편과 관련된 작업 — 비동기, 없으면 칸을 숨긴 채로
   $$("[data-batch-compare]").forEach((b) => (b.onclick = () => {

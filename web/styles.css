@@ -1022,3 +1022,18 @@ a.prop-status.ok:hover{background:#fff}
 .csv-import .ci-new{font-size:11px;border:1px solid #2f7d46;color:#1f5d33;background:#e3f1e6;border-radius:999px;padding:0 7px}
 .csv-import .ci-table td,.csv-import .ci-table th{text-align:left}
 .csv-import .ci-warn{font-size:12px;color:var(--ink-2);margin-top:8px}
+
+/* 별점·깃발 */
+.rate{display:inline-flex;align-items:center;gap:1px}
+.rate button{border:0;background:none;cursor:pointer;padding:0 1px;font-size:15px;line-height:1;color:#cfcbc2}
+.rate .st.on{color:#d8a21a}
+.rate .fl{margin-left:6px;font-size:14px}
+.rate .fl.on{color:#c2412d}
+.rate button:hover{color:#8d8a83}
+.rate .st.on:hover{color:#b98a10}
+.rate.sm button{font-size:12.5px}
+.card-rate{margin-top:8px;min-height:16px}
+.card .card-rate .rate:not(.has){opacity:0;transition:opacity .15s}
+.card:hover .card-rate .rate,.card .card-rate .rate:focus-within{opacity:1}
+.cc-rate{margin-top:10px}
+@media (hover:none){.card .card-rate .rate:not(.has){opacity:1}}
