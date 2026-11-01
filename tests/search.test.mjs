@@ -176,3 +176,61 @@ test("code:M 은 MX-1 을 걸지 않고, code:MX 는 건다", () => {
   assert.deepEqual(m("code:MX"), ["MX"]);
   assert.deepEqual(m("code:M-9"), ["M6"], "값이 영문자만이 아니면 앞부분 일치");
 });
+
+/* ---- 검색 조건 확장 (has · date · 수정 · 별점 · 깃발) ---- */
+const PX = {
+  id: "P-X", project: "P", pattern: { code: "X1", tags: ["우드"] }, work: { plate: [] }, label: {},
+  updatedAt: "2026-10-28T10:00:00",
+  variations: [
+    { id: "v1", colorCode: "A", images: ["a.jpg"], mixes: [{ layer: "1도" }], date: "2026-09-15", rating: 4, flag: true, note: "메모" },
+    { id: "v2", colorCode: "B", images: [], mixes: [], date: "2026-10-02", layerPlates: { "1도": "26_001" } },
+    { id: "v3", colorCode: "C", images: [], mixes: [], date: "" , rating: 2 },
+  ],
+};
+const ids = (q, now) => { const Q = parseQuery(q); if (now) Q.now = now; return matchVars(PX, Q); };
+
+test("has: — 사진·배합·동판·메모, 앞에 - 면 없는 것", () => {
+  assert.deepEqual(ids("has:사진"), ["v1"]);
+  assert.deepEqual(ids("-has:사진"), ["v2", "v3"]);
+  assert.deepEqual(ids("있음:배합"), ["v1"]);
+  assert.deepEqual(ids("has:동판"), ["v2"]);
+  assert.deepEqual(ids("has:메모"), ["v1"]);
+  assert.deepEqual(ids("has:태그"), ["v1", "v2", "v3"], "태그는 패턴 단위");
+});
+
+test("date: — 앞부분 일치 · 부등호 · 점 표기", () => {
+  assert.deepEqual(ids("date:2026-10"), ["v2"]);
+  assert.deepEqual(ids("날짜:2026.09"), ["v1"]);
+  assert.deepEqual(ids("date:>=2026-10-01"), ["v2"]);
+  assert.deepEqual(ids("date:<2026-10"), ["v1"], "날짜 없는 컬러는 비교에서 빠진다");
+  assert.equal(ids("date:>2027"), null);
+});
+
+test("수정: N일 이내 (패턴 updatedAt)", () => {
+  const now = Date.parse("2026-11-01T00:00:00");
+  assert.deepEqual(ids("수정:7", now), ["v1", "v2", "v3"]);
+  assert.equal(ids("수정:3일", now), null);
+  assert.equal(ids("-updated:7", now), null);
+});
+
+test("별점·깃발 — ★3 · ★3+ · rating:2 · flag:on/off", () => {
+  assert.deepEqual(ids("★4"), ["v1"]);
+  assert.deepEqual(ids("★2+"), ["v1", "v3"]);
+  assert.deepEqual(ids("rating:2"), ["v3"]);
+  assert.deepEqual(ids("별점:0"), ["v2"], "0 = 별점 없음");
+  assert.deepEqual(ids("flag:on"), ["v1"]);
+  assert.deepEqual(ids("깃발:off"), ["v2", "v3"]);
+  assert.deepEqual(ids("-flag:on ★2+"), ["v3"]);
+});
+
+/* ---- 태그 그룹 (그룹:값) ---- */
+test("그룹 태그 검색 — 한글·영문 그룹 모두 태그로", async () => {
+  const { splitTagGroups } = await import("../web/js/search.js");
+  const P = { id: "P-T", project: "P", pattern: { code: "T", tags: ["질감:우드", "finish:matte", "기타"] }, work: {}, label: {}, variations: [{ id: "v1" }] };
+  for (const q of ["#질감:우드", "#finish:matte", "#기타"]) assert.deepEqual(matchVars(P, parseQuery(q)), ["v1"], q);
+  assert.equal(matchVars(P, parseQuery("#finish:gloss")), null);
+  const g = splitTagGroups([["질감:우드", 3], ["기타", 2], ["질감:메탈", 1], ["finish:matte", 1], [":이상", 1]]);
+  assert.deepEqual(g.plain, [["기타", 2], [":이상", 1]]);
+  assert.deepEqual(g.groups.map((x) => [x.name, x.items.map((i) => [i.tag, i.value, i.n])]),
+    [["질감", [["질감:우드", "우드", 3], ["질감:메탈", "메탈", 1]]], ["finish", [["finish:matte", "matte", 1]]]]);
+});

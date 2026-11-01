@@ -2,13 +2,17 @@
 import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 // 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
-import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fieldToken, hasToken, QUERY_HELP } from "./search.js";
+import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fieldToken, hasToken, splitTagGroups, QUERY_HELP } from "./search.js";
 // 선택·일괄 편집·CSV (규칙은 bulk-rules.js, 화면은 bulk.js). 서로 import 하지 않고 데이터를 넘긴다.
 import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk.js";
 // 색 정렬에서 "가장 가까운 컬러"를 고르는 규칙 — 정렬 키와 카드 표시가 같은 함수를 쓴다
 import { bestVar, deLabel, baseVid, badgeFor } from "./color-rules.js";
 import { autoFacets } from "./facets.js";
 import { compareFromSelection } from "./compare-page.js";
+import { openWorklogPicker } from "./from-worklog.js";
+import { openCsvImport } from "./import-csv.js";
+import { bindRate, rateHTML } from "./rating.js";
+import { setView, viewSwitchHTML, bodyHTML, bindBody } from "./views.js";
 import { workOf } from "./work.js";
 
 /* ---------------- catalog ---------------- */
@@ -162,6 +166,11 @@ function showVar(card, p, v) {
     if (cur) cur.replaceWith(next); else media.prepend(next);
   }
   paintBadge(card, p, v);
+  const rate = card.querySelector(".card-rate");
+  if (rate && !rate.querySelector(`[data-rate="${CSS.escape(p.id + "::" + v.id)}"]`)) {
+    rate.innerHTML = rateHTML(p.id, v.id, true);     // 별점은 '지금 보이는 컬러' 것
+    bindRate(rate);
+  }
 }
 
 /* 배지를 '지금 보이는 컬러'에 맞춘다 — 사진과 배지가 서로 다른 컬러를 가리키지 않게.
@@ -246,6 +255,7 @@ function cardHTML(p) {
         <div class="card-meta">${meta}<button class="refdot" data-pid="${p.id}" data-ref="${v ? v.id : ""}"
           aria-label="이 색을 기준으로" title="이 컬러를 기준색으로 삼아 '색 가까운 순' 정렬">◎</button></div>
         <div class="vchips">${chips}</div>
+        ${v ? raw(`<div class="card-rate">${rateHTML(p.id, v.id, true)}</div>`) : ""}
       </div>
     </article>`);
 }
@@ -302,12 +312,17 @@ export function renderCatalog() {
   const autoRows = autoFacets(App.project === "all" ? App.patterns : App.patterns.filter((p) => p.project === App.project), workOf, 6);
 
   const tagbar = (() => {
-    const tags = tagCounts(App.patterns, App.project).slice(0, 20);
-    if (!tags.length && !autoRows.length) return "";
+    // '질감:우드'처럼 '그룹:값'으로 단 태그는 그룹별로 묶어 값만 보여 준다(태그 그룹)
+    const split = splitTagGroups(tagCounts(App.patterns, App.project));
+    const tags = split.plain.slice(0, 20);
+    if (!tags.length && !split.groups.length && !autoRows.length) return "";
     const on = new Set(parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val));
+    const chip = (t, label, n) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(label)}<span class="n">${n}</span></button>`;
+    const groupHTML = split.groups.map((g) => `<span class="auto-group tag-group"><span class="auto-lbl">${esc(g.name)}</span>${
+      g.items.slice(0, 12).map((i) => chip(i.tag, i.value, i.n)).join("")}</span>`).join("");
     return `<div class="tagbar">${tags.length ? '<span class="tb-lbl">태그</span>' : ""}${
-      tags.map(([t, n]) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(t)}<span class="n">${n}</span></button>`).join("")
-    }${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
+      tags.map(([t, n]) => chip(t, t, n)).join("")
+    }${groupHTML}${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
   })();
 
   function autoTagHTML() {
@@ -348,6 +363,7 @@ export function renderCatalog() {
               <i class="sw" style="background:${/^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
               <b data-refgoto>${esc(label)}</b><button type="button" data-refclear aria-label="기준색 해제">×</button></span>`;
           })() : ""}
+          ${viewSwitchHTML()}
           <div class="seg" role="radiogroup" aria-label="정렬">
             ${[["recent", "최근"], ["code", "코드"], ["color", "색"]].map(([v, label]) => {
               const off = v === "color" && !App.refColor;
@@ -362,9 +378,12 @@ export function renderCatalog() {
             <button class="tool" id="morebtn" aria-haspopup="true" aria-expanded="false" aria-label="더보기">⋯</button>
             <div class="menu" id="moremenu" hidden>
               <button type="button" data-act="csv">CSV로 내보내기</button>
+              <button type="button" data-act="csvin">CSV 가져오기 (일괄 등록)</button>
               <button type="button" data-act="sync">DB 동기화</button>
               <button type="button" data-act="none">결과 빼기 (${hitCount}개)</button>
               <button type="button" data-act="board">${App.project === "all" ? "컬러 보드 (프로젝트 선택)" : `${esc(App.project)} 컬러 보드`}</button>
+              <button type="button" data-act="fromwl">작업일지에서 새 시편</button>
+              <button type="button" data-act="tidy">정리 도구</button>
               <button type="button" data-act="plates">동판 대장</button>
               <button type="button" data-act="compare">나란히 비교</button>
               <button type="button" data-act="help">검색 문법</button>
@@ -374,7 +393,7 @@ export function renderCatalog() {
       </div>
       ${selectionBarHTML()}
       <div class="filterbar${filtersOpen ? " open" : ""}" id="filterbar">${sfbar}${tagbar}</div>
-      ${list.length ? `<div class="grid">${list.map(cardHTML).join("")}</div>`
+      ${list.length ? `<div id="vbody">${bodyHTML(list, (pid) => HITS.get(pid), cardHTML)}</div>`
       : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
         <span class="foot-right">
@@ -503,7 +522,10 @@ export function renderCatalog() {
       if (act === "csv") downloadCsv(list, (pid) => HITS.get(pid));
       else if (act === "none") removeAll("#morebtn");
       else if (act === "help") toast(QUERY_HELP, 6500);
+      else if (act === "tidy") location.hash = "#/tidy";
       else if (act === "plates") location.hash = "#/plates";
+      else if (act === "fromwl") openWorklogPicker();
+      else if (act === "csvin") openCsvImport(renderCatalog);
       else if (act === "compare") location.hash = "#/compare";
       else if (act === "sync") doSyncAll();
       else if (act === "board") {
@@ -526,12 +548,17 @@ export function renderCatalog() {
 
   // 선택(패턴 단위) · 일괄 편집
   bindPicks(list.map((p) => p.id), renderCatalog);
+  // 보기 전환(카드 · 표 · 칸반) + 보기 도구(묶기 · 카드 크기 · 열 · 칸반 끌어 놓기)
+  $$('input[name="viewmode"]').forEach((r) => (r.onchange = () => { setView(r.value); renderCatalog(); }));
+  const vbody = $("#vbody");
+  if (vbody) bindBody(vbody, renderCatalog);
   const bulkBtn = $("#bulk-open");
   if (bulkBtn) bulkBtn.onclick = () => openBulkDialog(renderCatalog, (pid) => HITS.get(pid));
   const cmpSel = $("#sel-compare");
   if (cmpSel) cmpSel.onclick = () => compareFromSelection(list.map((p) => p.id), (pid) => HITS.get(pid));
 
   // 기준색(사진 대표색) — 카드의 ◎ 를 누르면 그 컬러가 기준이 되고 '색 가까운 순'으로 바뀐다
+  bindRate($("#view"));
   paintRefDots();
   $$(".refdot").forEach((el) => (el.onclick = (e) => {
     e.preventDefault(); e.stopPropagation();

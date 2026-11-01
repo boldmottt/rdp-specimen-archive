@@ -1767,9 +1767,89 @@ class MixWorklogCheckTests(Base):
         self.assertEqual(r["checked"], 1)
         self.assertEqual(r["mismatches"][0]["diffs"], [{"name": "WH", "archive": None, "worklog": 10.0}])
 
+    def test_mix_date_picks_that_days_worklog(self):
+        # DEMO_002 2도 'B' — 01-10 일지는 신나 20%, 01-20 일지는 30%(일부러 틀린 예시)
+        mix = {"layer": "2도", "batch": "B", "inks": {"WH": 60}, "thinnerPct": 20}
+        r = self.check([dict(mix, date="2026-01-10")], plate="DEMO_002")
+        self.assertEqual((r["checked"], r["mismatches"]), (1, []))
+        r = self.check([mix], plate="DEMO_002")                         # 날짜가 없으면 최근 일지와
+        self.assertEqual(r["mismatches"][0]["date"], "2026-01-20")
+
     def test_unknown_batch_is_not_checked_and_no_folder_is_unavailable(self):
         r = self.check([{"layer": "1도", "batch": "Z9", "inks": {"MT": 1}}])
         self.assertEqual((r["checked"], r["mismatches"]), (0, []))
         server.CFG["worklogDir"] = os.path.join(self.tmp, "없음")
         self.assertFalse(self.req("GET", "/api/mix-check/P-W01")[1]["available"])
         self.assertEqual(self.req("GET", "/api/mix-check/P-X")[0], 404)
+
+
+class WorklogDraftTests(Base):
+    """작업일지 작업 → 새 시편 초안 (저장하지 않는다)."""
+
+    FILE = "2026-01-10_API-DEMO-신규컬러-샘플제작.md"
+
+    def setUp(self):
+        super().setUp()
+        wl = os.path.join(self.tmp, "worklogs")
+        shutil.copytree(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pccs", "sample-worklogs"), wl)
+        server.CFG["worklogDir"] = wl
+
+    def test_jobs_list_marks_existing_archive_specimen(self):
+        self.write_pattern(pattern("DEMO-W01", "DEMO", "W01", [{"id": "v01"}]))
+        st, r = self.req("GET", "/api/worklog-jobs")
+        self.assertEqual(st, 200, r)
+        self.assertTrue(r["available"])
+        w1 = [j for j in r["jobs"] if j["code"] == "DEMO-W1"]
+        self.assertEqual([(j["date"], j["layers"], j["batches"]) for j in w1],
+                         [("2026-01-15", ["1도", "2도"], 3), ("2026-01-10", ["1도", "2도"], 3)])
+        self.assertTrue(all(j["existing"] == "DEMO-W01" for j in w1), "W1 = W01 — 이미 있는 시편")
+        self.assertTrue(all(j["existing"] == "" for j in r["jobs"] if j["code"] != "DEMO-W1"))
+
+    def test_draft_has_mixes_plates_and_work_info(self):
+        self.write_pattern(pattern("DEMO-M01", "DEMO", "M01", [{"id": "v01"}]))   # 'DEMO' 프로젝트가 있다
+        q = "file=" + urllib.parse.quote(self.FILE) + "&seq=1&code=DEMO-W1"
+        st, r = self.req("GET", "/api/worklog-draft?" + q)
+        self.assertEqual(st, 200, r)
+        d = r["draft"]
+        self.assertEqual((d["project"], d["pattern"]["code"], d["client"]), ("DEMO", "W1", "Sample Motors"))
+        self.assertEqual(d["work"]["plate"], ["DEMO_001"])
+        self.assertEqual((d["work"]["place"], d["work"]["worker"], d["work"]["pad"]), ("API 산업", "홍길동", ""))
+        v = d["variation"]
+        self.assertEqual(v["layerPlates"], {"1도": "DEMO_001", "2도": "DEMO_001"})
+        self.assertEqual([(m["layer"], m["batch"]) for m in v["mixes"]], [("1도", "A"), ("2도", "가"), ("2도", "나")])
+        self.assertEqual(v["mixes"][0]["inks"], {"MT": 60.0})
+        self.assertEqual((v["mixes"][0]["thinnerG"], v["mixes"][0]["thinnerPct"]), (18.0, 30.0))
+        self.assertIn("시편 4종", v["note"])
+
+    def test_two_pattern_plate_takes_only_its_layer_and_same_as_values(self):
+        q = "file=" + urllib.parse.quote(self.FILE) + "&seq=2&code=DEMO-E2"
+        d = self.req("GET", "/api/worklog-draft?" + q)[1]["draft"]
+        self.assertEqual(d["project"], "DEMO")                        # 작업에 프로젝트가 적혀 있다
+        self.assertEqual(d["pattern"]["code"], "E2")
+        mx = d["variation"]["mixes"]
+        self.assertEqual([(m["layer"], m["batch"]) for m in mx], [("1도", "나")])
+        self.assertEqual(mx[0]["inks"], {"MT": 35.0, "CL": 15.0, "BK": 10.0, "WH": 10.0})   # same_as 원본 값
+
+    def test_unknown_job_and_no_folder(self):
+        self.assertEqual(self.req("GET", "/api/worklog-draft?file=x.md&seq=1&code=A")[0], 404)
+        q = "file=" + urllib.parse.quote(self.FILE) + "&seq=1&code=NOPE"
+        self.assertEqual(self.req("GET", "/api/worklog-draft?" + q)[0], 404)
+        server.CFG["worklogDir"] = os.path.join(self.tmp, "없음")
+        self.assertFalse(self.req("GET", "/api/worklog-jobs")[1]["available"])
+
+
+class RatingFlagTests(Base):
+    """별점(1~5)·깃발 — 정리·분류용. 0/False 는 키를 지운다, 범위 밖은 저장 거부."""
+
+    def test_rating_and_flag_round_trip_and_validation(self):
+        doc = pattern("P-W01", "P", "W01", [{"id": "v01", "rating": "4", "flag": True}, {"id": "v02", "rating": 0, "flag": False}])
+        st, r = self.put("P-W01", doc, create=True)
+        self.assertEqual(st, 200, r)
+        d = self.read_pattern("P-W01")
+        self.assertEqual((d["variations"][0]["rating"], d["variations"][0]["flag"]), (4, True))
+        self.assertNotIn("rating", d["variations"][1])
+        self.assertNotIn("flag", d["variations"][1])
+        for bad in ({"rating": 7}, {"rating": "많이"}, {"rating": True}, {"flag": "yes"}):
+            doc2 = pattern("P-W02", "P", "W02", [dict({"id": "v01"}, **bad)])
+            st, r = self.put("P-W02", doc2, create=True)
+            self.assertEqual(st, 400, (bad, r))
