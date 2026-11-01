@@ -77,7 +77,7 @@ function liveModel(withSource) {
     docNo: App.prop.docNo || "", rev: String(App.prop.rev || "0"),
     showComments: !!App.prop.showComments,
     ...modelSettings(App.prop),         // 레이아웃·보여줄 항목 — 기본값이면 아무것도 넣지 않는다(예전 확정본 지문 유지)
-    brand: App.config.brand || "RDP", brandSub: App.config.brandSub || "SPECIMEN ARCHIVE", company: App.config.company || "",
+    brand: App.config.brand || "RDP", brandSub: App.config.proposalSub || "PATTERN PROPOSAL", company: App.config.company || "",
     firstPageMax: firstPageMax(), pageMax: pageMax(),
     items: grouped().map(({ p, vars }) => ({
       pattern: Object.assign({ id: p.id, code: p.pattern.code, name: p.pattern.name || "", nameKo: p.pattern.nameKo || "",
@@ -125,7 +125,7 @@ function normalizeModel(doc) {
     version: 1, title: doc.title || "RDP 패턴 제안", client: doc.client || "", by: doc.by || "", date: doc.date || "",
     docNo: doc.docNo || "", rev: String(doc.rev || "0"),
     showComments: items.some((it) => it.pageComment || it.variations.some((v) => v.comment)),
-    brand: App.config.brand || "RDP", brandSub: App.config.brandSub || "SPECIMEN ARCHIVE", company: App.config.company || "",
+    brand: App.config.brand || "RDP", brandSub: App.config.proposalSub || "PATTERN PROPOSAL", company: App.config.company || "",
     firstPageMax: firstPageMax(), pageMax: pageMax(), items,
   };
 }

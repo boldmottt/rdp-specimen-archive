@@ -2697,6 +2697,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"ok": True, "dataRoot": DATA, "port": PORT,
                                   "brand": CFG.get("brand", "RDP"),
                                   "brandSub": CFG.get("brandSub", "SPECIMEN ARCHIVE"),
+                                  # 제안서 표지 문구 — 앱 이름과 따로 (고객이 받는 문서의 성격)
+                                  "proposalSub": CFG.get("proposalSub", "PATTERN PROPOSAL"),
                                   "company": CFG.get("company", ""),
                                   # 회사 로고 — 제안서 표지·바닥글에 쓴다. 빈 문자열이면 로고 없음
                                   "logo": CFG.get("logo", "/brand/company-logo.png"),

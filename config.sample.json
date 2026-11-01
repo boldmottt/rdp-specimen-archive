@@ -3,6 +3,7 @@
   "port": 8791,
   "brand": "RDP",
   "brandSub": "SPECIMEN ARCHIVE",
+  "proposalSub": "PATTERN PROPOSAL",
   "company": "COMPANY · TEAM",
   "logo": "/brand/company-logo.png",
   "firstPageMax": 2,
