@@ -1178,3 +1178,10 @@ a.prop-status.ok:hover{background:#fff}
 .bake-dlg .bk-files a,.bake-dlg .bk-status a{text-decoration:underline;text-underline-offset:2px}
 .bake-dlg .bk-where{font-size:11.5px;color:var(--ink-3);word-break:break-all}
 .bake-dlg .bk-auto{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+
+/* 태그 조합 토글 (모두 / 하나라도) — 태그를 2개 이상 골랐을 때만 보인다 */
+.tagbar .tb-mode{display:inline-flex;align-items:center;gap:4px;margin-left:4px;padding-left:10px;border-left:1px solid var(--line-2)}
+.tagbar .tb-mode .tb-lbl{margin:0 4px 0 0}
+.tagbar .tb-m{border:1px solid var(--line-2);background:transparent;color:var(--ink-3);font-size:11.5px;padding:4px 9px;border-radius:7px;cursor:pointer;transition:.15s}
+.tagbar .tb-m:hover{color:var(--ink);border-color:var(--ink-3)}
+.tagbar .tb-m.on{background:var(--ink);border-color:var(--ink);color:#fff}

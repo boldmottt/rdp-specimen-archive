@@ -55,6 +55,25 @@ const EMPTY_VALS = ["", "미정", "-", "—"];
 const layerLabel = (n) => `${n}도`;
 
 /**
+ * 이 컬러의 도수 목록.
+ *   layerPlates(동판 지정)와 배합의 layer 를 **합집합**으로 본다.
+ *   동판을 아직 안 채운 컬러(예: 2도 배합만 있고 1도 동판이 빈 경우)가
+ *   실제보다 적은 도수로 묶이던 문제를 막는다.
+ */
+export function layersOf(v) {
+  const out = new Set();
+  Object.keys((v && v.layerPlates) || {}).forEach((k) => {
+    const t = String(k == null ? "" : k).trim();
+    if (t) out.add(t);
+  });
+  ((v && v.mixes) || []).forEach((m) => {
+    const t = String((m && m.layer) || "").trim();
+    if (t) out.add(t);
+  });
+  return [...out].sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
+}
+
+/**
  * @returns [{kind, label, values:[{val, n, token}]}] — 빈 값 제외, 값이 1종류뿐인 종류는 숨김
  */
 export function autoFacets(patterns, workOf, topPerKind = 6) {
@@ -85,7 +104,7 @@ export function autoFacets(patterns, workOf, topPerKind = 6) {
         let val = "";
         if (kind === "place") val = String((workOf ? workOf(p, v) : (p.work || {})).place || "").trim();
         else {
-          const n = Object.keys((v || {}).layerPlates || {}).length;
+          const n = layersOf(v).length;
           val = n ? layerLabel(n) : "";
         }
         if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1);

@@ -32,7 +32,7 @@ function filtered() {
   // 기준색은 있는데 ΔE 표가 비었으면(저장 직후 캐시를 버렸을 때) 정렬하지 않는다.
   //   드롭다운은 '색 가까운 순'인데 실제로는 원래 순서인 상태를 만들지 않기 위해.
   const sortMode = App.sort === "color" && !App.de ? "recent" : App.sort;
-  const Q = parseQuery(App.q);
+  const Q = parseQuery(App.q, { tagMode: App.prop.tagMode });
   HITS.clear();
   const list = App.patterns.filter((p) => {
     if (App.project !== "all" && p.project !== App.project) return false;
@@ -321,9 +321,14 @@ export function renderCatalog() {
     const chip = (t, label, n) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(label)}<span class="n">${n}</span></button>`;
     const groupHTML = split.groups.map((g) => `<span class="auto-group tag-group"><span class="auto-lbl">${esc(g.name)}</span>${
       g.items.slice(0, 12).map((i) => chip(i.tag, i.value, i.n)).join("")}</span>`).join("");
+    const modeHTML = on.size > 1
+      ? `<span class="tb-mode" role="group" aria-label="태그 조합"><span class="tb-lbl">조합</span>` +
+        `<button class="tb-m${App.prop.tagMode === "or" ? "" : " on"}" data-tagmode="and" title="고른 태그를 모두 만족">모두</button>` +
+        `<button class="tb-m${App.prop.tagMode === "or" ? " on" : ""}" data-tagmode="or" title="고른 태그 중 하나라도">하나라도</button></span>`
+      : "";
     return `<div class="tagbar">${tags.length ? '<span class="tb-lbl">태그</span>' : ""}${
       tags.map(([t, n]) => chip(t, t, n)).join("")
-    }${groupHTML}${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
+    }${modeHTML}${groupHTML}${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
   })();
 
   function autoTagHTML() {
@@ -412,6 +417,13 @@ export function renderCatalog() {
   paintDots();
   $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
   $$("[data-tag]").forEach((el) => (el.onclick = () => { toggleTag(el.dataset.tag); syncSearch(); }));
+  // 태그를 두 개 이상 골랐을 때 '모두(AND) / 하나라도(OR)' 를 고른다 — 선택은 저장된다
+  $$("[data-tagmode]").forEach((el) => (el.onclick = () => {
+    if ((App.prop.tagMode || "and") === el.dataset.tagmode) return;
+    App.prop.tagMode = el.dataset.tagmode;
+    saveLS();
+    renderCatalog();
+  }));
   // 자동 태그 칩: 값 토큰(client:"현대자동차" 등)을 넣었다 뺐다 한다
   $$("[data-auto]").forEach((el) => (el.onclick = () => {
     const tok = el.dataset.auto;

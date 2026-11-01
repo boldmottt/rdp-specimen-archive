@@ -244,3 +244,36 @@ test("한글 접두 — 상태·고객·동판·컬러·장소·계열·도수·
   assert.deepEqual(keys("#용도:도어"), ["tag=용도:도어"]);            // # 을 붙이면 그룹 태그 그대로
   assert.deepEqual(parseQuery("RAL:9005").terms, []);                // 모르는 접두는 그냥 단어
 });
+
+test("태그 여러 개 — 기본은 모두(AND), tagMode=or 면 하나라도(OR)", () => {
+  const a = mk("A", "G-1", "P", ["컬러세미나", "이경실 책임"], [{ id: "v01", layerPlates: { "1도": "26_012" } }]);
+  const b = mk("B", "G-2", "P", ["컬러세미나"], [{ id: "v01", layerPlates: { "1도": "26_012" } }]);
+  const c = mk("C", "G-3", "P", ["이경실 책임"], [{ id: "v01", layerPlates: { "1도": "26_012" } }]);
+  const q = '#컬러세미나 #"이경실 책임"';
+
+  const and = parseQuery(q);
+  assert.equal(and.tagMode, "and");
+  assert.deepEqual([a, b, c].map((p) => !!matchVars(p, and)), [true, false, false]);
+
+  const or = parseQuery(q, { tagMode: "or" });
+  assert.equal(or.tagMode, "or");
+  assert.deepEqual([a, b, c].map((p) => !!matchVars(p, or)), [true, true, true]);
+  // 태그 항목은 terms 에 그대로 남는다(칩 강조·필터 수 표시가 이 목록을 읽는다)
+  assert.equal(or.terms.filter((t) => t.key === "tag").length, 2);
+});
+
+test("태그 하나면 AND/OR 결과가 같다 · 제외 태그는 OR 에서도 제외", () => {
+  const a = mk("A", "G-1", "P", ["컬러세미나"], [{ id: "v01", layerPlates: { "1도": "26_012" } }]);
+  assert.ok(matchVars(a, parseQuery("#컬러세미나", { tagMode: "or" })));
+  const q = parseQuery('#컬러세미나 -#이경실', { tagMode: "or" });
+  const b = mk("B", "G-2", "P", ["컬러세미나", "이경실"], [{ id: "v01", layerPlates: { "1도": "26_012" } }]);
+  assert.equal(matchVars(b, q), null);
+});
+
+test("도수는 layerPlates 와 배합 도수의 합집합 — 동판이 비어도 2도로 센다", () => {
+  // 실제 데이터(G-60813-L1): 배합은 1도·2도인데 layerPlates 에는 2도만 있다
+  const p = mk("A", "G-1", "P", [], [{ id: "v01", layerPlates: { "2도": "26_012" },
+    mixes: [{ layer: "1도", plate: "26_012" }, { layer: "2도", plate: "26_012" }] }]);
+  assert.ok(matchVars(p, parseQuery("layers:2")));
+  assert.equal(matchVars(p, parseQuery("layers:1")), null);
+});

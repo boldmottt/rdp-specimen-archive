@@ -26,6 +26,7 @@
  */
 
 import { workOf } from "./work.js";
+import { layersOf } from "./facets.js";
 
 /* 한글 접두 → 영문 키. '상태:보류'처럼 한글로 쓴 조건도 같은 뜻으로 읽는다(예전엔 status: 만 됐다) */
 const ALIAS = {
@@ -57,8 +58,13 @@ export function tokenize(raw) {
   return out;
 }
 
-/** 검색어 → { terms: 문법 조건들, notText: 제외 단어, text: 나머지 부분 문자열 } */
-export function parseQuery(raw) {
+/**
+ * 검색어 → { terms, notText, text, tagMode }
+ *   opts.tagMode = "and"(기본) | "or" — 태그를 여러 개 골랐을 때 모두 만족할지, 하나라도 만족할지.
+ *   "or" 여도 terms 안의 tag 항목은 그대로 둔다(칩 강조·필터 수 표시가 이 목록을 읽는다).
+ *   실제 판정은 matchVars 가 tagMode 를 보고 한꺼번에 처리한다.
+ */
+export function parseQuery(raw, opts) {
   const terms = [], notText = [], words = [];
   tokenize(raw).forEach((t) => {
     let key = "", val = t.text;
@@ -77,7 +83,8 @@ export function parseQuery(raw) {
     else if (t.neg) { if (val) notText.push(val); }
     else if (val) words.push(val);
   });
-  return { terms, notText, text: words.join(" ") };
+  const tagMode = (opts && opts.tagMode) === "or" ? "or" : "and";
+  return { terms, notText, text: words.join(" "), tagMode };
 }
 
 /** 시편 하나를 부분 문자열로 훑을 때 쓰는 텍스트 (예전 검색과 같은 범위 + 태그·도수 패턴·배합 동판) */
@@ -142,7 +149,7 @@ function testVar(p, v, t) {
   if (t.key === "layers") {
     // 칩은 "2도"를 넣고 사용자는 layers:2 로도 쓴다 — 둘 다 받는다
     const n = String(t.val).replace(/도$/, "");
-    return String(Object.keys(v.layerPlates || {}).length) === n;
+    return String(layersOf(v).length) === n;
   }
   if (t.key === "plate") {
     const plates = [...((p.work || {}).plate || []), ...Object.values(v.layerPlates || {}),
@@ -167,8 +174,12 @@ function updatedWithin(p, val, now) {
  */
 export function matchVars(p, Q) {
   const hay = patternHay(p);
+  // 태그를 '하나라도(or)' 로 볼 때는 태그 조건을 모아 한 번에 판정한다
+  const orTags = Q.tagMode === "or" ? Q.terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val) : [];
   for (const t of Q.terms) {
     if (VAR_KEYS.has(t.key)) continue;
+    if (orTags.length && t.key === "tag" && !t.neg) continue;
+
     const hit = t.key === "tag" ? (p.pattern.tags || []).some((x) => low(x) === t.val)
       : t.key === "project" ? low(p.project) === t.val || low(p.projectName) === t.val
         : t.key === "client" ? low((p.client || (p.label || {}).company)) === t.val
@@ -179,6 +190,10 @@ export function matchVars(p, Q) {
               : true;
     // neg=false → 걸려야 한다 / neg=true → 걸리면 안 된다. 둘 중 하나만 어긋나도 탈락.
     if (hit === t.neg) return null;
+  }
+  if (orTags.length) {
+    const tags = (p.pattern.tags || []).map(low);
+    if (!tags.some((x) => orTags.includes(x))) return null;   // 하나도 안 걸리면 탈락
   }
   if (Q.text && hay.indexOf(Q.text) < 0) return null;
   if (Q.notText.some((w) => hay.indexOf(w) >= 0)) return null;

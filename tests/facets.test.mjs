@@ -78,3 +78,15 @@ test("autoFacets — 종류별 상한(topPerKind)", () => {
   const f = autoFacets(many, wf, 6).find((x) => x.kind === "client");
   assert.equal(f.values.length, 6);
 });
+
+test("자동 태그 도수 — layerPlates 가 비어도 배합 도수를 센다", () => {
+  const p1 = { pattern: { code: "G-1" }, variations: [
+    { id: "v01", layerPlates: { "2도": "26_012" }, mixes: [{ layer: "1도" }, { layer: "2도" }] }] };
+  const p2 = { pattern: { code: "G-2" }, variations: [
+    { id: "v01", layerPlates: { "1도": "26_012" }, mixes: [{ layer: "1도" }] }] };
+  const rows = autoFacets([p1, p2], null, 6).filter((r) => r.kind === "layers");
+  const vals = rows[0].values.map((v) => v.val).sort();
+  assert.deepEqual(vals, ["1도", "2도"]);      // p1 이 1도로 새지 않는다
+  const one = rows[0].values.find((v) => v.val === "1도");
+  assert.equal(one.n, 1);
+});
