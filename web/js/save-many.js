@@ -59,7 +59,7 @@ export async function saveMany(items, onProgress) {
 /** 결과 알림 — 실패가 있으면 목록을 보여 준다 */
 export function reportSave(res, what = "시편") {
   if (res.fails.length) {
-    alert(`${res.ok.length}개 ${what} 저장, ${res.fails.length}개 실패\n\n${res.fails.map((f) => `${f.label}: ${f.msg}`).join("\n")}`);
+    toast(`${res.ok.length}개 ${what} 저장, ${res.fails.length}개 실패 — ${res.fails.map((f) => `${f.label}: ${f.msg}`).join(" · ")}`, 8000);
   } else if (res.ok.length) {
     toast(`${res.ok.length}개 ${what} 저장했습니다 — 시편 [이력]에서 되돌릴 수 있어요`, 3000);
   } else {

@@ -166,7 +166,7 @@ export function openBulkDialog(rerender, hitsOf) {
       // G-51208-T1 까지 잡으므로, 실패한 pid 로 정확히 비교한다.
       App.sel.clear();
       failedPids.forEach((pid) => App.sel.add(pid));
-      alert(`${ok}건 반영, ${fails.length}건 실패\n\n${fails.join("\n")}`);
+      toast(`${ok}건 반영, ${fails.length}건 실패 — ${fails.join(" · ")}`, 8000);
     } else {
       toast(`${ok}건 반영`);
     }

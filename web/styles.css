@@ -1195,3 +1195,6 @@ a.prop-status.ok:hover{background:#fff}
 .confirm-dialog p{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.6;white-space:pre-line}
 .confirm-dialog .cf-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 .confirm-dialog .cf-danger{background:var(--ng);border-color:var(--ng)}
+
+.confirm-dialog .cf-input{width:100%;margin-top:12px;border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
+.confirm-dialog .cf-input:focus{outline:none;border-color:var(--ink)}

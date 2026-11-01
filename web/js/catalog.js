@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, confirmDialog, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, promptDialog, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 // 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
 import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fieldToken, hasToken, splitTagGroups, QUERY_HELP } from "./search.js";
@@ -442,9 +442,9 @@ export function renderCatalog() {
 
   // 저장된 검색: 저장 / 적용 / 이름 변경 / 삭제
   const sfSave = $("#sf-save");
-  if (sfSave) sfSave.onclick = () => {
+  if (sfSave) sfSave.onclick = async () => {
     const dflt = App.q.trim() || (App.project !== "all" ? App.project : "저장된 검색");
-    const name = (prompt("저장할 이름", dflt) || "").trim();
+    const name = (await promptDialog({ title: "저장된 검색 이름", value: dflt, ok: "저장" }) || "").trim();
     if (!name) return;
     App.smartFolders.push({
       id: "sf" + Date.now().toString(36), name,
@@ -462,13 +462,13 @@ export function renderCatalog() {
       const box = $("#search"); if (box) box.value = App.q;
       renderCatalog();
     };
-    nm.ondblclick = () => {
-      const n = (prompt("새 이름", f.name) || "").trim();
+    nm.ondblclick = async () => {
+      const n = (await promptDialog({ title: "이름 바꾸기", value: f.name, ok: "바꾸기" }) || "").trim();
       if (n && n !== f.name) { f.name = n; saveSmart(); renderCatalog(); }
     };
-    el.querySelector(".sf-del").onclick = (e) => {
+    el.querySelector(".sf-del").onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(`'${f.name}' 저장된 검색을 지울까요?`)) return;
+      if (!(await confirmDialog({ title: "저장된 검색을 지울까요?", body: `'${f.name}'`, ok: "지우기", danger: true }))) return;
       App.smartFolders = (App.smartFolders || []).filter((x) => x.id !== f.id);
       saveSmart(); renderCatalog();
     };
@@ -496,7 +496,7 @@ export function renderCatalog() {
 
   async function doSyncAll() {
     if (syncingAll) { toast("동기화 중입니다"); return; }
-    if (!confirm("RDP-DB의 배합을 모든 시편에 반영할까요?\n(기존 배합 수치는 DB 값으로 갱신되고, 메모는 유지됩니다)")) return;
+    if (!(await confirmDialog({ title: "RDP-DB 배합을 모든 시편에 반영할까요?", body: "기존 배합 수치는 DB 값으로 갱신되고, 메모는 유지됩니다.", ok: "반영" }))) return;
     syncingAll = true;
     toast("동기화 중…", 1200);
     try {
@@ -648,7 +648,7 @@ export async function saveNewPattern() {
   if (!id) { toast("프로젝트·패턴 코드에 영문이나 숫자가 하나는 있어야 해요 (파일 이름에 씁니다)"); return; }
   const exists = byId(id);
   if (exists) {
-    if (confirm(`'${id}' 시편이 이미 있습니다.\n기존 시편을 열까요? (지금 작성한 내용은 저장되지 않습니다)`)) {
+    if (await confirmDialog({ title: "이미 있는 시편입니다", body: `'${id}' 시편이 이미 있습니다.\n기존 시편을 열까요? (지금 작성한 내용은 저장되지 않습니다)`, ok: "기존 시편 열기" })) {
       const v0 = (exists.variations && exists.variations[0]) ? exists.variations[0].id : "";
       App.newDraft = null;
       location.hash = `#/p/${encodeURIComponent(id)}${v0 ? "/" + encodeURIComponent(v0) : ""}`;

@@ -110,7 +110,7 @@ export function openCsvImport(onDone) {
     const res = await savePlans(plan.plans, (k) => { go.textContent = `저장 중… ${k}/${total}`; });
     dlg.close();
     onDone();
-    if (res.fails.length) alert(`${res.ok}개 시편 저장, ${res.fails.length}개 실패\n\n${res.fails.join("\n")}`);
+    if (res.fails.length) toast(`${res.ok}개 시편 저장, ${res.fails.length}개 실패 — ${res.fails.join(" · ")}`, 8000);
     else toast(`${res.ok}개 시편에 등록했습니다`, 3000);
   };
   dlg.showModal();

@@ -6,7 +6,7 @@
  *
  * 되돌리기: ⋯ 메뉴·새 시편 화면의 버튼과 이 파일·worklog-draft.js 를 지우면 된다.
  */
-import { $, $$, App, apiGet, byId, esc, fmtDate, toast } from "./core.js";
+import { $, $$, App, apiGet, byId, confirmDialog, esc, fmtDate, toast } from "./core.js";
 import { newDoc } from "./editor.js";
 import { applyWorklogDraft, draftHasContent, jobMatches } from "./worklog-draft.js";
 
@@ -58,12 +58,12 @@ export async function openWorklogPicker() {
 
 async function pick(j, dlg, btn) {
   if (j.existing && byId(j.existing) &&
-    !confirm(`이 패턴은 이미 아카이브에 '${byId(j.existing).pattern.code}'(으)로 있습니다.\n컬러를 더하려면 그 시편의 편집기에서 추가하세요.\n\n그래도 새 시편으로 만들까요?`)) return;
+    !(await confirmDialog({ title: "이미 아카이브에 있는 패턴입니다", body: `'${byId(j.existing).pattern.code}'(으)로 있습니다.\n컬러를 더하려면 그 시편의 편집기에서 추가하세요.\n\n그래도 새 시편으로 만들까요?`, ok: "새 시편 만들기" }))) return;
   // 새 시편 화면에서 불렀으면 지금 초안에 채운다(적어 둔 컬러명·사진·태그는 그대로).
   // 메뉴에서 불렀는데 작성하다 만 초안이 있으면 지우기 전에 묻는다.
   const onNew = location.hash === "#/new" && !!App.newDraft;
   if (!onNew && draftHasContent(App.newDraft)
-    && !confirm("작성하다 만 새 시편 초안이 있어요.\n지우고 이 작업일지 내용으로 새로 시작할까요?\n\n(초안에 채우려면 취소하고, 새 시편 화면의 [작업일지에서 불러오기]를 쓰세요)")) return;
+    && !(await confirmDialog({ title: "작성하다 만 초안이 있어요", body: "지우고 이 작업일지 내용으로 새로 시작할까요?\n\n(초안에 채우려면 취소하고, 새 시편 화면의 [작업일지에서 불러오기]를 쓰세요)", ok: "새로 시작", danger: true }))) return;
   btn.disabled = true;
   try {
     const q = new URLSearchParams({ file: j.file, seq: String(j.seq), code: j.code });

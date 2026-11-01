@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 시편 상세 · 배합표 · 예상색 */
-import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, dash, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, confirmDialog, dash, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
 import { inlineSave, inlineSettled, startInline } from "./inline.js";
 import { saveNewPattern } from "./catalog.js";
 import { showPlate } from "./plates.js";
@@ -436,7 +436,9 @@ export function renderDetail(pid, vid, override) {
   if (isNew) {
     $("#newsave").onclick = () => saveNewPattern();
     $("#newfromwl").onclick = () => openWorklogPicker();
-    $("#newcancel").onclick = () => { if (confirm("작성을 취소할까요?")) { App.newDraft = null; location.hash = ""; } };
+    $("#newcancel").onclick = async () => {
+      if (await confirmDialog({ title: "작성을 취소할까요?", body: "지금 채운 내용은 저장되지 않습니다.", ok: "취소하기", danger: true })) { App.newDraft = null; location.hash = ""; }
+    };
   } else {
     const addBtn = $("#addbtn");
     if (addBtn) addBtn.onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };

@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 제안서 · 확정본 보관함 · 장바구니 바 */
-import { $, $$, App, apiGet, apiPost, byId, dash, esc, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
+import { $, $$, App, apiGet, apiPost, byId, confirmDialog, dash, esc, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
 import { labOf, layerPlate } from "./detail.js";
 import { rerender } from "./main.js";
 import { groupOrder, movePattern, moveColor, normalizeOrder, movePatternTo, moveColorTo, sortPatterns } from "./cart-order.js";
@@ -412,7 +412,7 @@ async function doSaveSnapshot() {
     m = liveModel(false);
   }
   const noImage = m.items.flatMap((it) => it.variations.filter((v) => !v.images.length).map((v) => `${it.pattern.code} ${v.name}`));
-  if (noImage.length && !confirm(`이미지가 없는 컬러가 ${noImage.length}개 있습니다.\n${noImage.join("\n")}\n\n빈 칸으로 확정할까요?`)) return;
+  if (noImage.length && !(await confirmDialog({ title: `이미지가 없는 컬러가 ${noImage.length}개 있습니다`, body: `${noImage.join("\n")}\n\n빈 칸으로 확정할까요?`, ok: "확정" }))) return;
 
   const snap = liveModel(true);
   const doc = Object.assign({}, snap, {
@@ -424,7 +424,7 @@ async function doSaveSnapshot() {
     try { j = await apiPost("/api/proposals", body); } catch (e) {
       const x = e.payload || {};
       if (e.status === 409 && x.missing && !body.allowMissing) {
-        if (!confirm(`원본 이미지 ${x.missing.length}장을 찾을 수 없습니다.\n${x.missing.join("\n")}\n\n이 이미지 없이 확정할까요?`)) return;
+        if (!(await confirmDialog({ title: `원본 이미지 ${x.missing.length}장을 찾을 수 없습니다`, body: `${x.missing.join("\n")}\n\n이 이미지 없이 확정할까요?`, ok: "이미지 없이 확정" }))) return;
         body = Object.assign({}, doc, { allowMissing: true });
         continue;
       }
@@ -541,8 +541,8 @@ const feedbackCounts = (doc) => {
 };
 
 // 확정본을 작성 중인 제안서로 불러와 같은 번호의 다음 Rev로 고칠 수 있게 한다
-function reviseFrom(m) {
-  if (App.cart.length && !confirm("작성 중인 제안서(담긴 시편·제목·코멘트)를 이 확정본 내용으로 바꿉니다. 계속할까요?")) return;
+async function reviseFrom(m) {
+  if (App.cart.length && !(await confirmDialog({ title: "확정본을 작성 중인 제안서로 불러올까요?", body: "지금 작성 중인 제안서(담긴 시편·제목·코멘트)가 이 확정본 내용으로 바뀝니다.", ok: "불러오기" }))) return;
   const cart = [], gone = [], comments = {};
   m.items.forEach((it) => {
     const p = byId(it.pattern.id);

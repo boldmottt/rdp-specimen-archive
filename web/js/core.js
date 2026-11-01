@@ -219,6 +219,47 @@ export function confirmDialog({ title = "확인", body = "", ok = "확인", canc
   });
 }
 
+/**
+ * 입력 대화상자 — 브라우저 prompt() 대신 앱 안에서 묻는다.
+ *   확인 → 입력한 문자열, 취소/Esc → null (prompt() 와 같은 규약)
+ */
+export function promptDialog({ title = "입력", body = "", value = "", ok = "확인", cancel = "취소", placeholder = "" } = {}) {
+  return new Promise((resolve) => {
+    let dlg = document.getElementById("prompt-dlg");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "prompt-dlg";
+      dlg.className = "confirm-dialog";
+      document.body.appendChild(dlg);
+    }
+    dlg.innerHTML = `<form method="dialog">
+      <h3>${esc(title)}</h3>
+      ${body ? `<p>${esc(body)}</p>` : ""}
+      <input class="cf-input" data-cf="input" value="${esc(value)}" placeholder="${esc(placeholder)}">
+      <div class="cf-actions">
+        <button type="button" class="btn-line" data-cf="no">${esc(cancel)}</button>
+        <button type="button" class="btn-dark" data-cf="yes">${esc(ok)}</button>
+      </div>
+    </form>`;
+    const input = dlg.querySelector('[data-cf="input"]');
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { dlg.close(); } catch (e) {}
+      resolve(v);
+    };
+    dlg.querySelector('[data-cf="no"]').onclick = () => finish(null);
+    dlg.querySelector('[data-cf="yes"]').onclick = () => finish(input.value);
+    dlg.oncancel = (e) => { e.preventDefault(); finish(null); };
+    dlg.onclose = () => finish(null);
+    input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); finish(input.value); } };
+    dlg.showModal();
+    input.focus();
+    input.select();
+  });
+}
+
 export async function apiDelete(path, rev) {
   const r = await fetch(path, { method: "DELETE", headers: rev ? { "X-Base-Rev": rev } : {} });
   const j = await r.json().catch(() => ({}));

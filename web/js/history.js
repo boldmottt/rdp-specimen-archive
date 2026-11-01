@@ -6,7 +6,7 @@
  *
  * 되돌리기: detail.js 의 [이력] 버튼과 이 파일·history-rules.js 를 지우면 된다.
  */
-import { App, apiGet, apiPost, apiPut, byId, clone, esc, fmtDate, markSaved, revOf, toast } from "./core.js";
+import { App, apiGet, apiPost, apiPut, byId, clone, confirmDialog, esc, fmtDate, markSaved, revOf, toast } from "./core.js";
 import { historyRows, stampText } from "./history-rules.js";
 
 const SHOW = 6;   // 한 줄에 바로 보여 줄 변경 수(나머지는 '외 N개'를 눌러 펼친다)
@@ -68,7 +68,7 @@ export async function openHistory(pid, onRestored) {
   body.querySelectorAll("[data-restore]").forEach((b) => (b.onclick = async () => {
     const row = rows[Number(b.dataset.restore)];
     if (!row || !row.before) return;
-    if (!confirm(`${whenText(row)} 저장 전 상태로 되돌릴까요?\n\n지금 상태는 이력에 남아 다시 되돌릴 수 있습니다.`)) return;
+    if (!(await confirmDialog({ title: `${whenText(row)} 상태로 되돌릴까요?`, body: "지금 상태도 이력에 남아 다시 되돌릴 수 있습니다.", ok: "되돌리기" }))) return;
     b.disabled = true;
     try {
       const saved = await restoreVersion(pid, row);

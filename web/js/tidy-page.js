@@ -9,7 +9,7 @@
  *
  * 되돌리기: main.js 의 #/tidy 라우트, 목차 ⋯ 메뉴의 '정리 도구', 이 파일과 tidy-rules.js 를 지우면 된다.
  */
-import { $, $$, App, byId, clone, esc, toast, vName } from "./core.js";
+import { $, $$, App, byId, clone, confirmDialog, esc, toast, vName } from "./core.js";
 import { saveMany, reportSave } from "./save-many.js";
 import { setView } from "./views.js";
 import {
@@ -37,7 +37,7 @@ let LAST = null;   // {what, before: Map(pid → 고치기 전 사본), pids}
 /** 저장 공통 — 확인 → 차례로 저장 → 결과 알림 → 다시 그리기 (되돌리기용으로 고치기 전 사본을 남긴다) */
 async function run(items, what) {
   if (!items.length) return;
-  if (!confirm(`${items.length}개 시편을 고칩니다. ${what}\n\n(바로 뒤 [되돌리기]로 한 번에, 또는 시편마다 [이력]에서 되돌릴 수 있어요) 계속할까요?`)) return;
+  if (!(await confirmDialog({ title: `${items.length}개 시편을 고칩니다`, body: `${what}\n\n(바로 뒤 [되돌리기]로 한 번에, 또는 시편마다 [이력]에서 되돌릴 수 있어요)`, ok: "고치기" }))) return;
   const before = new Map(items.map((it) => [it.pid, byId(it.pid) && clone(byId(it.pid))]));
   const st = $("#td-status");
   const res = await saveMany(items, (i, n) => { if (st) st.textContent = `저장 중… ${i} / ${n}`; });
@@ -50,7 +50,7 @@ async function run(items, what) {
 async function undoLast() {
   if (!LAST) return;
   const { what, before, pids } = LAST;
-  if (!confirm(`방금 고친 ${pids.length}개 시편을 고치기 전으로 되돌립니다.\n(${what})\n\n그 사이 다른 곳에서 고친 시편은 되돌리지 않고 알려 드려요. 계속할까요?`)) return;
+  if (!(await confirmDialog({ title: `방금 고친 ${pids.length}개 시편을 되돌릴까요?`, body: `(${what})\n\n그 사이 다른 곳에서 고친 시편은 되돌리지 않고 알려 드려요.`, ok: "되돌리기" }))) return;
   const st = $("#td-status");
   const res = await saveMany(pids.map((pid) => ({ pid, label: (byId(pid) || { pattern: {} }).pattern.code || pid, mutate: (d) => restoreDoc(d, before.get(pid)) })),
     (i, n) => { if (st) st.textContent = `되돌리는 중… ${i} / ${n}`; });
@@ -191,14 +191,14 @@ function bindMerge(root) {
     const box = b.closest(".td-cluster");
     const pick = $("input[type=radio]:checked", box).value;
     const to = pick === "__own" ? $(".td-ownv", box).value.trim() : pick;
-    if (!to) { alert("통일할 값을 넣어 주세요"); return; }
+    if (!to) { toast("통일할 값을 넣어 주세요"); return; }
     doMerge(clusters[Number(b.dataset.cl)].values.map((x) => x.value), to);
   }));
   $$("[data-mv]", root).forEach((c) => (c.onchange = () => { if (c.checked && !$("#mg-to").value) $("#mg-to").value = c.dataset.mv; }));
   $("#mg-go", root).onclick = () => {
     const from = $$("[data-mv]", root).filter((c) => c.checked).map((c) => c.dataset.mv);
     const to = $("#mg-to").value.trim();
-    if (!from.length || !to) { alert("합칠 값들을 고르고, 합칠 값을 넣어 주세요"); return; }
+    if (!from.length || !to) { toast("합칠 값들을 고르고, 합칠 값을 넣어 주세요"); return; }
     doMerge(from, to);
   };
 }
@@ -233,7 +233,7 @@ function bindTags(root) {
   $("#tg-merge", root).onclick = () => {
     const from = $$("[data-tg]", root).filter((c) => c.checked).map((c) => c.dataset.tg);
     const to = $("#tg-to").value.trim();
-    if (from.length < 1 || !to) { alert("합칠 태그를 고르고 이름을 넣어 주세요"); return; }
+    if (from.length < 1 || !to) { toast("합칠 태그를 고르고 이름을 넣어 주세요"); return; }
     go(from, to, `태그 ${from.map((x) => `"${x}"`).join(", ")} → "${to}"`);
   };
 }

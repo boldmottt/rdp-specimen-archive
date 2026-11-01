@@ -33,9 +33,9 @@ function isDirty() {
   return !!(E.draft && E.origJson && JSON.stringify(E.draft) !== E.origJson);
 }
 
-export function closeEditor(force) {
+export async function closeEditor(force) {
   if (!force && isDirty()) {
-    if (!confirm("저장하지 않은 변경이 있습니다. 닫을까요?")) return;
+    if (!(await confirmDialog({ title: "저장하지 않은 변경이 있습니다", body: "닫으면 이번 편집 내용이 사라집니다.", ok: "닫기", danger: true }))) return;
   }
   $("#drawer").classList.remove("on"); $("#drawer-scrim").classList.remove("on");
   E.draft = null; E.origJson = null;
@@ -465,12 +465,12 @@ export function renderDrawer() {
   // 공통 모드 작업일자 — 같은 값이면 그대로 보여 주고, 고치면 모든 컬러에 적용
   {
     const all = $("#work-date-all");
-    if (all) all.onchange = () => {
+    if (all) all.onchange = async () => {
       const val = dateInputValue(all.value);
       const vars = E.draft.variations || [];
       if (!val) return;   // 비우면 아무것도 바꾸지 않는다
       const uniq = Array.from(new Set(vars.map((x) => dateInputValue(x.date)).filter(Boolean)));
-      if (uniq.length > 1 && !confirm(`컬러 ${vars.length}개의 작업일자가 모두 ${val} 로 바뀝니다. 계속할까요?`)) {
+      if (uniq.length > 1 && !(await confirmDialog({ title: `컬러 ${vars.length}개의 작업일자를 모두 바꿀까요?`, body: `${val} 로 바뀝니다.`, ok: "바꾸기" }))) {
         all.value = ""; return;
       }
       vars.forEach((x) => { x.date = val; });
@@ -537,7 +537,7 @@ export function renderDrawer() {
           });
           return inks;
         });
-        if (!confirm("등록된 별칭을 정식명으로 바꾸고 같은 잉크의 중량을 합산할까요? 시편 저장 전에는 원본이 바뀌지 않습니다.")) return;
+        if (!(await confirmDialog({ title: "별칭을 정식명으로 정리할까요?", body: "같은 잉크의 중량을 합산합니다. 시편 저장 전에는 원본이 바뀌지 않습니다.", ok: "정리" }))) return;
         variation.mixes.forEach((m, i) => { m.inks = changes[i]; });
         variation._inkCols = [...new Set((variation._inkCols || []).map((n) => inkInfo(n)?.name || n))];
         renderDrawer(); toast("별칭 정리 완료 — 저장을 눌러 반영하세요");
@@ -766,12 +766,12 @@ export function renderDrawer() {
       delete m.labSce; delete m.labSci;
       renderDrawer();
     }));
-    $$("[data-inkadd]").forEach((el) => (el.onclick = () => {
+    $$("[data-inkadd]").forEach((el) => (el.onclick = async () => {
       const t = el.dataset.inkadd;
       const hasVals = (v.mixes || []).some((m) => m.inks && m.inks[t] != null);
       const isOn = (v._inkCols || []).includes(t) || hasVals;
       if (isOn) {
-        if (hasVals && !confirm(`${t} 값을 이 컬러의 배합에서 지울까요?`)) return;
+        if (hasVals && !(await confirmDialog({ title: `${t} 값을 지울까요?`, body: "이 컬러의 배합에서 뺍니다.", ok: "지우기", danger: true }))) return;
         (v.mixes || []).forEach((m) => { if (m.inks) delete m.inks[t]; });
         v._inkCols = (v._inkCols || []).filter((x) => x !== t);
       } else {
@@ -800,7 +800,7 @@ export function renderDrawer() {
       const q = mode === "rename"
         ? `회사 DB(rdp.db)의 ${rf.project}-${rf.code} 행 ${rf.rows}개를 ${d.project}-${d.pattern.code}로 바꿉니다.\n(실행 전에 DB를 백업합니다) 진행할까요?`
         : `DB의 ${rf.project}-${rf.code} 행은 그대로 두고, 이 시편은 ${d.project}-${d.pattern.code}로 따로 보냅니다.\n(다음 보내기부터 같은 배합이 새 코드로 추가됩니다) 진행할까요?`;
-      if (!confirm(q)) return;
+      if (!(await confirmDialog({ title: mode === "rename" ? "DB 코드를 바꿀까요?" : "옛 코드로 따로 보낼까요?", body: q, ok: "진행", danger: mode === "rename" }))) return;
       try {
         const r = await apiPost(`/api/rdp/rename-db/${encodeURIComponent(d.id)}`, { mode }, E.baseRev);
         const p0 = byId(d.id);
@@ -910,10 +910,10 @@ export function renderDrawer() {
     const dupMixBtn = $("#dup-mix");
     if (dupMixBtn) dupMixBtn.onclick = () => { if (!v.mixes.length) return; const c = clone(v.mixes[v.mixes.length - 1]); c.batch = (c.batch || "") + "-C"; c.isReference = false; v.mixes.push(c); renderDrawer(); };
     const linkBtn = $("#link-same");
-    if (linkBtn) linkBtn.onclick = () => {
+    if (linkBtn) linkBtn.onclick = async () => {
       const t = $("#same-target").value;
       if (!t) return;
-      if ((v.mixes || []).length && !confirm("이 샘플에 입력된 배합 " + v.mixes.length + "건이 지워집니다(복구 불가). 동일 배합으로 바꿀까요?")) return;
+      if ((v.mixes || []).length && !(await confirmDialog({ title: "동일 배합으로 바꿀까요?", body: `이 샘플에 입력된 배합 ${v.mixes.length}건이 지워집니다(복구 불가).`, ok: "바꾸기", danger: true }))) return;
       v.mixes = [];
       v.sameAs = t;
       renderDrawer();
@@ -1033,7 +1033,7 @@ export async function saveDraft() {
       if (!d.project) { E.msg = "프로젝트를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
       d.id = deriveId(d.project, d.pattern.code);
       if (!d.id) { E.msg = "프로젝트·패턴 코드에 영문/숫자를 넣어주세요 (ID를 만들 수 없습니다)"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
-      if (byId(d.id) && !confirm(`이미 '${d.id}' 시편이 있습니다. 덮어쓸까요?`)) {
+      if (byId(d.id) && !(await confirmDialog({ title: "이미 있는 시편입니다", body: `'${d.id}' 시편을 덮어쓸까요?`, ok: "덮어쓰기", danger: true }))) {
         d.id = ""; E.msg = "저장 취소 — 패턴 코드를 바꾸세요"; renderDrawer(); return;
       }
     }
@@ -1042,14 +1042,14 @@ export async function saveDraft() {
     let targetId = d.id;
     const derived = deriveId(d.project, d.pattern.code);
     if (!E.isNew && d.id && derived && derived !== d.id) {
-      if (!confirm(`시편 ID를 바꿀까요?\n\n${d.id}  →  ${derived}\n(이미지·원본 폴더도 함께 옮겨집니다)`)) {
+      if (!(await confirmDialog({ title: "시편 ID를 바꿀까요?", body: `${d.id}  →  ${derived}\n(이미지·원본 폴더도 함께 옮겨집니다)`, ok: "바꾸기" }))) {
         E.msg = "저장 취소 — 프로젝트/패턴 코드를 되돌리세요"; renderDrawer(); return;
       }
       targetId = derived;
     }
     // 실제로 인쇄되는 값(labOf: 컬러 라벨 우선) 기준으로 도수 숫자가 빠졌는지 본다
     const warnType = (d.variations || []).some((vv) => /^Padprint Layer$/i.test(String(labOf(d, vv).type || "").trim()));
-    if (warnType && !confirm("구분이 'Padprint Layer'로 끝나 있습니다 (도수 숫자 없음).\n그대로 저장할까요?")) {
+    if (warnType && !(await confirmDialog({ title: "구분 표기를 확인해 주세요", body: "구분이 'Padprint Layer'로 끝나 있습니다 (도수 숫자 없음).\n그대로 저장할까요?", ok: "저장" }))) {
       E.msg = "저장 취소 — 구분에 도수 숫자를 넣으세요"; renderDrawer(); return;
     }
     tidyLabels(d);
@@ -1104,7 +1104,7 @@ export async function saveDraft() {
     renderDrawer();
   } catch (e) {
     if (e.status === 409 && e.payload && e.payload.current) {
-      const ok = confirm("다른 곳에서 먼저 저장되었습니다.\n최신 내용을 불러올까요? 지금 편집 중인 내용은 사라집니다.");
+      const ok = await confirmDialog({ title: "다른 곳에서 먼저 저장되었습니다", body: "최신 내용을 불러올까요? 지금 편집 중인 내용은 사라집니다.", ok: "불러오기", danger: true });
       if (ok) {
         const cur = normalizeDoc(e.payload.current);
         const i = App.patterns.findIndex((x) => x.id === cur.id);
