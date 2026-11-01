@@ -1164,3 +1164,17 @@ a.prop-status.ok:hover{background:#fff}
 .td-undo{display:flex;align-items:center;gap:12px;margin:0 0 12px;padding:8px 12px;border-radius:10px;background:#eef4ea;border:1px solid #cfe1c5;font-size:12.5px}
 .td-undo .tool{padding:5px 12px;background:#fff}
 .td-table .before,.td-table .after{white-space:pre-wrap}
+
+/* 보기 전용 파일 만들기 */
+.bake-dlg{max-width:560px}
+.bake-dlg .bk-opt{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:10px 0;display:flex;flex-direction:column;gap:5px;font-size:13px}
+.bake-dlg .bk-opt legend{font-size:12px;color:var(--ink-3);padding:0 4px}
+.bake-dlg .bk-pdf,.bake-dlg .bk-auto{display:flex;gap:6px;align-items:baseline;font-size:13px;margin:6px 0}
+.bake-dlg .bk-pdf small{color:var(--ink-3)}
+.bake-dlg .bk-status{font-size:12.5px;min-height:1em;margin:8px 0}
+.bake-dlg .bk-files ul{list-style:none;margin:4px 0 10px;padding:0;font-size:12.5px}
+.bake-dlg .bk-files li{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid var(--line)}
+.bake-dlg .bk-files li span{color:var(--ink-3);white-space:nowrap}
+.bake-dlg .bk-files a,.bake-dlg .bk-status a{text-decoration:underline;text-underline-offset:2px}
+.bake-dlg .bk-where{font-size:11.5px;color:var(--ink-3);word-break:break-all}
+.bake-dlg .bk-auto{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
