@@ -45,3 +45,18 @@ test("칸 고치기 — 컬러 칸·공통 칸·작업자(컬러 값 우선)·�
   assert.throws(() => applyCell(d, "v1", "code", "X"));
   assert.throws(() => applyCell(d, "v9", "status", "X"));
 });
+
+test("묶기 — 상태는 기본 순서, 없음은 뒤 · 작업 월은 최근 먼저", async () => {
+  const { groupRows } = await import("../web/js/table-rules.js");
+  const rows = tableRows([P1, P2]);
+  assert.deepEqual(groupRows(rows, "status").map((g) => `${g.label}:${g.rows.length}`), ["샘플:1", "승인:1", "상태 없음:1"]);
+  assert.deepEqual(groupRows(rows, "month").map((g) => g.label), ["2026-10", "2026-09", "작업 월 없음"]);
+  assert.deepEqual(groupRows(rows, "worker").map((g) => g.label), ["김", "박", "작업자 없음"]);
+  assert.equal(groupRows(rows, "zz").length, 1);
+});
+
+test("칸반 칸 — 상태 없음이 맨 앞, 기본 칸은 비어도 보인다, 직접 추가 칸", async () => {
+  const { kanbanColumns } = await import("../web/js/table-rules.js");
+  const cols = kanbanColumns(tableRows([P1, P2]), ["재작업"]);
+  assert.deepEqual(cols.map((c) => `${c.label}:${c.rows.length}`), ["상태 없음:1", "샘플:1", "가승인:0", "승인:1", "재작업:0"]);
+});

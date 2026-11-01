@@ -12,7 +12,7 @@ import { compareFromSelection } from "./compare-page.js";
 import { openWorklogPicker } from "./from-worklog.js";
 import { openCsvImport } from "./import-csv.js";
 import { bindRate, rateHTML } from "./rating.js";
-import { VIEW, setView, viewSwitchHTML, tableHTML, bindTable } from "./views.js";
+import { setView, viewSwitchHTML, bodyHTML, bindBody } from "./views.js";
 import { workOf } from "./work.js";
 
 /* ---------------- catalog ---------------- */
@@ -392,7 +392,7 @@ export function renderCatalog() {
       </div>
       ${selectionBarHTML()}
       <div class="filterbar${filtersOpen ? " open" : ""}" id="filterbar">${sfbar}${tagbar}</div>
-      ${list.length ? (VIEW.mode === "table" ? `<div id="dt-root">${tableHTML(list, (pid) => HITS.get(pid))}</div>` : `<div class="grid">${list.map(cardHTML).join("")}</div>`)
+      ${list.length ? `<div id="vbody">${bodyHTML(list, (pid) => HITS.get(pid), cardHTML)}</div>`
       : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
         <span class="foot-right">
@@ -546,10 +546,10 @@ export function renderCatalog() {
 
   // 선택(패턴 단위) · 일괄 편집
   bindPicks(list.map((p) => p.id), renderCatalog);
-  // 보기 전환(카드 · 표) — 표는 칸 편집·정렬·열 숨기기를 붙인다
+  // 보기 전환(카드 · 표 · 칸반) + 보기 도구(묶기 · 카드 크기 · 열 · 칸반 끌어 놓기)
   $$('input[name="viewmode"]').forEach((r) => (r.onchange = () => { setView(r.value); renderCatalog(); }));
-  const dtRoot = $("#dt-root");
-  if (dtRoot) bindTable(dtRoot, renderCatalog);
+  const vbody = $("#vbody");
+  if (vbody) bindBody(vbody, renderCatalog);
   const bulkBtn = $("#bulk-open");
   if (bulkBtn) bulkBtn.onclick = () => openBulkDialog(renderCatalog, (pid) => HITS.get(pid));
   const cmpSel = $("#sel-compare");

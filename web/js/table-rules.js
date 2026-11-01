@@ -92,3 +92,54 @@ export function applyCell(doc, vid, key, value) {
   else target[k] = val;
   return true;
 }
+
+/* ---------- 묶어 보기 · 칸반 ---------- */
+
+/** 상태 칸의 기본 순서 — 여기 없는 값은 가나다순으로 뒤에 붙는다 */
+export const STATUS_ORDER = ["의뢰", "작업중", "샘플", "가승인", "승인", "보류", "반려"];
+
+/** 묶을 수 있는 기준. get(p, v) → 묶음 이름('' 은 '없음' 묶음) */
+export const GROUPS = [
+  { key: "project", label: "프로젝트", get: (p) => t(p.project) },
+  { key: "status", label: "상태", get: (p, v) => t(v.status) },
+  { key: "client", label: "고객", get: (p) => t(p.client) },
+  { key: "worker", label: "작업자", get: (p, v) => t(COL.worker.get(p, v)) },
+  { key: "place", label: "작업 장소", get: (p, v) => t(COL.place.get(p, v)) },
+  { key: "month", label: "작업 월", get: (p, v) => t(v.date).replace(/[./]/g, "-").slice(0, 7) },
+  { key: "rating", label: "별점", get: (p, v) => (v.rating ? "★".repeat(v.rating) : "") },
+];
+export const GROUP = Object.fromEntries(GROUPS.map((g) => [g.key, g]));
+
+const orderIndex = (key, name) => {
+  if (key === "status") { const i = STATUS_ORDER.indexOf(name); return i < 0 ? STATUS_ORDER.length : i; }
+  return 0;
+};
+
+/** 줄을 묶는다 — 묶음 순서: (상태는 기본 순서) → 이름순(월·별점은 최근·높은 순), '없음'은 맨 뒤 */
+export function groupRows(rows, key) {
+  const g = GROUP[key];
+  if (!g) return [{ name: "", label: "", rows: rows.slice() }];
+  const m = new Map();
+  rows.forEach((r) => { const k = g.get(r.p, r.v); if (!m.has(k)) m.set(k, []); m.get(k).push(r); });
+  const desc = key === "month" || key === "rating";
+  return [...m.entries()].sort(([a], [b]) => {
+    if ((a === "") !== (b === "")) return a === "" ? 1 : -1;
+    const d = orderIndex(key, a) - orderIndex(key, b);
+    if (d) return d;
+    return (desc ? -1 : 1) * a.localeCompare(b, "ko", { numeric: true });
+  }).map(([name, rs]) => ({ name, label: name || `${g.label} 없음`, rows: rs }));
+}
+
+/**
+ * 칸반 칸 — '상태 없음'을 맨 앞(받은 편지함처럼), 이어서 기본 순서 · 그 밖의 값 · 직접 추가한 칸.
+ * 비어 있어도 기본 순서의 칸 중 '샘플·가승인·승인'은 늘 보인다(끌어다 놓을 자리).
+ */
+export function kanbanColumns(rows, extra = []) {
+  const names = new Set(rows.map((r) => t(r.v.status)));
+  ["샘플", "가승인", "승인"].forEach((x) => names.add(x));
+  (extra || []).forEach((x) => { if (t(x)) names.add(t(x)); });
+  const rest = [...names].filter((x) => x !== "");
+  rest.sort((a, b) => orderIndex("status", a) - orderIndex("status", b) || a.localeCompare(b, "ko", { numeric: true }));
+  const cols = [{ name: "", label: "상태 없음" }, ...rest.map((x) => ({ name: x, label: x }))];
+  return cols.map((c) => ({ ...c, rows: rows.filter((r) => t(r.v.status) === c.name) }));
+}
