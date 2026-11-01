@@ -1,5 +1,6 @@
 /* RDP 시편 아카이브 — 제안서 · 확정본 보관함 · 장바구니 바 */
-import { $, $$, App, apiGet, apiPost, byId, confirmDialog, dash, esc, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
+import { FIELDS, LAYOUTS, BOARD_PER_PAGE, fieldsOf, layoutOf, fieldValue, modelSettings, extraVarValues, boardPages, cleanFields, cleanLayout } from "./proposal-layout.js";
+import { $, $$, App, apiGet, apiPost, byId, confirmDialog, esc, html, raw, imgUrl, resetPropIdentity, saveLS, toast, todayLocal, vName, fmtDate } from "./core.js";
 import { labOf, layerPlate } from "./detail.js";
 import { rerender } from "./main.js";
 import { groupOrder, movePattern, moveColor, normalizeOrder, movePatternTo, moveColorTo, sortPatterns } from "./cart-order.js";
@@ -75,6 +76,7 @@ function liveModel(withSource) {
     date: App.prop.date || todayLocal(),
     docNo: App.prop.docNo || "", rev: String(App.prop.rev || "0"),
     showComments: !!App.prop.showComments,
+    ...modelSettings(App.prop),         // 레이아웃·보여줄 항목 — 기본값이면 아무것도 넣지 않는다(예전 확정본 지문 유지)
     brand: App.config.brand || "RDP", brandSub: App.config.brandSub || "SPECIMEN ARCHIVE", company: App.config.company || "",
     firstPageMax: firstPageMax(), pageMax: pageMax(),
     items: grouped().map(({ p, vars }) => ({
@@ -91,6 +93,7 @@ function liveModel(withSource) {
           images: (v.images || []).slice(0, 1),
           item: lab.item || "", type: lab.type || "", remark: remarkLine(p, v),
           comment: comments[p.id + "::" + v.id] || "",
+          ...extraVarValues(App.prop.fields, v),   // 켠 항목만 (상태·도장)
         }, withSource ? {
           // 확정 당시의 원본 기록 (나중에 시편이 바뀌어도 무엇을 보냈는지 알 수 있게)
           source: { label: v.label || null, layerPlates: v.layerPlates || null, layerPatterns: v.layerPatterns || null,
@@ -194,6 +197,46 @@ function coverSheet(m, ctx) {
     </section>`;
 }
 
+const fieldLabel = (k) => (FIELDS.find((f) => f.key === k) || { label: k }).label;
+
+// 한 컬러 페이지의 스펙 줄 — COLOR + 켠 항목, 칸 수만큼 한 줄로 나눈다
+function specHTML(m, v) {
+  const keys = fieldsOf(m);
+  return html`<div class="p-spec" style="grid-template-columns:repeat(${keys.length + 1},minmax(0,1fr))">
+        <div><span>COLOR</span>${v.name}</div>
+        ${keys.map((k) => html`<div><span>${fieldLabel(k)}</span>${fieldValue(v, k) || "—"}</div>`)}
+      </div>`;
+}
+
+// 보드 한 장 — 컬러 8개를 2칸 × 4줄로 (사진은 축소본)
+function pageBoard(m, ctx, cells, idx, total, nColors) {
+  const keys = fieldsOf(m);
+  const from = idx * BOARD_PER_PAGE + 1, to = idx * BOARD_PER_PAGE + cells.length;
+  return html`<section class="sheet s-board" data-pids="${Array.from(new Set(cells.map((c) => c.it.pattern.id))).join(" ")}">
+      <div class="p-head"><div class="pn">${String(idx + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</div></div>
+      <div class="p-title">
+        <span>COLOR BOARD</span>
+        <h2 class="b-title">${m.title}</h2>
+        <div class="pname">컬러 ${from}–${to} / ${nColors}</div>
+      </div>
+      <div class="b-grid">${cells.map(({ it, v }) => {
+        const pt = it.pattern;
+        const meta = keys.map((k) => fieldValue(v, k)).filter(Boolean);
+        return html`<figure class="b-cell" data-pid="${pt.id}">
+          ${imgTag(ctx, pt, v, "b-img", '<div class="b-img"></div>')}
+          <figcaption><div class="b-name"><b>${pt.code}</b><span>${v.name}</span></div>
+          ${meta.length ? html`<div class="b-meta">${meta.join(" · ")}</div>` : ""}
+          ${m.showComments && (ctx.editable || String(v.comment || "").trim())
+            ? (ctx.editable
+              ? html`<div class="b-comment c" contenteditable="true" data-comment="${pt.id}::${v.id}">${v.comment || ""}</div>`
+              : html`<div class="b-comment c">${v.comment}</div>`)
+            : ""}</figcaption></figure>`;
+      })}</div>
+      <div class="caution">* 보드의 사진은 축소본입니다(실물 크기 아님). 색상은 실물 시편 기준이며 인쇄물은 참고용입니다.</div>
+      ${foot(m, "BOARD")}
+    </section>`;
+}
+
 function pageSingle(m, ctx, it, v, idx, total) {
   const pt = it.pattern;
   return html`<section class="sheet s-page" data-pid="${it.pattern.id}">
@@ -204,12 +247,7 @@ function pageSingle(m, ctx, it, v, idx, total) {
         <div class="pname">${pname(pt)}</div>
       </div>
       ${imgTag(ctx, pt, v, "p-img", '<div class="p-img"></div>')}
-      <div class="p-spec">
-        <div><span>COLOR</span>${v.name}</div>
-        <div><span>ITEM</span>${dash(v.item)}</div>
-        <div><span>TYPE</span>${dash(v.type)}</div>
-        <div><span>REMARK</span>${v.remark || "—"}</div>
-      </div>
+      ${specHTML(m, v)}
       ${commentBox(ctx, m, `${pt.id}::${v.id}`, v.comment)}
       <div class="caution">* 색상은 실물 시편 기준이며 인쇄물은 참고용입니다.</div>
       ${foot(m, pt.code)}
@@ -219,7 +257,10 @@ function pageSingle(m, ctx, it, v, idx, total) {
 function pageCompare(m, ctx, it, vars, idx, total, part, parts) {
   const pt = it.pattern;
   const letters = "ABCDEFGH";
-  const strip = ["item", "type"].map((k) => {
+  const on = fieldsOf(m);
+  const legendKeys = on.filter((k) => k !== "item" && k !== "type");   // ITEM·TYPE 은 아래 한 줄(같으면 한 번만)
+  const legendCols = `8mm 50mm${legendKeys.map(() => " minmax(0,1fr)").join("")}`;
+  const strip = ["item", "type"].filter((k) => on.includes(k)).map((k) => {
     // 컬러마다 값이 다르면 A/B로 나눠 표기
     const vals = vars.map((v) => v[k] || "");
     const uniq = Array.from(new Set(vals));
@@ -239,11 +280,11 @@ function pageCompare(m, ctx, it, vars, idx, total, part, parts) {
         <span class="ab">${letters[i]}</span>
       </div>`)}</div>
       <div class="cmp-legend">
-        <div class="lg-head"><b></b><span>COLOR</span><span>REMARK</span></div>
-        ${vars.map((v, i) => html`<div>
+        <div class="lg-head" style="grid-template-columns:${legendCols}"><b></b><span>COLOR</span>${legendKeys.map((k) => html`<span>${fieldLabel(k)}</span>`)}</div>
+        ${vars.map((v, i) => html`<div style="grid-template-columns:${legendCols}">
         <b>${letters[i]}</b>
         <span class="cn">${v.name}</span>
-        <span>${v.remark || "—"}</span>
+        ${legendKeys.map((k) => html`<span${k === "colorCode" || k === "remark" ? raw(' class="mono"') : ""}>${fieldValue(v, k) || "—"}</span>`)}
       </div>`)}
       </div>
       <div class="p-strip">${strip}</div>
@@ -254,6 +295,11 @@ function pageCompare(m, ctx, it, vars, idx, total, part, parts) {
 }
 
 function sheetsHTML(m, ctx) {
+  if (layoutOf(m) === "board") {
+    const chunks = boardPages(m.items);
+    const nColors = chunks.reduce((a, c) => a + c.length, 0);
+    return String(html`<div class="sheets is-board">${coverSheet(m, ctx)}${chunks.map((c, i) => pageBoard(m, ctx, c, i, chunks.length, nColors))}</div>`);
+  }
   const plan = m.items.map((it) => (it.variations.length === 1
     ? { type: "single", it }
     : { type: "compare", it, chunks: splitVars(m, it.variations) }));
@@ -284,6 +330,14 @@ function statusHTML(m) {
     : html`<span class="prop-status warn" title="다시 확정하면 개정본(Rev+1)이나 새 번호로 저장합니다">확정 후 수정됨</span>`;
 }
 
+let pfieldsOutsideBound = false;
+
+/** 패턴 pid 가 처음 나오는 쪽 번호(0부터, 표지 제외) — 상세는 시트의 data-pid, 보드는 칸의 data-pid */
+function pageIndexFor(pid) {
+  const pages = Array.from(document.querySelectorAll(".sheet.s-page, .sheet.s-board"));
+  return pages.findIndex((pg) => pg.dataset.pid === pid || !!pg.querySelector(`[data-pid="${CSS.escape(pid)}"]`));
+}
+
 export function renderProposal() {
   document.body.classList.add("prop-mode");
   if (!App.prop.docNo) {
@@ -308,6 +362,10 @@ export function renderProposal() {
         <div class="field"><label for="f-date">날짜</label><input class="w-sm" id="f-date" value="${App.prop.date || todayLocal()}"></div>
         <div class="field"><label for="f-by">작성</label><input class="w-sm" id="f-by" value="${App.prop.by || ""}"></div>
         <label class="chk-inline" title="켜면 각 페이지에 '제안 포인트' 칸이 생깁니다"><input type="checkbox" id="f-comments"${App.prop.showComments ? raw(" checked") : ""}> 제안 포인트</label>
+        <div class="seg" role="radiogroup" aria-label="레이아웃">${LAYOUTS.map((l) => html`<label class="segbtn${layoutOf(m) === l.key ? " on" : ""}" title="${l.hint}"><input type="radio" name="playout" value="${l.key}"${layoutOf(m) === l.key ? raw(" checked") : ""}>${l.label}</label>`)}</div>
+        <div class="more"><button type="button" class="btn-line" id="pfieldsbtn" aria-haspopup="true" aria-expanded="false" title="페이지에 보여줄 항목 (컬러명은 항상)">항목 ▾ <small>${fieldsOf(m).length + 1}</small></button>
+          <div class="menu p-fields" id="pfields" hidden>${FIELDS.map((f) => html`<label><input type="checkbox" data-pfield="${f.key}"${fieldsOf(m).includes(f.key) ? raw(" checked") : ""}> ${f.ko} <small>${f.label}</small></label>`)}
+            <div class="pf-note">컬러명은 항상 보입니다 · 확정 저장하면 이 설정도 함께 남아요</div></div></div>
         <div class="grow"></div>
         <span id="pstatus">${statusHTML(m)}</span>
         <button class="btn-line" id="porder" aria-controls="order-rail" aria-expanded="${railOpen ? "true" : "false"}" title="순서 레일 접기/펴기">순서</button>
@@ -341,6 +399,25 @@ export function renderProposal() {
   bindField("#f-title", "title"); bindField("#f-client", "client"); bindField("#f-date", "date"); bindField("#f-by", "by");
   const chkC = $("#f-comments");
   if (chkC) chkC.onchange = (e) => { App.prop.showComments = e.target.checked; saveLS(); renderProposal(); };
+  $$('input[name="playout"]').forEach((el) => (el.onchange = () => { App.prop.layout = cleanLayout(el.value); saveLS(); renderKeepView(); }));
+  const fb = $("#pfieldsbtn"), fm = $("#pfields");
+  if (fb && fm) {
+    fb.onclick = (e) => { e.stopPropagation(); fm.hidden = !fm.hidden; fb.setAttribute("aria-expanded", String(!fm.hidden)); };
+    fm.onclick = (e) => e.stopPropagation();
+    if (!pfieldsOutsideBound) {                                    // 바깥을 누르면 닫기 — 한 번만 단다
+      pfieldsOutsideBound = true;
+      document.addEventListener("click", () => {
+        const menu = $("#pfields"), btn = $("#pfieldsbtn");
+        if (menu && !menu.hidden) { menu.hidden = true; if (btn) btn.setAttribute("aria-expanded", "false"); }
+      });
+    }
+    $$("[data-pfield]", fm).forEach((el) => (el.onchange = () => {
+      App.prop.fields = cleanFields($$("[data-pfield]", fm).filter((x) => x.checked).map((x) => x.dataset.pfield));
+      saveLS(); renderKeepView();
+      const b = $("#pfieldsbtn"), mm = $("#pfields");             // 다시 그린 뒤에도 메뉴를 연 채로
+      if (b && mm) { mm.hidden = false; b.setAttribute("aria-expanded", "true"); }
+    }));
+  }
   $$("[data-comment]").forEach((el) => (el.oninput = () => {
     App.prop.comments = App.prop.comments || {};
     App.prop.comments[el.dataset.comment] = el.innerText;
@@ -558,6 +635,7 @@ async function reviseFrom(m) {
   Object.assign(App.prop, {
     title: m.title, client: m.client, by: m.by, date: todayLocal(), docNo: m.docNo,
     rev: String((Number(m.rev) || 0) + 1), showComments: m.showComments, comments, confirmed: null,
+    layout: layoutOf(m), fields: fieldsOf(m),
   });
   delete App.prop.confirmedDocNo;
   saveLS();
@@ -692,7 +770,7 @@ function applyOrderInPlace() {
   const groups = groupOrder(App.cart);
   const sheets = document.querySelector(".sheets");
   const list = document.querySelector("#or-list");
-  if (!sheets || !list) { renderKeepView(); return; }
+  if (!sheets || !list || sheets.classList.contains("is-board")) { renderKeepView(); return; }   // 보드는 칸이 쪽을 넘나들어 다시 그린다
 
   // 큰 시트를 위아래로 옮기면 브라우저의 '스크롤 앵커링'이 화면을 다른 곳으로 옮긴다(5200 → 1920 실측).
   // 노드를 옮기는 동안 앵커링을 끄고, 끝난 뒤 보던 위치로 되돌린다.
@@ -719,9 +797,8 @@ function applyOrderInPlace() {
   });
 
   // 쪽 번호 다시 계산
-  const pages = Array.from(document.querySelectorAll(".sheet.s-page"));
   $$("[data-page-for]", list).forEach((el) => {
-    const i = pages.findIndex((pg) => pg.dataset.pid === el.dataset.pageFor);
+    const i = pageIndexFor(el.dataset.pageFor);
     el.textContent = i >= 0 ? `${i + 1}쪽` : "";
   });
   root.style.overflowAnchor = "";
@@ -762,9 +839,8 @@ function bindRail() {
   if (!rail || rail.classList.contains("is-hidden")) return;
 
   // 쪽 번호 — 실제 시트 위치에서 계산(커버 제외)
-  const pages = Array.from(document.querySelectorAll(".sheet.s-page"));
   $$("[data-page-for]", rail).forEach((el) => {
-    const i = pages.findIndex((pg) => pg.dataset.pid === el.dataset.pageFor);
+    const i = pageIndexFor(el.dataset.pageFor);
     el.textContent = i >= 0 ? `${i + 1}쪽` : "";
   });
 

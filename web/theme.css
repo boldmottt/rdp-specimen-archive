@@ -297,3 +297,32 @@ a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
   .order-rail{border:0;border-radius:var(--r-lg);box-shadow:var(--sh-raise);background:var(--surface)}
 }
 
+
+/* 제안서 — 보드 레이아웃 (한 장에 컬러 8개, 2칸 × 4줄) */
+.b-title{font-family:var(--font-sans)!important;font-size:24px!important;font-weight:700!important;letter-spacing:-.035em!important}
+.b-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6mm 5mm;align-content:start}
+.b-cell{margin:0;min-width:0;break-inside:avoid}
+.b-img{display:block;width:100%;aspect-ratio:170/70;object-fit:cover;background:var(--surface-2);border-radius:1mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.b-cell figcaption{margin-top:2mm;min-width:0}
+.b-name{display:flex;gap:2mm;align-items:baseline;font-size:11px;color:var(--ink);font-weight:600;min-width:0}
+.b-name b{font-family:var(--mono);font-weight:650;font-size:10.5px;flex:none}
+.b-name span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.b-meta{margin-top:.8mm;font-size:8.5px;color:var(--ink-2);line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.b-comment{margin-top:1.2mm;font-size:9px;line-height:1.5;color:var(--ink);border-left:1.5px solid var(--ink);padding-left:2mm;max-height:9mm;overflow:hidden;outline:none;white-space:pre-wrap}
+.b-comment:empty:before{content:"제안 포인트";color:var(--line-control)}
+.s-board .caution{margin-top:auto;padding-top:4mm}
+.s-board .p-foot{margin-top:3mm}
+@media print{.b-comment:empty{display:none}}
+
+/* 제안서 툴바 — 항목 메뉴 */
+@media screen{
+  .prop-toolbar .seg{flex:none}
+  .p-fields{min-width:230px;right:auto;left:0}
+  .p-fields label{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--r-sm);font-size:13px;cursor:pointer}
+  .p-fields label:hover{background:var(--surface-2)}
+  .p-fields small{margin-left:auto;font-size:10.5px;color:var(--ink-3);letter-spacing:.06em}
+  .p-fields input{accent-color:var(--ink)}
+  .pf-note{padding:8px 10px 4px;margin-top:4px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);line-height:1.5}
+  #pfieldsbtn small{color:var(--ink-3);font-size:11px}
+}
+.s-board .p-foot{display:flex;justify-content:space-between;font-size:7.5px;color:var(--ink-3);letter-spacing:.1em;border-top:1px solid var(--line);padding-top:2.5mm}
