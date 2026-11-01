@@ -174,14 +174,18 @@ function commentBox(ctx, m, key, text) {
       </div>`;
 }
 
-const foot = (m, right) => html`<div class="p-foot"><span>${m.company} · <span class="docno">${docLabel(m)}</span></span><span class="ruler"><i></i>30mm</span><span>${right}</span></div>`;
+// 회사 로고 — 설정(config.logo)에서. 확정본 지문에 넣지 않는다(로고를 바꿔도 '확정 후 수정됨'이 뜨지 않게)
+const companyLogo = () => String((App.config && App.config.logo) || "").trim();
+const logoHTML = (cls) => (companyLogo() ? html`<img class="${cls}" src="${companyLogo()}" alt="${App.config.company || "logo"}" onerror="this.remove()">` : "");
+
+const foot = (m, right) => html`<div class="p-foot"><span>${logoHTML("foot-logo")}${m.company} · <span class="docno">${docLabel(m)}</span></span><span class="ruler"><i></i>30mm</span><span>${right}</span></div>`;
 
 function coverSheet(m, ctx) {
   const flat = m.items.reduce((a, it) => a.concat(it.variations.map((v) => ({ pt: it.pattern, v }))), []);
   // 표지 썸네일 칸 수 — 개수가 적을수록 크게(한 장에 다 들어가게): ≤6개 2칸 · ≤12개 3칸 · ≤24개 4칸 · 그 이상 5칸
   const cols = flat.length <= 1 ? 1 : flat.length <= 6 ? 2 : flat.length <= 12 ? 3 : flat.length <= 24 ? 4 : 5;
   return html`<section class="sheet s-cover">
-      <div class="cov-top"><div class="cov-brand">${m.brand}<span>${m.brandSub}</span></div>
+      <div class="cov-top">${logoHTML("cov-logo")}<div class="cov-brand${companyLogo() ? " has-logo" : ""}">${m.brand}<span>${m.brandSub}</span></div>
       <div class="dt">${fmtDate(m.date)}<br><span class="docno">${docLabel(m)}</span></div></div>
       <h1>${m.title}</h1>
       <div class="cov-sub">패턴 ${m.items.length}종 · 컬러 ${flat.length}종</div>
@@ -193,7 +197,7 @@ function coverSheet(m, ctx) {
         <div class="cov-thumbs" style="grid-template-columns:repeat(${cols},1fr)">${flat.map(({ pt, v }) => html`<figure>
       ${imgTag(ctx, pt, v, "", '<div style="aspect-ratio:170/70;background:#efede8"></div>')}
       <figcaption><b>${pt.code}</b>${v.name && v.name !== "기본" ? html`<span>${v.name}</span>` : ""}</figcaption></figure>`)}</div></div>
-      <div class="cov-foot"><span>${m.company} · <span class="docno">${docLabel(m)}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
+      <div class="cov-foot"><span>${logoHTML("foot-logo")}${m.company} · <span class="docno">${docLabel(m)}</span></span><span class="ruler"><i></i>30mm</span><span>${flat.length} VARIATIONS</span></div>
     </section>`;
 }
 

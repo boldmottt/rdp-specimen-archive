@@ -326,3 +326,10 @@ a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
   #pfieldsbtn small{color:var(--ink-3);font-size:11px}
 }
 .s-board .p-foot{display:flex;justify-content:space-between;font-size:7.5px;color:var(--ink-3);letter-spacing:.1em;border-top:1px solid var(--line);padding-top:2.5mm}
+
+/* 회사 로고 (config.logo) — 제안서 표지 왼쪽 위, 바닥글 왼쪽 */
+.cov-logo{display:block;height:9mm;width:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.s-cover .cov-top:has(.cov-logo){align-items:flex-end}
+.cov-brand.has-logo{margin:0 auto 0 6mm;padding-left:6mm;border-left:1px solid var(--line);align-self:center}
+.cov-brand.has-logo:before{display:none}
+.foot-logo{height:2.8mm;width:auto;vertical-align:-.5mm;margin-right:2mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}

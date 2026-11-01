@@ -4,6 +4,7 @@
   "brand": "RDP",
   "brandSub": "SPECIMEN ARCHIVE",
   "company": "COMPANY · TEAM",
+  "logo": "/brand/company-logo.png",
   "firstPageMax": 2,
   "pageMax": 2,
   "rdpDbPath": "~/path/to/rdp.db",

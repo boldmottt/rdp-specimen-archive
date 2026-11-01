@@ -2698,6 +2698,8 @@ class Handler(BaseHTTPRequestHandler):
                                   "brand": CFG.get("brand", "RDP"),
                                   "brandSub": CFG.get("brandSub", "SPECIMEN ARCHIVE"),
                                   "company": CFG.get("company", ""),
+                                  # 회사 로고 — 제안서 표지·바닥글에 쓴다. 빈 문자열이면 로고 없음
+                                  "logo": CFG.get("logo", "/brand/company-logo.png"),
                                   "firstPageMax": CFG.get("firstPageMax", 2),
                                   "pageMax": CFG.get("pageMax", 2),
                                   "otherServers": other_servers()})
