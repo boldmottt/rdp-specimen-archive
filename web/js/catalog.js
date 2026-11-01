@@ -2,7 +2,7 @@
 import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 // 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
-import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fieldToken, hasToken, QUERY_HELP } from "./search.js";
+import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fieldToken, hasToken, splitTagGroups, QUERY_HELP } from "./search.js";
 // 선택·일괄 편집·CSV (규칙은 bulk-rules.js, 화면은 bulk.js). 서로 import 하지 않고 데이터를 넘긴다.
 import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk.js";
 // 색 정렬에서 "가장 가까운 컬러"를 고르는 규칙 — 정렬 키와 카드 표시가 같은 함수를 쓴다
@@ -311,12 +311,17 @@ export function renderCatalog() {
   const autoRows = autoFacets(App.project === "all" ? App.patterns : App.patterns.filter((p) => p.project === App.project), workOf, 6);
 
   const tagbar = (() => {
-    const tags = tagCounts(App.patterns, App.project).slice(0, 20);
-    if (!tags.length && !autoRows.length) return "";
+    // '질감:우드'처럼 '그룹:값'으로 단 태그는 그룹별로 묶어 값만 보여 준다(태그 그룹)
+    const split = splitTagGroups(tagCounts(App.patterns, App.project));
+    const tags = split.plain.slice(0, 20);
+    if (!tags.length && !split.groups.length && !autoRows.length) return "";
     const on = new Set(parseQuery(App.q).terms.filter((t) => t.key === "tag" && !t.neg).map((t) => t.val));
+    const chip = (t, label, n) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(label)}<span class="n">${n}</span></button>`;
+    const groupHTML = split.groups.map((g) => `<span class="auto-group tag-group"><span class="auto-lbl">${esc(g.name)}</span>${
+      g.items.slice(0, 12).map((i) => chip(i.tag, i.value, i.n)).join("")}</span>`).join("");
     return `<div class="tagbar">${tags.length ? '<span class="tb-lbl">태그</span>' : ""}${
-      tags.map(([t, n]) => `<button class="chip tag${on.has(t.toLowerCase()) ? " on" : ""}" data-tag="${esc(t)}" title="눌러서 이 태그만 보기 · 다시 눌러 해제">${esc(t)}<span class="n">${n}</span></button>`).join("")
-    }${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
+      tags.map(([t, n]) => chip(t, t, n)).join("")
+    }${groupHTML}${autoTagHTML()}<button class="tb-help" id="qhelp" title="검색 문법 보기">?</button></div>`;
   })();
 
   function autoTagHTML() {

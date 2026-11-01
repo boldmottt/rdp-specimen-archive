@@ -222,3 +222,15 @@ test("별점·깃발 — ★3 · ★3+ · rating:2 · flag:on/off", () => {
   assert.deepEqual(ids("깃발:off"), ["v2", "v3"]);
   assert.deepEqual(ids("-flag:on ★2+"), ["v3"]);
 });
+
+/* ---- 태그 그룹 (그룹:값) ---- */
+test("그룹 태그 검색 — 한글·영문 그룹 모두 태그로", async () => {
+  const { splitTagGroups } = await import("../web/js/search.js");
+  const P = { id: "P-T", project: "P", pattern: { code: "T", tags: ["질감:우드", "finish:matte", "기타"] }, work: {}, label: {}, variations: [{ id: "v1" }] };
+  for (const q of ["#질감:우드", "#finish:matte", "#기타"]) assert.deepEqual(matchVars(P, parseQuery(q)), ["v1"], q);
+  assert.equal(matchVars(P, parseQuery("#finish:gloss")), null);
+  const g = splitTagGroups([["질감:우드", 3], ["기타", 2], ["질감:메탈", 1], ["finish:matte", 1], [":이상", 1]]);
+  assert.deepEqual(g.plain, [["기타", 2], [":이상", 1]]);
+  assert.deepEqual(g.groups.map((x) => [x.name, x.items.map((i) => [i.tag, i.value, i.n])]),
+    [["질감", [["질감:우드", "우드", 3], ["질감:메탈", "메탈", 1]]], ["finish", [["finish:matte", "matte", 1]]]]);
+});

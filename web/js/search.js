@@ -61,8 +61,8 @@ export function parseQuery(raw) {
     const KNOWN = ["tag", "project", "plate", "color", "status", "client", "place", "code", "layers", "has", "date", "updated", "rating", "flag"];
     if (t.prefix && KNOWN.includes(t.prefix)) key = t.prefix;   // 아는 키일 때만 접두로 인정
     else if (!t.prefix && !t.sigil && /^★/.test(t.text)) { key = "rating"; val = t.text.slice(1); }   // ★3 · ★3+
+    else if (t.sigil === "#") { key = "tag"; if (t.prefix) val = `${t.prefix}:${t.text}`; }   // #finish:matte 도 그룹 태그
     else if (t.prefix) { val = `${t.prefix}:${t.text}`; }        // RAL:9005 같은 건 그냥 단어로
-    else if (t.sigil === "#") key = "tag";
     else if (t.sigil === "@") key = "project";
     else {
       const m = KEYED.exec(t.text);
@@ -214,6 +214,23 @@ export const QUERY_HELP =
   "앞에 - 를 붙이면 제외 (예: #컬러세미나 -@MQ5) · 공백이 있는 태그는 #\"메탈 브라운\"";
 
 /* ---------- 화면 도우미 (DOM 사용) ---------- */
+
+/**
+ * 태그 그룹: '질감:우드'처럼 '그룹:값'으로 쓴 태그를 그룹별로 나눈다(Lightroom 키워드 계층·DAM 네임스페이스).
+ * @param counts tagCounts 결과 [["태그", n], ...] (순서 유지)
+ * @returns {plain:[["태그", n]], groups:[{name, items:[{tag, value, n}]}]}  그룹은 처음 나온 순서
+ */
+export function splitTagGroups(counts) {
+  const plain = [], groups = new Map();
+  (counts || []).forEach(([tag, n]) => {
+    const i = String(tag).indexOf(":");
+    const name = i > 0 ? String(tag).slice(0, i).trim() : "", value = i > 0 ? String(tag).slice(i + 1).trim() : "";
+    if (!name || !value) { plain.push([tag, n]); return; }
+    if (!groups.has(name)) groups.set(name, { name, items: [] });
+    groups.get(name).items.push({ tag, value, n });
+  });
+  return { plain, groups: [...groups.values()] };
+}
 
 /** 프로젝트 범위 안 태그 사용 수 → [["태그", 개수], ...] 많은 순 */
 export function tagCounts(patterns, project) {
