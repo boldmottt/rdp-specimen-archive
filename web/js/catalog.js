@@ -304,7 +304,7 @@ export function renderCatalog() {
       ? `<button class="tool mini" id="sf-save" title="지금 검색 조건을 이름 붙여 저장">☆ 현재 조건 저장</button>`
       : "";
     if (!chips && !saveBtn) return "";
-    return `<div class="sfbar"><span class="tb-lbl">저장</span>${chips}${saveBtn}</div>`;
+    return `<div class="sfbar fc-sec"><span class="tb-lbl fc-h">저장된 검색</span>${chips}${saveBtn}</div>`;
   })();
 
   // 태그 칩 줄 — 지금 프로젝트 범위에서 많이 쓴 태그부터. 누르면 #태그 가 검색창에 들어간다.
@@ -350,6 +350,18 @@ export function renderCatalog() {
     }).join("");
   }
 
+  // 적용된 조건 줄 — 지금 걸린 프로젝트·검색 조건을 하나씩 지울 수 있는 칩으로 보여 준다
+  //   (좁혀진 목록이 전체처럼 보이지 않게). 칩을 지우면 검색어에서 그 토큰만 뺀다.
+  const activeHTML = (() => {
+    const toks = tokenize(App.q);
+    const proj = App.project !== "all"
+      ? `<span class="achip"><span class="achip-k">프로젝트</span>${esc(App.project || "미지정")}<button type="button" data-rmproj aria-label="프로젝트 조건 빼기">×</button></span>` : "";
+    if (!toks.length && !proj) return "";
+    return `<div class="activebar" aria-label="적용된 조건">${proj}${toks.map((t) =>
+      `<span class="achip${t.raw.startsWith("-") ? " neg" : ""}">${esc(t.raw)}<button type="button" data-rmtok="${esc(t.raw)}" aria-label="${esc(t.raw)} 빼기">×</button></span>`).join("")}` +
+      `<button type="button" class="achip-clear" id="clearq">모두 지우기</button></div>`;
+  })();
+
   $("#view").innerHTML = `<div class="wrap">
       <section class="hero">
         <div>
@@ -362,8 +374,13 @@ export function renderCatalog() {
           <div class="stat"><b>${totalMix}</b><span>배합</span></div>
         </div>
       </section>
+      <div class="cat">
+      <aside class="filterbar facets${filtersOpen ? " open" : ""}" id="filterbar" aria-label="거르기">
+        <div class="fc-sec"><div class="fc-h">프로젝트</div><div class="projrow">${chips}</div></div>
+        ${sfbar}${tagbar}
+      </aside>
+      <div class="cat-main">
       <div class="toolbar">
-        <div class="projrow">${chips}</div>
         <div class="resbar">
           <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
           ${App.project !== "all" ? `<a class="tool board-link" id="boardbtn" href="#/board/${encodeURIComponent(App.project)}" title="지금 프로젝트의 컬러 보드">${esc(App.project)} 컬러 보드 →</a>` : ""}
@@ -403,8 +420,8 @@ export function renderCatalog() {
           </div>
         </div>
       </div>
+      ${activeHTML}
       ${selectionBarHTML()}
-      <div class="filterbar${filtersOpen ? " open" : ""}" id="filterbar">${sfbar}${tagbar}</div>
       ${list.length ? `<div id="vbody">${bodyHTML(list, (pid) => HITS.get(pid), cardHTML)}</div>`
       : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
@@ -415,12 +432,19 @@ export function renderCatalog() {
             <span class="path-tail">…/${esc((App.config.dataRoot || "").split("/").slice(-2).join("/"))}</span>
           </span>
         </span></div>
+      </div>
+      </div>
     </div>`;
 
   const of = $("#openfolder");
   if (of) of.onclick = (e) => { e.preventDefault(); apiPost("/api/open-folder").then(() => toast("데이터 폴더를 열었습니다")).catch((err) => toast(err.message)); };
   paintDots();
   $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
+  $$("[data-rmtok]").forEach((el) => (el.onclick = () => { const r = el.dataset.rmtok; App.q = withoutToken(App.q, (t) => t.raw === r); syncSearch(); }));
+  const rmp = document.querySelector("[data-rmproj]");
+  if (rmp) rmp.onclick = () => { App.project = "all"; renderCatalog(); };
+  const clq = $("#clearq");
+  if (clq) clq.onclick = () => { App.q = ""; App.project = "all"; syncSearch(); };
   $$("[data-tag]").forEach((el) => (el.onclick = () => { toggleTag(el.dataset.tag); syncSearch(); }));
   // 태그를 두 개 이상 골랐을 때 '모두(AND) / 하나라도(OR)' 를 고른다 — 선택은 저장된다
   $$("[data-tagmode]").forEach((el) => (el.onclick = () => {
