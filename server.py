@@ -35,10 +35,11 @@ import webbrowser
 from datetime import datetime
 from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, quote
 
 from pccs import api as pccs_api   # 작업일지(PCCS3) — PyYAML이 없어도 import는 된다
 from colorlab import api as lab_api   # 컬러연구소 — 측색 라이브러리 · 색 예측
+import bake as bake_mod   # 보기 전용 파일 굽기 (서버 없이 보는 HTML · PDF)
 from colorlab import colormath as cm   # 대표색(사진) → LAB · ΔE2000
 
 try:
@@ -2249,6 +2250,173 @@ def other_servers(now=None) -> list:
     return out
 
 
+# ---------------------------------------------------------------- 보기 전용 파일 굽기 (Bake)
+# 서버(맥)가 꺼져 있어도 볼 수 있게 지금 시편을 HTML 한 파일(사진 포함)과 PDF 로 굳힌다. 고칠 수는 없다.
+# 기본 저장 위치는 데이터 폴더/_bake — 데이터 폴더가 구글 드라이브면 휴대폰 드라이브 앱에서 바로 열린다.
+BAKE_LOCK = threading.Lock()
+BAKE_NAMES = {"internal": "시편아카이브-내부용", "client": "시편아카이브-고객용"}
+
+
+def bake_dir() -> str:
+    d = os.path.expanduser(str(CFG.get("bakeDir") or "")) or os.path.join(DATA, "_bake")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _bake_img(pid, name) -> str:
+    """사진 → 480px 축소본(카드와 같은 캐시)을 data: URL 로. 못 읽으면 '' (그 컬러는 '사진 없음')."""
+    try:
+        path, _src = ensure_thumb(pid, name, 480)
+        with open(path, "rb") as f:
+            return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode("ascii")
+    except Exception:   # noqa: BLE001 — 사진 하나 때문에 굽기 전체가 멈추면 안 된다
+        return ""
+
+
+def find_chrome() -> str:
+    """PDF 를 만들 Chrome 계열 브라우저 (config.chromePath 가 먼저)."""
+    cands = [str(CFG.get("chromePath") or ""),
+             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+             "/Applications/Chromium.app/Contents/MacOS/Chromium",
+             "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+             r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"]
+    cands += [shutil.which(x) or "" for x in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "msedge")]
+    return next((c for c in cands if c and os.path.isfile(c)), "")
+
+
+def html_to_pdf(html_path, pdf_path) -> str:
+    """Chrome 으로 인쇄해 PDF 를 만든다. 성공하면 '', 아니면 이유."""
+    chrome = find_chrome()
+    if not chrome:
+        return "Chrome 을 찾지 못해 PDF 는 건너뛰었어요 — HTML 을 브라우저로 열어 인쇄 → PDF 로 저장하세요 (config.chromePath 로 지정 가능)"
+    tmp = pdf_path + f".{uuid.uuid4().hex[:6]}.tmp"
+    profile = tempfile.mkdtemp(prefix="rdp-bake-chrome-")   # 켜져 있는 Chrome 프로필과 부딪히지 않게
+    args = [chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars",
+            f"--user-data-dir={profile}", f"--print-to-pdf={tmp}", "--no-pdf-header-footer", "--print-to-pdf-no-header",
+            "file://" + urllib.request.pathname2url(os.path.abspath(html_path))]
+    if sys.platform.startswith("linux") and hasattr(os, "geteuid") and os.geteuid() == 0:
+        args.insert(1, "--no-sandbox")
+    try:
+        subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600, check=False)
+        if not os.path.isfile(tmp) or os.path.getsize(tmp) < 1000:
+            return "PDF 를 만들지 못했어요 (Chrome 인쇄 실패) — HTML 을 열어 인쇄 → PDF 로 저장하세요"
+        os.replace(tmp, pdf_path)
+        return ""
+    except subprocess.TimeoutExpired:
+        return "PDF 만들기가 너무 오래 걸려 멈췄어요 — HTML 을 열어 인쇄 → PDF 로 저장하세요"
+    except OSError as e:
+        return f"PDF 를 만들지 못했어요: {e}"
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def bake(audience="internal", ids=None, pdf=True) -> dict:
+    """보기 전용 HTML(+PDF)을 bake_dir() 에 쓴다. ids 를 주면 그 시편만('-선택' 파일)."""
+    if audience not in BAKE_NAMES:
+        raise ValueError("audience 는 internal 또는 client")
+    with BAKE_LOCK:
+        docs = load_all()[0]
+        note = ""
+        if ids:
+            want = {str(x) for x in ids}
+            docs = [d for d in docs if d.get("id") in want]
+            note = f"고른 {len(docs)}개만"
+        baked_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        html = bake_mod.build_html(docs, _bake_img, audience=audience, brand=CFG.get("brand", "RDP"),
+                                   company=CFG.get("company", ""), baked_at=baked_at, scope_note=note)
+        base = BAKE_NAMES[audience] + ("-선택" if ids else "")
+        folder = bake_dir()
+        hp = os.path.join(folder, base + ".html")
+        atomic_write(hp, html.encode("utf-8"))
+        out = {"ok": True, "folder": folder, "html": base + ".html", "htmlSize": os.path.getsize(hp), "bakedAt": baked_at,
+               "patterns": len(docs), "colors": sum(len(d.get("variations") or []) for d in docs), "pdf": "", "pdfError": ""}
+        if pdf:
+            err = html_to_pdf(hp, os.path.join(folder, base + ".pdf"))
+            if err:
+                out["pdfError"] = err
+            else:
+                out["pdf"] = base + ".pdf"
+                out["pdfSize"] = os.path.getsize(os.path.join(folder, base + ".pdf"))
+        return out
+
+
+def bake_files() -> list:
+    d = bake_dir()
+    return sorted(({"name": n, "size": os.path.getsize(os.path.join(d, n)),
+                    "mtime": datetime.fromtimestamp(os.path.getmtime(os.path.join(d, n))).strftime("%Y-%m-%d %H:%M")}
+                   for n in os.listdir(d) if n.endswith((".html", ".pdf")) and not n.startswith(".")), key=lambda x: x["name"])
+
+
+def _bake_auto_path() -> str:
+    return os.path.join(bake_dir(), "auto.json")
+
+
+def bake_auto_get() -> dict:
+    try:
+        with open(_bake_auto_path(), encoding="utf-8") as f:
+            a = json.load(f)
+    except (OSError, ValueError):
+        a = {}
+    aud = [x for x in (a.get("audiences") or ["internal"]) if x in BAKE_NAMES] or ["internal"]
+    return {"enabled": bool(a.get("enabled")), "audiences": aud, "pdf": a.get("pdf", True) is not False}
+
+
+def bake_auto_set(body) -> dict:
+    cur = bake_auto_get()
+    if "enabled" in body:
+        cur["enabled"] = bool(body["enabled"])
+    if isinstance(body.get("audiences"), list):
+        cur["audiences"] = [x for x in body["audiences"] if x in BAKE_NAMES] or ["internal"]
+    if "pdf" in body:
+        cur["pdf"] = bool(body["pdf"])
+    atomic_write(_bake_auto_path(), json.dumps(cur, ensure_ascii=False, indent=2).encode("utf-8"))
+    return cur
+
+
+def _latest_change() -> float:
+    try:
+        return max((e.stat().st_mtime for e in os.scandir(PATTERNS) if e.name.endswith(".json")), default=0.0)
+    except OSError:
+        return 0.0
+
+
+BAKE_QUIET = 120        # 마지막 저장 뒤 이만큼(초) 조용하면 굽는다 — 고치는 중에 몇 번씩 굽지 않게
+
+
+def bake_auto_tick(now=None) -> list:
+    """자동 굽기 한 번: 켜져 있고, 마지막으로 구운 뒤 시편이 바뀌었고, 바뀐 지 BAKE_QUIET 초가 지났으면 굽는다."""
+    a = bake_auto_get()
+    if not a["enabled"] or other_servers():
+        return []   # 다른 PC 서버도 켜져 있으면 굽지 않는다(같은 파일을 두 곳에서 쓰지 않게)
+    now = now or time.time()
+    changed = _latest_change()
+    done = []
+    for aud in a["audiences"]:
+        hp = os.path.join(bake_dir(), BAKE_NAMES[aud] + ".html")
+        last = os.path.getmtime(hp) if os.path.isfile(hp) else 0.0
+        if changed > last and now - changed >= BAKE_QUIET:
+            r = bake(aud, None, a["pdf"])
+            print(f"[bake] 자동으로 구웠어요: {r['html']}{' + ' + r['pdf'] if r['pdf'] else ''}{' (' + r['pdfError'] + ')' if r['pdfError'] else ''}")
+            done.append(aud)
+    return done
+
+
+def start_auto_bake():
+    def loop():
+        while True:
+            time.sleep(60)
+            try:
+                bake_auto_tick()
+            except Exception as e:   # noqa: BLE001 — 굽기가 실패해도 서버는 계속
+                print(f"[bake] 자동 굽기 실패: {e}")
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def start_heartbeat():
     started = datetime.now().isoformat(timespec="seconds")
 
@@ -2558,6 +2726,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"ok": True, **diff_db(doc, load_doc_rows(doc))})
                 except Exception as e:
                     return self.error(400, str(e))
+            if p == "/api/bake":
+                return self.json({"ok": True, "folder": bake_dir(), "files": bake_files(), "auto": bake_auto_get(),
+                                  "pdfReady": bool(find_chrome())})
+            if p == "/api/bake/file":
+                name = (parse_qs(u.query).get("name") or [""])[0]
+                if name not in {f["name"] for f in bake_files()}:
+                    return self.error(404, "그 파일이 없습니다")
+                with open(os.path.join(bake_dir(), name), "rb") as f:
+                    data = f.read()
+                ctype = "application/pdf" if name.endswith(".pdf") else "text/html; charset=utf-8"
+                return self._send(200, data, ctype, {"Content-Disposition": f"attachment; filename=\"rdp-bake{os.path.splitext(name)[1]}\"; filename*=UTF-8''{quote(name)}"})
             if p == "/api/worklog-jobs":
                 return self.json({"ok": True, **worklog_jobs()})
             if p == "/api/worklog-draft":
@@ -2849,6 +3028,19 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError as e:
                     return self.error(500, f"폴더를 열지 못했습니다: {e} — 경로: {DATA}")
                 return self.json({"ok": True})
+            if p == "/api/bake":
+                try:
+                    body = json.loads(self.read_body() or b"{}")
+                    ids = body.get("ids") if isinstance(body.get("ids"), list) else None
+                    return self.json(bake(str(body.get("audience") or "internal"), ids, body.get("pdf", True) is not False))
+                except ValueError as e:
+                    return self.error(400, str(e))
+            if p == "/api/bake/auto":
+                try:
+                    body = json.loads(self.read_body() or b"{}")
+                except ValueError:
+                    return self.error(400, "JSON 형식 오류")
+                return self.json({"ok": True, "auto": bake_auto_set(body if isinstance(body, dict) else {})})
             if p == "/api/rdp/sync-all":
                 # DB는 읽기만 하고 아카이브 JSON을 고친다 → 한 건씩 가져오기(/api/rdp/sync/)와 같이 LAN 모드에서도 허용
                 total = {"added": 0, "updated": 0, "patterns": 0, "skipped": []}
@@ -3371,6 +3563,8 @@ if __name__ == "__main__":
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--demo", action="store_true", help="sample-data 로 임시 실행")
     ap.add_argument("--lan", action="store_true", help="같은 네트워크의 다른 기기에서도 접속 허용")
+    ap.add_argument("--bake", choices=list(BAKE_NAMES), nargs="?", const="internal",
+                    help="보기 전용 HTML·PDF 를 데이터 폴더/_bake 에 만들고 끝낸다 (internal 내부용 · client 고객용)")
     args = ap.parse_args()
     PORT = args.port
 
@@ -3378,6 +3572,12 @@ if __name__ == "__main__":
         print(f"[demo] {enter_demo_mode()}  (데모용 빈 rdp.db · 예시 작업일지 — 실제 데이터는 건드리지 않음)")
 
     ensure_dirs()
+
+    if args.bake:
+        r = bake(args.bake)
+        print(f"[bake] {os.path.join(r['folder'], r['html'])} ({r['htmlSize'] // 1024} KB)")
+        print(f"[bake] {os.path.join(r['folder'], r['pdf'])}" if r["pdf"] else f"[bake] PDF: {r['pdfError']}")
+        sys.exit(0)
 
     if not port_free(PORT):
         # (1) 같은 앱이 이미 떠 있으면 그걸 쓰라고 알려준다 (터널 주소가 바뀌면 안 되므로)
@@ -3421,6 +3621,7 @@ if __name__ == "__main__":
                 print(f"[i] {os.path.basename(folder)} {len(os.listdir(folder))}개 보관 중"
                       f" (오래된 것을 자동으로 지우려면 config.json에 {key})")
     start_heartbeat()
+    start_auto_bake()
 
     bind_addr = "127.0.0.1"
     lan_ips = set()

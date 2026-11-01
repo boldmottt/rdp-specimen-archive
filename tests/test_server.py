@@ -1878,3 +1878,76 @@ class RatingFlagTests(Base):
             doc2 = pattern("P-W02", "P", "W02", [dict({"id": "v01"}, **bad)])
             st, r = self.put("P-W02", doc2, create=True)
             self.assertEqual(st, 400, (bad, r))
+
+
+class BakeTests(Base):
+    """보기 전용 파일 굽기 — 서버 없이 보는 HTML(사진 포함), 고객용은 내부 정보를 뺀다."""
+
+    def setUp(self):
+        super().setUp()
+        server.CFG["chromePath"] = os.path.join(self.tmp, "없는-chrome")   # 테스트에서는 PDF 를 만들지 않는다
+        self._which = server.shutil.which
+        server.shutil.which = lambda *_a, **_k: None
+        os.makedirs(os.path.join(server.IMAGES, "P-W01"), exist_ok=True)
+        from PIL import Image
+        Image.new("RGB", (340, 140), (120, 90, 60)).save(os.path.join(server.IMAGES, "P-W01", "v01.jpg"), "JPEG")
+        doc = pattern("P-W01", "P", "W01", [
+            {"id": "v01", "colorCode": "K-1", "colorName": "<b>다크</b>", "status": "샘플", "images": ["v01.jpg"], "rating": 4,
+             "note": "내부 메모", "mixes": [{"layer": "1도", "batch": "A", "inks": {"BK": 30}, "thinnerPct": 30}],
+             "layerPlates": {"1도": "26_001"}},
+            {"id": "v02", "colorCode": "K-2", "images": ["없음.jpg"]}])
+        doc["client"] = "가온"
+        doc["work"] = {"worker": "작업자A", "plate": ["26_001"]}
+        self.write_pattern(doc)
+        self.write_pattern(pattern("Q-M01", "Q", "M01", [{"id": "v01", "colorCode": "M-1"}]))
+
+    def tearDown(self):
+        server.shutil.which = self._which
+        super().tearDown()
+
+    def read(self, name):
+        with open(os.path.join(server.bake_dir(), name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_internal_has_everything_and_escapes(self):
+        st, r = self.req("POST", "/api/bake", {"audience": "internal"})
+        self.assertEqual(st, 200, r)
+        self.assertEqual((r["html"], r["patterns"], r["colors"], r["pdf"]), ("시편아카이브-내부용.html", 2, 3, ""))
+        self.assertIn("Chrome", r["pdfError"])
+        h = self.read(r["html"])
+        self.assertIn("data:image/jpeg;base64,", h)           # 사진이 파일 안에
+        self.assertIn("사진 없음", h)                           # 없는 사진은 자리 표시
+        self.assertIn("&lt;b&gt;다크&lt;/b&gt;", h)             # 값은 이스케이프
+        self.assertNotIn("<b>다크</b>", h)
+        for w in ("내부 메모", "BK 30", "작업자A", "26_001", "★★★★"):
+            self.assertIn(w, h)
+
+    def test_client_hides_internal_and_selection_file(self):
+        st, r = self.req("POST", "/api/bake", {"audience": "client", "ids": ["P-W01"], "pdf": False})
+        self.assertEqual(st, 200, r)
+        self.assertEqual((r["html"], r["patterns"]), ("시편아카이브-고객용-선택.html", 1))
+        h = self.read(r["html"])
+        self.assertIn("K-1", h)
+        self.assertIn("가온", h)
+        for w in ("내부 메모", "BK 30", "작업자A", "26_001", "★★★★", "M-1"):
+            self.assertNotIn(w, h)
+        st, lst = self.req("GET", "/api/bake")
+        self.assertEqual([f["name"] for f in lst["files"]], ["시편아카이브-고객용-선택.html"])
+        self.assertEqual(self.req("POST", "/api/bake", {"audience": "x"})[0], 400)
+
+    def test_download_only_baked_files(self):
+        self.req("POST", "/api/bake", {"pdf": False})
+        url = "/api/bake/file?name=" + urllib.parse.quote("시편아카이브-내부용.html")
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{url}") as resp:
+            self.assertIn("attachment", resp.headers["Content-Disposition"])
+            self.assertIn(b"<!doctype html>", resp.read()[:40])
+        self.assertEqual(self.req("GET", "/api/bake/file?name=" + urllib.parse.quote("../patterns/P-W01.json"))[0], 404)
+
+    def test_auto_bake_after_quiet_time_only_when_enabled(self):
+        self.assertEqual(server.bake_auto_tick(), [])                         # 꺼져 있으면 굽지 않음
+        st, r = self.req("POST", "/api/bake/auto", {"enabled": True, "pdf": False})
+        self.assertTrue(r["auto"]["enabled"])
+        now = time.time()
+        self.assertEqual(server.bake_auto_tick(now=now), [], "방금 고친 시편은 조용해질 때까지 기다린다")
+        self.assertEqual(server.bake_auto_tick(now=now + server.BAKE_QUIET + 1), ["internal"])
+        self.assertEqual(server.bake_auto_tick(now=now + server.BAKE_QUIET + 2), [], "바뀐 게 없으면 다시 굽지 않는다")

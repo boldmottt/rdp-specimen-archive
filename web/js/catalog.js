@@ -11,6 +11,7 @@ import { autoFacets } from "./facets.js";
 import { compareFromSelection } from "./compare-page.js";
 import { openWorklogPicker } from "./from-worklog.js";
 import { openCsvImport } from "./import-csv.js";
+import { openBakeDialog } from "./bake-dialog.js";
 import { bindRate, rateHTML } from "./rating.js";
 import { setView, viewSwitchHTML, bodyHTML, bindBody } from "./views.js";
 import { workOf } from "./work.js";
@@ -384,6 +385,7 @@ export function renderCatalog() {
               <button type="button" data-act="board">${App.project === "all" ? "컬러 보드 (프로젝트 선택)" : `${esc(App.project)} 컬러 보드`}</button>
               <button type="button" data-act="fromwl">작업일지에서 새 시편</button>
               <button type="button" data-act="tidy">정리 도구</button>
+              <button type="button" data-act="bake">보기 전용 파일 (맥 꺼져도 보기)</button>
               <button type="button" data-act="plates">동판 대장</button>
               <button type="button" data-act="compare">나란히 비교</button>
               <button type="button" data-act="help">검색 문법</button>
@@ -523,6 +525,7 @@ export function renderCatalog() {
       else if (act === "none") removeAll("#morebtn");
       else if (act === "help") toast(QUERY_HELP, 6500);
       else if (act === "tidy") location.hash = "#/tidy";
+      else if (act === "bake") openBakeDialog({ ids: list.map((p) => p.id), total: App.patterns.length });
       else if (act === "plates") location.hash = "#/plates";
       else if (act === "fromwl") openWorklogPicker();
       else if (act === "csvin") openCsvImport(renderCatalog);
