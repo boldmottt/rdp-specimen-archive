@@ -6,6 +6,7 @@ import { renderArchive, renderArchived, renderCart, renderProposal } from "./pro
 import { renderBoard } from "./board.js";
 import { renderPlates } from "./plates-page.js";
 import { renderCompare } from "./compare-page.js";
+import { renderTidy } from "./tidy-page.js";
 import { E, closeEditor, newDoc, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
@@ -26,6 +27,8 @@ export function rerender() {
     renderCart();
   } else if (h === "/compare") {
     renderCompare();
+  } else if (h === "/tidy") {
+    renderTidy();
   } else if (h === "/plates") {
     renderPlates();
   } else if (h.indexOf("/board/") === 0) {

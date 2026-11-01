@@ -1100,3 +1100,49 @@ a.prop-status.ok:hover{background:#fff}
 .kcard .kc-m{color:var(--ink-3);font-size:11px;margin:2px 0 4px}
 .dt-cols[hidden]{display:none}
 .segbtn.on:hover{background:var(--ink)}
+
+/* 정리 도구 */
+.tidy-page .pl-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:26px 0 10px}
+.tidy-page .pl-head h1{margin:0;font-size:24px}
+.tidy-page .pl-sub{color:var(--ink-3);font-size:12.5px}
+.td-top{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:16px;font-size:12.5px}
+.td-top select,.td-merge select{height:32px;border:1px solid var(--line-2);border-radius:8px;background:#fff;font:inherit;font-size:12.5px;padding:0 6px}
+.td-top .segbtn{border:0;background:none;font:inherit;font-size:12.5px}
+.td-top .segbtn.on{background:var(--ink);color:#fff}
+.td-status{color:var(--ink-3)}
+.td-desc{color:var(--ink-3);font-size:12px;margin:4px 0 8px}
+.td-err{color:#a1301e;font-size:12.5px}
+.td-checks{display:flex;flex-direction:column;gap:8px;padding-bottom:120px}
+.td-check{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.td-check summary{display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13.5px}
+.td-check summary .tool{margin-left:auto;padding:5px 10px}
+.td-check .td-n{font-size:12px;color:var(--ink-3)}
+.td-check.lv-fix:not(.ok) .td-n,.td-check.lv-warn:not(.ok) .td-n{color:#8a4b06;font-weight:650}
+.td-check.ok{opacity:.65}
+.td-check ul{margin:6px 0 2px;padding-left:18px;font-size:12.5px;columns:2;column-gap:28px}
+.td-check li{break-inside:avoid;margin:2px 0}
+.td-check li span{color:var(--ink-3)}
+.td-check li a{text-decoration:underline;text-underline-offset:2px}
+@media (max-width:720px){.td-check ul{columns:1}}
+.td-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px}
+.td-row > input,.td-bar input{flex:1;min-width:160px;max-width:320px;border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;background:#fff}
+.td-opts label,.chip-chk{display:inline-flex;gap:5px;align-items:center}
+.chip-chk{border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:#fff;font-size:12px;cursor:pointer}
+.chip-chk span{color:var(--ink-3);font-size:11px}
+.td-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0;font-size:12.5px}
+.td-bar .btn-dark{padding:8px 14px}
+.td-table td,.td-table th{text-align:left;vertical-align:middle}
+.td-table .before{color:var(--ink-3);text-decoration:line-through;text-decoration-color:#c9a}
+.td-table .after{font-weight:600}
+.td-table a{text-decoration:underline;text-underline-offset:2px}
+.td-merge h3{font-size:14px;margin:18px 0 8px}
+.td-merge h3 small{font-weight:400;color:var(--ink-3)}
+.td-cluster{display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:12.5px}
+.td-cluster label span{color:var(--ink-3);font-size:11px}
+.td-cluster .td-ownv{width:120px;border:1px solid var(--line-2);border-radius:6px;padding:3px 6px;font:inherit;font-size:12px}
+.td-cluster .tool{margin-left:auto}
+.td-vals{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:120px}
+.td-tags{padding-bottom:120px}
+.td-tags .tg-new{width:130px;border:1px solid var(--line-2);border-radius:6px;padding:4px 7px;font:inherit;font-size:12px}
+.tool.danger{color:#a1301e;border-color:#e3b8b0}
+.tool.danger:hover{background:#fbeae6}

@@ -89,7 +89,7 @@ export function patternHay(p) {
     .join(" ").toLowerCase();
 }
 
-/* has: 값 → 판정 (사진·배합·동판·메모·태그·작업일) */
+/* has: 값 → 판정 (사진·배합·동판·메모·태그·작업일·상태·고객) */
 const HAS = {
   사진: (p, v) => (v.images || []).length > 0, photo: (p, v) => (v.images || []).length > 0,
   배합: (p, v) => (v.mixes || []).length > 0, mix: (p, v) => (v.mixes || []).length > 0,
@@ -98,6 +98,8 @@ const HAS = {
   메모: (p, v) => !!String(v.note || "").trim(), note: (p, v) => !!String(v.note || "").trim(),
   태그: (p) => ((p.pattern || {}).tags || []).length > 0, tag: (p) => ((p.pattern || {}).tags || []).length > 0,
   작업일: (p, v) => !!String(v.date || "").trim(), date: (p, v) => !!String(v.date || "").trim(),
+  상태: (p, v) => !!String(v.status || "").trim(), status: (p, v) => !!String(v.status || "").trim(),
+  고객: (p) => !!String(p.client || "").trim(), client: (p) => !!String(p.client || "").trim(),
 };
 HAS.plate = HAS.동판;
 
@@ -209,7 +211,7 @@ export function hasToken(raw, token) {
 export const QUERY_HELP =
   "검색 문법 — #태그  @프로젝트  plate:26_015  color:E3940  status:가승인\n" +
   "고객사 client:현대자동차 · 계열 code:G · 작업장소 place:API · 도수 layers:2\n" +
-  "있음 has:사진/배합/동판/메모/태그 · 날짜 date:2026-10 / date:>2026-09-01 · 수정:7 (7일 이내)\n" +
+  "있음 has:사진/배합/동판/메모/태그/상태/고객 · 날짜 date:2026-10 / date:>2026-09-01 · 수정:7 (7일 이내)\n" +
   "별점 ★3 · ★3+ · rating:0(없음) · 깃발 flag:on/off\n" +
   "앞에 - 를 붙이면 제외 (예: #컬러세미나 -@MQ5) · 공백이 있는 태그는 #\"메탈 브라운\"";
 
