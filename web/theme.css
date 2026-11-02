@@ -464,3 +464,47 @@ table.mix tr:hover td{background:var(--surface-hover)}
 .kcard .kc-foot{margin-bottom:10px;margin-top:8px}
 .kc-st{height:28px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);font-size:12px}
 }
+
+/* ── v4.1: 거르기를 다시 왼쪽 사이드바로 (프로젝트 · 저장된 검색 · 태그) ── */
+@media screen{
+.cat{display:grid;grid-template-columns:240px minmax(0,1fr);gap:24px;align-items:start;margin-top:24px}
+.cat-main{min-width:0}
+.cat .fpanel{margin-top:0}
+.fp-top{border-bottom:0}
+.fp-res{border-top:1px solid var(--line)}
+.fp-res:not(:has(*)){display:none}
+.fp-top .res-n{margin-right:8px}
+.facets{position:sticky;top:72px;max-height:calc(100vh - 88px);overflow-y:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-xs);padding:16px 12px 20px;display:flex;flex-direction:column;gap:20px;scrollbar-width:thin}
+.facets .fc-sec,.facets .sfbar,.facets .tagbar{display:flex;flex-direction:column;align-items:stretch;gap:2px;margin:0;padding:0}
+.facets .fc-h,.facets .tb-lbl,.facets .auto-lbl{font-size:12px;font-weight:600;letter-spacing:0;color:var(--ink-3);margin:0 0 6px 8px}
+/* 프로젝트 · 저장된 검색 = 목록 행 */
+.facets .projrow{display:flex;flex-direction:column;gap:2px}
+.facets .projrow .chip,.facets .chip.sf{width:100%;justify-content:space-between;height:34px;border:0;border-radius:var(--r-md);background:transparent;padding:0 8px;font-size:14px;color:var(--ink-2)}
+.facets .projrow .chip:hover,.facets .chip.sf:hover{background:var(--surface-2);color:var(--ink)}
+.facets .projrow .chip.on,.facets .chip.sf.on{background:var(--accent-soft);color:var(--brand-900);font-weight:600;box-shadow:inset 2px 0 0 var(--brand-600)}
+.facets .projrow .chip.on .n{background:#fff;color:var(--brand-800)}
+.facets .chip.sf{padding:0 4px 0 8px}
+.facets .chip.sf .sf-name{font-weight:500}
+.facets #sf-save{align-self:flex-start;margin:4px 0 0 4px;border:0;background:transparent;box-shadow:none;color:var(--brand-700);padding:0 4px;height:28px;font-size:13px}
+.facets #sf-save:hover{color:var(--brand-800);background:transparent;text-decoration:underline}
+/* 태그 = 칩 묶음 */
+.facets .tagbar{position:relative;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center}
+.facets .tagbar > .tb-lbl{flex:1 1 100%;margin:12px 0 2px 8px}
+.facets .tb-mode{flex:1 1 100%;order:-1;border:0;padding:0 0 0 8px;margin:0 0 4px;gap:6px;display:flex;align-items:center}
+.facets .tb-mode .tb-lbl{margin:0 4px 0 0}
+.facets .tagbar .chip{height:28px;font-size:13px;padding:0 10px}
+.facets .tb-sep{flex:1 1 100%;height:1px;width:auto;background:var(--line);margin:12px 0 0}
+.facets .auto-group{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+.facets .auto-group .auto-lbl{flex:1 1 100%;margin-bottom:0}
+.facets .tb-help{position:absolute;right:4px;top:0}
+.filtertoggle{display:none}
+}
+@media screen and (max-width:1080px){
+  .cat{grid-template-columns:minmax(0,1fr);gap:12px}
+  .filtertoggle{display:inline-flex}
+  .facets{display:none;position:static;max-height:none}
+  .facets.open{display:flex}
+}
+@media screen and (max-width:760px){
+  .fp-top{flex-wrap:wrap}
+}

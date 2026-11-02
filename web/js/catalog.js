@@ -393,9 +393,15 @@ export function renderCatalog() {
       <div class="ph-stats">${statsHTML}</div>
     </div></section>
     <div class="wrap">
+      <div class="cat">
+      <aside class="filterbar facets${filtersOpen ? " open" : ""}" id="filterbar" aria-label="거르기">
+        <div class="fc-sec"><div class="fc-h">프로젝트</div><div class="projrow">${chips}</div></div>
+        ${sfbar}${tagbar}
+      </aside>
+      <div class="cat-main">
       <div class="fpanel">
         <div class="fp-top">
-          <div class="projrow">${chips}</div>
+          <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
           <span class="grow"></span>
           ${viewSwitchHTML()}
           <div class="seg" role="radiogroup" aria-label="정렬">
@@ -407,7 +413,7 @@ export function renderCatalog() {
             }).join("")}
           </div>
           <button class="tool" id="selall" title="지금 조건에 걸린 컬러만 제안서에 담기·빼기">${allIn ? `${hitCount}개 빼기` : `${hitCount}개 담기`}</button>
-          <button class="tool filtertoggle" id="filtertoggle" aria-controls="filterbar" aria-expanded="${filtersOpen ? "true" : "false"}" title="저장된 검색과 태그 펼치기">필터 ▾${filterCount ? ` ${filterCount}` : ""}</button>
+          <button class="tool filtertoggle" id="filtertoggle" aria-controls="filterbar" aria-expanded="${filtersOpen ? "true" : "false"}" title="프로젝트·저장된 검색·태그 펼치기">필터 ▾${filterCount ? ` ${filterCount}` : ""}</button>
           <div class="more">
             <button class="tool" id="morebtn" aria-haspopup="true" aria-expanded="false" aria-label="더보기">⋯</button>
             <div class="menu" id="moremenu" hidden>
@@ -425,9 +431,7 @@ export function renderCatalog() {
             </div>
           </div>
         </div>
-        <div class="filterbar fp-tags${filtersOpen ? " open" : ""}" id="filterbar" aria-label="거르기">${sfbar}${tagbar}</div>
         <div class="fp-res">
-          <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
           ${App.project !== "all" ? `<a class="tool board-link" id="boardbtn" href="#/board/${encodeURIComponent(App.project)}" title="지금 프로젝트의 컬러 보드">${esc(App.project)} 컬러 보드 →</a>` : ""}
           ${App.refColor ? (() => {
             const rp = byId(App.refColor.pid), rv = rp && varOf(rp, App.refColor.vid);
@@ -448,6 +452,8 @@ export function renderCatalog() {
           <div class="acts">${(App.q || "").trim() || App.project !== "all" ? `<button class="btn-line" type="button" id="empty-clear">조건 모두 지우기</button>` : ""}
           <button class="btn-dark" type="button" id="empty-new">새 시편</button></div>
         </div></div>`}
+      </div>
+      </div>
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
         <span class="foot-right">
           <a href="#" id="openfolder">데이터 폴더 열기</a>
