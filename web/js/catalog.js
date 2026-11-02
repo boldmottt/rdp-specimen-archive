@@ -362,35 +362,41 @@ export function renderCatalog() {
       `<button type="button" class="achip-clear" id="clearq">모두 지우기</button></div>`;
   })();
 
-  $("#view").innerHTML = `<div class="wrap">
-      <section class="hero">
-        <div>
-          <h1>시편 아카이브</h1>
-          <p>패턴 1개에 컬러 베리에이션 여러 개. 이미지·라벨·작업·배합을 한 곳에서 관리하고 바로 제안서로.</p>
-        </div>
-        <div class="stats">
-          <div class="stat"><b>${App.patterns.length}</b><span>패턴</span></div>
-          <div class="stat"><b>${totalVar}</b><span>베리에이션</span></div>
-          <div class="stat"><b>${totalMix}</b><span>배합</span></div>
-        </div>
-      </section>
-      <div class="cat">
-      <aside class="filterbar facets${filtersOpen ? " open" : ""}" id="filterbar" aria-label="거르기">
-        <div class="fc-sec"><div class="fc-h">프로젝트</div><div class="projrow">${chips}</div></div>
-        ${sfbar}${tagbar}
-      </aside>
-      <div class="cat-main">
-      <div class="toolbar">
-        <div class="resbar">
-          <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
-          ${App.project !== "all" ? `<a class="tool board-link" id="boardbtn" href="#/board/${encodeURIComponent(App.project)}" title="지금 프로젝트의 컬러 보드">${esc(App.project)} 컬러 보드 →</a>` : ""}
-          ${App.refColor ? (() => {
-            const rp = byId(App.refColor.pid), rv = rp && varOf(rp, App.refColor.vid);
-            const label = rp ? `${rp.pattern.code} ${rv ? vName(rv) : App.refColor.vid}` : App.refColor.vid;
-            return `<span class="refchip" title="색 가까운 순의 기준 — 사진에서 뽑은 대표색">
-              <i class="sw" style="background:${/^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
-              <b data-refgoto>${esc(label)}</b><button type="button" data-refclear aria-label="기준색 해제">×</button></span>`;
-          })() : ""}
+  // 페이지 머리 요약 카드 — 실제 데이터에서만 센다(가짜 추세 없음). 이번 달 = 오늘 기준 YYYY-MM
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const allVars = App.patterns.reduce((a, p) => a.concat(p.variations || []), []);
+  const newPat = App.patterns.filter((p) => String(p.createdAt || "").startsWith(ym)).length;
+  const newVar = allVars.filter((v) => String(v.date || "").startsWith(ym)).length;
+  const approved = allVars.filter((v) => v.status === "승인").length;
+  const prelim = allVars.filter((v) => v.status === "가승인").length;
+  const refMix = allVars.reduce((a, v) => a + (v.mixes || []).filter((m) => m.isReference).length, 0);
+  const statCard = (k, v, badge, trend, note) => `<div class="stat"><div class="stat-top"><span class="k">${k}</span>${badge ? `<span class="pill b-outline">${badge}</span>` : ""}</div>
+      <span class="v">${v}</span><span class="f">${trend}<span class="muted">${note}</span></span></div>`;
+  const upIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8M14 7h7v7"/></svg>';
+  const statsHTML = [
+    statCard("패턴", App.patterns.length, newPat ? `${upIcon}+${newPat}` : "", newPat ? `<span class="up">이번 달 ${newPat}개 추가</span>` : "", newPat ? "" : "이번 달 추가 없음"),
+    statCard("컬러 베리에이션", totalVar, newVar ? `${upIcon}+${newVar}` : "", newVar ? `<span class="up">이번 달 작업 ${newVar}색</span>` : "", newVar ? "" : "이번 달 작업 없음"),
+    statCard("승인된 컬러", approved, "", `<span>가승인 ${prelim}색</span>`, " 대기"),
+    statCard("배합", totalMix, "", `<span>기준 배합 ${refMix}개</span>`, ""),
+  ].join("");
+  const crumb = App.project === "all" ? "전체" : esc(App.project || "미지정");
+
+  $("#view").innerHTML = `<section class="pagehead"><div class="ph-in">
+      <nav class="crumbs" aria-label="경로"><a href="#" id="ph-home">시편 아카이브</a><span aria-hidden="true">/</span><span aria-current="page">${crumb}</span></nav>
+      <div class="ph-title">
+        <div class="ph-text"><h1>${App.project === "all" ? "전체 시편" : esc(App.project || "미지정") + " 시편"}</h1>
+          <p>패턴 하나에 컬러 여러 개. 컬러 칩을 눌러 제안서에 담아요.</p></div>
+        <button class="btn-line" type="button" id="ph-csv">CSV 내보내기</button>
+        <button class="btn-line" type="button" id="ph-tidy">정리 도구</button>
+      </div>
+      <div class="ph-stats">${statsHTML}</div>
+    </div></section>
+    <div class="wrap">
+      <div class="fpanel">
+        <div class="fp-top">
+          <div class="projrow">${chips}</div>
+          <span class="grow"></span>
           ${viewSwitchHTML()}
           <div class="seg" role="radiogroup" aria-label="정렬">
             ${[["recent", "최근"], ["code", "코드"], ["color", "색"]].map(([v, label]) => {
@@ -419,11 +425,29 @@ export function renderCatalog() {
             </div>
           </div>
         </div>
+        <div class="filterbar fp-tags${filtersOpen ? " open" : ""}" id="filterbar" aria-label="거르기">${sfbar}${tagbar}</div>
+        <div class="fp-res">
+          <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
+          ${App.project !== "all" ? `<a class="tool board-link" id="boardbtn" href="#/board/${encodeURIComponent(App.project)}" title="지금 프로젝트의 컬러 보드">${esc(App.project)} 컬러 보드 →</a>` : ""}
+          ${App.refColor ? (() => {
+            const rp = byId(App.refColor.pid), rv = rp && varOf(rp, App.refColor.vid);
+            const label = rp ? `${rp.pattern.code} ${rv ? vName(rv) : App.refColor.vid}` : App.refColor.vid;
+            return `<span class="refchip" title="색 가까운 순의 기준 — 사진에서 뽑은 대표색">
+              <i class="sw" style="background:${/^#[0-9a-f]{6}$/i.test(App.refColor.hex || "") ? App.refColor.hex : "transparent"}"></i>
+              <b data-refgoto>${esc(label)}</b><button type="button" data-refclear aria-label="기준색 해제">×</button></span>`;
+          })() : ""}
+          ${activeHTML}
+        </div>
       </div>
-      ${activeHTML}
       ${selectionBarHTML()}
       ${list.length ? `<div id="vbody">${bodyHTML(list, (pid) => HITS.get(pid), cardHTML)}</div>`
-      : `<div class="empty-state"><h2>조건에 맞는 시편이 없습니다</h2><p>다른 프로젝트를 선택하거나 검색어를 지워보세요.</p></div>`}
+      : `<div class="panel empty-wrap"><div class="empty">
+          <span class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+          <div><h3>조건에 맞는 시편이 없어요</h3>
+          <p>${(App.q || "").trim() || App.project !== "all" ? `걸린 조건을 하나씩 빼 보거나 모두 지워 보세요.` : "아직 등록한 시편이 없어요. 새 시편을 등록해 보세요."}</p></div>
+          <div class="acts">${(App.q || "").trim() || App.project !== "all" ? `<button class="btn-line" type="button" id="empty-clear">조건 모두 지우기</button>` : ""}
+          <button class="btn-dark" type="button" id="empty-new">새 시편</button></div>
+        </div></div>`}
       <div class="foot"><span>${esc(App.config.company || "")} · RDP</span>
         <span class="foot-right">
           <a href="#" id="openfolder">데이터 폴더 열기</a>
@@ -432,8 +456,6 @@ export function renderCatalog() {
             <span class="path-tail">…/${esc((App.config.dataRoot || "").split("/").slice(-2).join("/"))}</span>
           </span>
         </span></div>
-      </div>
-      </div>
     </div>`;
 
   const of = $("#openfolder");
@@ -441,6 +463,16 @@ export function renderCatalog() {
   paintDots();
   $$("[data-proj]").forEach((el) => (el.onclick = () => { App.project = el.dataset.proj; renderCatalog(); }));
   $$("[data-rmtok]").forEach((el) => (el.onclick = () => { const r = el.dataset.rmtok; App.q = withoutToken(App.q, (t) => t.raw === r); syncSearch(); }));
+  const phHome = $("#ph-home");
+  if (phHome) phHome.onclick = (e) => { e.preventDefault(); App.project = "all"; App.q = ""; syncSearch(); };
+  const phCsv = $("#ph-csv");
+  if (phCsv) phCsv.onclick = () => downloadCsv(list, (pid) => HITS.get(pid));
+  const phTidy = $("#ph-tidy");
+  if (phTidy) phTidy.onclick = () => (location.hash = "#/tidy");
+  const emClear = $("#empty-clear");
+  if (emClear) emClear.onclick = () => { App.q = ""; App.project = "all"; syncSearch(); };
+  const emNew = $("#empty-new");
+  if (emNew) emNew.onclick = () => { const nb = $("#newbtn"); if (nb) nb.click(); };
   const rmp = document.querySelector("[data-rmproj]");
   if (rmp) rmp.onclick = () => { App.project = "all"; renderCatalog(); };
   const clq = $("#clearq");

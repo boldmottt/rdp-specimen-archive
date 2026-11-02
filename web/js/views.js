@@ -31,7 +31,26 @@ export const VIEW = {
   dens: load(LS.dens, "m"),                     // "s" | "m" | "l" (카드 크기)
   group: load(LS.group, ""),                    // GROUPS 의 key | ""
   kcols: load(LS.kcols, []),                    // 칸반에 직접 추가한 칸
+  page: 0,                                      // 표 페이지(0부터) — 저장하지 않는다
 };
+const PAGE_SIZE = 50;                           // 표 한 쪽 줄 수 (Untitled UI 표 카드 + 페이지 넘김)
+
+/** 표 아래 페이지 넘김 — 이전 | 1 2 3 … 10 | 다음 (쪽이 하나면 줄 수만) */
+function pagerHTML(pages, total, page) {
+  const from = total ? page * PAGE_SIZE + 1 : 0, to = Math.min(total, (page + 1) * PAGE_SIZE);
+  const count = `<span class="pg-n"><b>${from}–${to}</b> / ${total}줄</span>`;
+  if (pages <= 1) return `<nav class="pager" aria-label="페이지">${count}</nav>`;
+  const want = new Set([0, pages - 1, page - 1, page, page + 1].filter((i) => i >= 0 && i < pages));
+  const nums = [];
+  [...want].sort((a, b) => a - b).forEach((i, k, arr) => {
+    if (k && i - arr[k - 1] > 1) nums.push(`<span class="pg-gap" aria-hidden="true">…</span>`);
+    nums.push(`<button type="button" data-pg="${i}"${i === page ? ' aria-current="page"' : ""}>${i + 1}</button>`);
+  });
+  return `<nav class="pager" aria-label="페이지">
+    <button type="button" class="tool mini" data-pg="${page - 1}"${page ? "" : " disabled"}>← 이전</button>
+    <div class="pages">${nums.join("")}</div>${count}
+    <button type="button" class="tool mini" data-pg="${page + 1}"${page < pages - 1 ? "" : " disabled"}>다음 →</button></nav>`;
+}
 export function setView(mode) { VIEW.mode = mode; keep(LS.view, mode); }
 
 /** 결과 줄의 보기 전환 버튼 */
@@ -89,14 +108,19 @@ export function tableHTML(list, hitsOf) {
   if (VIEW.sort && COL[VIEW.sort.key]) rows = sortRows(rows, VIEW.sort.key, VIEW.sort.dir);
   const cols = visibleCols();
   const arrow = (k) => (VIEW.sort && VIEW.sort.key === k ? (VIEW.sort.dir === "desc" ? " ↓" : " ↑") : "");
-  const groups = VIEW.group && GROUP[VIEW.group] ? groupRows(rows, VIEW.group) : [{ label: "", rows }];
+  const total = rows.length, pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (VIEW.page >= pages || VIEW.page < 0) VIEW.page = 0;
+  const shown = rows.slice(VIEW.page * PAGE_SIZE, (VIEW.page + 1) * PAGE_SIZE);
+  const groups = VIEW.group && GROUP[VIEW.group] ? groupRows(shown, VIEW.group) : [{ label: "", rows: shown }];
   const body = groups.map((g) => (g.label ? `<tr class="grp-row"><th colspan="${cols.length + 2}">${esc(g.label)} <span>${g.rows.length}</span></th></tr>` : "")
     + g.rows.map((r) => rowHTML(r.p, r.v)).join("")).join("");
   return `${toolsHTML(rows.length, "줄")}
+    <div class="tcard"><div class="tcard-head"><div class="tch-t"><h2>컬러 목록 <span class="pill b-outline">${total}줄</span></h2>
+      <p>컬러 1개 = 1줄. 칸을 눌러 바로 고치고, 흐린 칸은 패턴 공통값이에요.</p></div></div>
     <div class="tbl-wrap dt-wrap"><table class="dtable">
       <thead><tr><th class="c-cart" title="제안서에 담기">담기</th><th class="c-th"></th>${cols.map((c) => `<th data-sortkey="${c.key}" title="눌러서 정렬">${esc(c.label)}${arrow(c.key)}</th>`).join("")}</tr></thead>
       <tbody>${body}</tbody>
-    </table></div>`;
+    </table></div>${pagerHTML(pages, total, VIEW.page)}</div>`;
 }
 
 /* ---------- 카드 (크기 · 묶기) ---------- */
@@ -356,6 +380,10 @@ export function bindBody(root, rerender) {
   const g = $("#vt-group", root);
   if (g) g.onchange = () => { VIEW.group = g.value; keep(LS.group, VIEW.group); rerender(); };
   $$('input[name="vtdens"]', root).forEach((r) => (r.onchange = () => { VIEW.dens = r.value; keep(LS.dens, VIEW.dens); rerender(); }));
+  $$("[data-pg]", root).forEach((b) => (b.onclick = () => {
+    VIEW.page = Number(b.dataset.pg) || 0; rerender();
+    const t = root.querySelector(".tcard"); if (t) t.scrollIntoView({ block: "start", behavior: "instant" });
+  }));
   if (VIEW.mode === "table") bindTable(root, rerender);
   if (VIEW.mode === "kanban") bindKanban(root, rerender);
 }
