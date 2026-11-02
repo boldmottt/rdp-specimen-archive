@@ -1083,7 +1083,6 @@ a.prop-status.ok:hover{background:#fff}
 .grid.dens-s .vchips,.grid.dens-s .card-meta .layer-pill{display:none}
 .grid.dens-s .card-rate{margin-top:5px}
 .grid.dens-l{grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:32px 28px}
-.grid.dens-l .media{aspect-ratio:170/85}
 @media (max-width:720px){.grid.dens-s{grid-template-columns:repeat(2,1fr)}}
 
 /* 묶어 보기 */
