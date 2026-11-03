@@ -326,7 +326,7 @@ export function renderDetail(pid, vid, override) {
           </div>
           <div class="d-actions">
             ${isNew
-            ? `<button class="btn-dark" id="newsave">저장</button><button class="btn-line" id="newfromwl" title="작업일지의 작업 하나로 칸을 채웁니다">작업일지에서 불러오기</button><button class="btn-line" id="newcancel">취소</button>`
+            ? `<button class="btn-dark" id="newsave">저장</button><button class="btn-line" id="newedit" title="사진·배합·라벨을 여기서 미리 채웁니다 (저장은 한 번)">편집</button><button class="btn-line" id="newfromwl" title="작업일지의 작업 하나로 칸을 채웁니다">작업일지에서 불러오기</button><button class="btn-line" id="newcancel">취소</button>`
             : `<button class="btn-dark${inCart(p.id, v.id) ? " on" : ""}" id="addbtn">${inCart(p.id, v.id) ? "✓ 담김" : "제안서에 담기"}</button>
                  <button class="btn-line${App.meeting ? " on" : ""}" id="meetingbtn" title="고객 미팅용: 메모·배합·작업일지·동판 숨김">${App.meeting ? "미팅 모드 ON" : "미팅 모드"}</button>
                  <button class="btn-line${inCompare(p.id, v.id) ? " on" : ""}" id="cmpbtn" title="이 컬러를 나란히 비교에 담기/빼기 (최대 4개)">${inCompare(p.id, v.id) ? "✓ 비교" : "비교 +"}</button>
@@ -337,7 +337,7 @@ export function renderDetail(pid, vid, override) {
         </div>
 
         <div class="gallery">
-          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(p.id, images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : (isNew ? '<div class="empty-new"><span>이미지는 저장 후 <b>편집</b>에서 추가합니다</span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
+          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(p.id, images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : (isNew ? '<div class="empty-new"><span><b>편집</b>에서 사진을 바로 넣을 수 있습니다</span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
           ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(p.id, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(imgUrl(p.id, im))}" alt="${esc(p.pattern.code + " " + vName(v))} 이미지 ${i + 1}">`).join("")}</div>` : ""}
           ${chips ? `<div class="vchips" style="margin-top:14px">${chips}</div>` : ""}
         </div>
@@ -436,6 +436,7 @@ export function renderDetail(pid, vid, override) {
   if (isNew) {
     $("#newsave").onclick = () => saveNewPattern();
     $("#newfromwl").onclick = () => openWorklogPicker();
+    $("#newedit").onclick = () => window.dispatchEvent(new CustomEvent("rdp:edit-new"));
     $("#newcancel").onclick = async () => {
       if (await confirmDialog({ title: "작성을 취소할까요?", body: "지금 채운 내용은 저장되지 않습니다.", ok: "취소하기", danger: true })) { App.newDraft = null; location.hash = ""; }
     };

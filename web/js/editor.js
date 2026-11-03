@@ -13,11 +13,15 @@ import { rerender } from "./main.js";
 /* ---------------- editor drawer ---------------- */
 export const E = { draft: null, vIdx: 0, tab: "base", pid: null, isNew: false, msg: "", workMode: "all" };
 
-export function openEditor(pid, vid) {
+/**
+ * @param draft 새 시편 초안(App.newDraft)을 넘기면 그 객체를 그대로 편집한다 —
+ *   '새 시편' 화면에서 사진·배합을 미리 넣고 저장 한 번으로 끝내기 위한 통로.
+ */
+export function openEditor(pid, vid, draft) {
   E.isNew = !pid;
   E.pid = pid;
   E.baseRev = pid ? revOf(byId(pid)) : "";
-  E.draft = pid ? clone(byId(pid)) : newDoc();
+  E.draft = pid ? clone(byId(pid)) : (draft || newDoc());
   if (pid) { delete E.draft._file; delete E.draft._mtime; }
   E.vIdx = Math.max(0, E.draft.variations.findIndex((v) => v.id === vid));
   if (E.vIdx < 0) E.vIdx = 0;
@@ -1082,6 +1086,11 @@ export async function saveDraft() {
     }
     saveLS();
     E.msg = "저장됨 " + (r.savedAt || "");
+    if (E.isNew) {                       // 새 시편이 만들어졌다 → 초안을 비우고 그 시편으로 이동
+      App.newDraft = null;
+      const firstVid = (d.variations && d.variations[0] && d.variations[0].id) || "v01";
+      setTimeout(() => { location.hash = `#/p/${encodeURIComponent(d.id)}/${encodeURIComponent(firstVid)}`; }, 0);
+    }
     E.isNew = false;
     E.origJson = JSON.stringify(saved);
     toast("저장됨");

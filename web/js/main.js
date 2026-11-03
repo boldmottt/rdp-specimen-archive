@@ -7,7 +7,7 @@ import { renderBoard } from "./board.js";
 import { renderPlates } from "./plates-page.js";
 import { renderCompare } from "./compare-page.js";
 import { renderTidy } from "./tidy-page.js";
-import { E, closeEditor, newDoc, renderDrawer, saveDraft, syncTabs } from "./editor.js";
+import { E, closeEditor, newDoc, openEditor, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
 /* ---------------- router ---------------- */
@@ -54,9 +54,19 @@ async function boot() {
   $("#navhome").onclick = () => (location.hash = "");
   $("#cartbtn").onclick = () => (location.hash = "#/proposal");
   $("#newbtn").onclick = () => { App.newDraft = newDoc(); location.hash = "#/new"; };
-  $("#drawer-close").onclick = () => closeEditor();
-  $("#drawer-cancel").onclick = () => closeEditor();
-  $("#drawer-scrim").onclick = () => closeEditor();
+  // 서랍을 닫으면 '새 시편' 화면은 초안(App.newDraft)으로 다시 그린다 — 방금 채운 사진·배합이 보이게
+  const closeAndRefresh = async () => {
+    await closeEditor();
+    if (location.hash === "#/new" && App.newDraft) renderDetail("__new__", null, App.newDraft);
+  };
+  $("#drawer-close").onclick = () => closeAndRefresh();
+  $("#drawer-cancel").onclick = () => closeAndRefresh();
+  $("#drawer-scrim").onclick = () => closeAndRefresh();
+  // '새 시편' 화면의 [편집] — 초안을 그대로 서랍에서 편집한다(사진·배합 미리 입력)
+  window.addEventListener("rdp:edit-new", () => {
+    if (!App.newDraft) App.newDraft = newDoc();
+    openEditor(null, null, App.newDraft);
+  });
   $("#drawer-save").onclick = saveDraft;
   $$("#drawer-tabs button").forEach((b) => (b.onclick = () => {
     if (E.tab === "json" && E.jsonErr) { E.msg = "JSON 오류를 먼저 고치세요 — " + E.jsonErr; renderDrawer(); return; }
