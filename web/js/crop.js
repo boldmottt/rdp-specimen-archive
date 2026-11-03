@@ -102,7 +102,9 @@ export function startCropForDraft(draft, vidx, file, opt, onDone) {
   if (!draft) return;
   E.draft = draft;
   E.vIdx = Math.max(0, vidx || 0);
-  C.onDone = onDone || null;
+  C.onDone = onDone || (opt && opt.onDone) || null;   // 5번째 인자든 opt.onDone 이든 받는다
+  C.stage = !!(opt && opt.stage);
+  C.onCropped = (opt && opt.onCropped) || null;
   startCrop(file, opt);
 }
 
@@ -148,6 +150,13 @@ export function bindCrop() {
     const rect = cropRect();
     $("#crop-ok").disabled = true; $("#crop-ok").textContent = "업로드 중…";
     try {
+      if (C.stage) {                       // 새 시편: 지금은 담아 두고 저장할 때 올린다
+        const file = C.file;
+        $("#crop-modal").classList.remove("on");
+        const cb = C.onCropped; C.onCropped = null; C.stage = false;
+        if (cb) cb(file, rect);
+        return;
+      }
       const pid = uploadId();
       const vid = E.draft.variations[E.vIdx].id;
       const res = await apiUpload(pid, vid, C.slot, C.file, rect);

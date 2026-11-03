@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 목차(카드 그리드) · 검색 · 선택 */
-import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, confirmDialog, deriveId, esc, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, promptDialog, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, apiGet, apiPost, apiPut, byId, confirmDialog, deriveId, esc, flushNewPhotos, fmtDate, imgUrl, inCart, layers, markSaved, normalizeDoc, paintDots, promptDialog, revOf, saveLS, saveSmart, thumbUrl, toast, toggleCart, vName, varOf } from "./core.js";
 import { renderCart } from "./proposal.js";
 // 검색 문법은 search.js 한 곳에서만 해석한다 (tests/search.test.mjs 가 이 규칙을 검사한다)
 import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fieldToken, hasToken, splitTagGroups, QUERY_HELP } from "./search.js";
@@ -721,8 +721,21 @@ export async function saveNewPattern() {
   }
   const payload = { ...JSON.parse(JSON.stringify(d)), id };
   try {
-    const r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, exists ? revOf(exists) : "", !exists);
-    const saved = markSaved(JSON.parse(JSON.stringify(payload)), r);
+    let r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, payload, exists ? revOf(exists) : "", !exists);
+    let saved = markSaved(JSON.parse(JSON.stringify(payload)), r);
+    // 저장 전에 고른 사진이 있으면 지금 올린다(사진 먼저 등록). 올린 뒤 이미지 목록만 다시 저장.
+    if ((App.newPhotos || []).length) {
+      try {
+        const n = await flushNewPhotos(saved);
+        if (n) {
+          const doc2 = JSON.parse(JSON.stringify(saved));
+          delete doc2._file; delete doc2._mtime;
+          r = await apiPut(`/api/patterns/${encodeURIComponent(id)}`, doc2, revOf(saved));
+          saved = markSaved(JSON.parse(JSON.stringify(doc2)), r);
+          toast(`사진 ${n}장 함께 저장`);
+        }
+      } catch (e) { toast("사진 업로드 실패: " + e.message + " — 시편은 저장됐습니다"); }
+    }
     saved._mtime = Date.now();
     const i = App.patterns.findIndex((x) => x.id === id);
     if (i >= 0) App.patterns[i] = saved; else App.patterns.push(saved);

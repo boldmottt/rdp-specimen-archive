@@ -39,6 +39,9 @@ export const App = {
   edit: null,
   meeting: false,
   view: "catalog",
+  // 새 시편 등록 전에 고른 사진 — 아직 ID 가 없어도 담아 두고, 저장할 때 올린다
+  //   [{file, rect, url}]  rect 는 자르기 결과(없으면 가운데 자동)
+  newPhotos: [],
 };
 
 const LS_CART = "rdp2-cart";
@@ -285,6 +288,28 @@ export async function apiUpload(pid, vid, slot, blob, crop) {
   if (!r.ok || j.ok === false) throw new Error(j.error || "업로드 실패");
   invalidateColors(pid, vid);        // 성공한 뒤에 버린다 — 업로드 중에 받은 색을 다시 캐시하지 않게
   return j;
+}
+
+/** 새 시편 대기 사진을 실제로 올리고 문서의 첫 컬러 images 에 붙인다 (저장 성공 뒤에 부른다) */
+export async function flushNewPhotos(doc) {
+  const list = App.newPhotos || [];
+  const v = (doc && doc.variations || [])[0];
+  if (!list.length || !v || !doc.id) return 0;
+  v.images = v.images || [];
+  let slot = v.images.length;
+  for (const ph of list) {
+    const res = await apiUpload(doc.id, v.id, ++slot, ph.file, ph.rect || null);
+    v.images.push(res.file);
+  }
+  list.forEach((ph) => { try { URL.revokeObjectURL(ph.url); } catch (e) {} });
+  App.newPhotos = [];
+  return list.length;
+}
+
+/** 대기 사진 비우기(취소·복제 등) */
+export function clearNewPhotos() {
+  (App.newPhotos || []).forEach((ph) => { try { URL.revokeObjectURL(ph.url); } catch (e) {} });
+  App.newPhotos = [];
 }
 
 /* ---------------- helpers ---------------- */

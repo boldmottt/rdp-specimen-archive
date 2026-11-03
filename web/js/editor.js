@@ -1,5 +1,5 @@
 /* RDP 시편 아카이브 — 편집 서랍 (기본 · 컬러 · 배합 · 이미지 · JSON) */
-import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, confirmDialog, deriveId, esc, imgUrl, markSaved, normalizeDoc, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
+import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, confirmDialog, deriveId, esc, flushNewPhotos, imgUrl, markSaved, normalizeDoc, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { addInkTag, bindRecipePreviews, inkInfo, inkLabel, inkOrder, inkPool, labOf, labText, labToCss, layerCodeOf, layerPlate, loadInkCatalog, mixTable, platePatterns, setLayerPlate, syncLayerPlates } from "./detail.js";
 import { renderCart } from "./proposal.js";
@@ -1087,6 +1087,21 @@ export async function saveDraft() {
     saveLS();
     E.msg = "저장됨 " + (r.savedAt || "");
     if (E.isNew) {                       // 새 시편이 만들어졌다 → 초안을 비우고 그 시편으로 이동
+      // 저장 전에 고른 사진이 있으면 지금 올린다(사진 먼저 등록)
+      if ((App.newPhotos || []).length) {
+        try {
+          const n = await flushNewPhotos(saved);
+          if (n) {
+            const doc2 = clone(saved);
+            delete doc2._file; delete doc2._mtime;
+            const r2 = await apiPut(`/api/patterns/${encodeURIComponent(saved.id)}`, doc2, revOf(saved));
+            Object.assign(saved, markSaved(doc2, r2));
+            const i2 = App.patterns.findIndex((x) => x.id === saved.id);
+            if (i2 >= 0) App.patterns[i2] = saved;
+            toast(`사진 ${n}장 함께 저장`);
+          }
+        } catch (e) { toast("사진 업로드 실패: " + e.message + " — 시편은 저장됐습니다"); }
+      }
       App.newDraft = null;
       const firstVid = (d.variations && d.variations[0] && d.variations[0].id) || "v01";
       setTimeout(() => { location.hash = `#/p/${encodeURIComponent(d.id)}/${encodeURIComponent(firstVid)}`; }, 0);

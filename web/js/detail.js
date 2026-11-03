@@ -1,12 +1,13 @@
 /* RDP 시편 아카이브 — 시편 상세 · 배합표 · 예상색 */
-import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, confirmDialog, dash, deriveId, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
+import { $, $$, App, apiGet, apiPost, apiPut, byId, clearNewPhotos, clone, confirmDialog, dash, deriveId, esc, flushNewPhotos, fmtDate, html, imgUrl, inCart, layers, paintDots, raw, RESULT_LABEL, revOf, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
 import { inlineSave, inlineSettled, startInline } from "./inline.js";
 import { saveNewPattern } from "./catalog.js";
 import { showPlate } from "./plates.js";
 import { renderCart } from "./proposal.js";
 import { workOf, workSource } from "./work.js";
-import { openEditor } from "./editor.js";
+import { newDoc, openEditor } from "./editor.js";
 import { startCropForDraft } from "./crop.js";
+import { parsePhotoName, describeParse } from "./photo-intake.js";
 import { openHistory } from "./history.js";
 import { batchCompare, deltaText } from "./mix-compare.js";
 import { loadMixCheck, loadWorklogs } from "./worklog-link.js";
@@ -300,6 +301,7 @@ export function renderDetail(pid, vid, override) {
         <span class="nm">${esc(vName(x))}</span>
       </button>`).join("") : "";
   const images = v.images || [];
+  const pendingPhotos = isNew ? (App.newPhotos || []) : [];   // 저장 전에 고른 사진(아직 업로드 안 됨)
   // 새 시편은 아직 저장 전이라 ID 가 없다 — 저장 때 쓸 ID(deriveId)로 사진을 올리고 읽는다
   const imgPid = isNew ? deriveId(p.project, p.pattern.code) : p.id;
   const mixes = v.mixes || [];
@@ -341,10 +343,15 @@ export function renderDetail(pid, vid, override) {
         </div>
 
         <div class="gallery">
-          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(imgPid, images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : (isNew ? '<div class="empty-new" id="newimgadd" role="button" tabindex="0"><span><b>사진 추가</b> — 클릭해서 고르거나 끌어다 놓으세요<br><small>170:70 으로 잘라 저장합니다</small></span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
+          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(imgPid, images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">`
+            : pendingPhotos.length ? `<img src="${esc(pendingPhotos[0].url)}" alt="저장 전 사진">`
+            : (isNew ? '<div class="empty-new" id="newimgadd" role="button" tabindex="0"><span><b>사진을 먼저 넣어도 됩니다</b> — 클릭하거나 끌어다 놓으세요<br><small>파일명에서 시편 코드·컬러를 읽어 채웁니다 · 170:70 으로 저장</small></span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
           ${isNew ? `<input type="file" id="newimgfile" accept="image/*" hidden>
             <div class="new-imgrow"><button type="button" class="mini-btn" id="newimgbtn">+ 사진 추가</button>
-            ${images.length ? `<span class="muted">${images.length}장 · 첫 장이 대표</span>` : `<span class="muted">저장 전에도 넣을 수 있습니다</span>`}</div>` : ""}
+            ${pendingPhotos.length ? `<span class="muted">${pendingPhotos.length}장 — 저장하면 함께 올라갑니다</span>` : `<span class="muted">저장 전에도 넣을 수 있습니다</span>`}
+            <button type="button" class="mini-btn" id="newimgclear" ${pendingPhotos.length ? "" : "hidden"}>비우기</button></div>
+            ${pendingPhotos.length ? `<div class="pending-photos">${pendingPhotos.map((ph, i) => `<img src="${esc(ph.url)}" alt="대기 사진 ${i + 1}">`).join("")}</div>` : ""}`
+            : ""}
           ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(imgPid, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(imgUrl(imgPid, im))}" alt="${esc(p.pattern.code + " " + vName(v))} 이미지 ${i + 1}">`).join("")}</div>` : ""}
           ${chips ? `<div class="vchips" style="margin-top:14px">${chips}</div>` : ""}
         </div>
@@ -444,28 +451,91 @@ export function renderDetail(pid, vid, override) {
     $("#newsave").onclick = () => saveNewPattern();
     $("#newfromwl").onclick = () => openWorklogPicker();
     $("#newedit").onclick = () => window.dispatchEvent(new CustomEvent("rdp:edit-new"));
-    // 사진 바로 추가 — 서랍을 거치지 않고 이 화면에서 고르고 자른다(저장은 한 번)
-    const pickImg = () => {
-      const d0 = App.newDraft || {};
-      if (!String(((d0.pattern || {}).code) || "").trim()) {
-        toast("패턴 코드를 먼저 입력하세요 — 사진은 코드가 정해진 폴더로 들어갑니다");
-        const codeEl = document.querySelector('[data-f="pattern.code"]');
-        if (codeEl) codeEl.click();   // 코드 칸을 바로 열어 준다
-        return;
+    // 사진 먼저 — 고르면 파일명에서 정보를 읽어 칸을 채우고, 이미 있는 시편이면 그 시편으로 연결한다.
+    //   아직 ID 가 없어도 담아 두고(App.newPhotos) 저장할 때 올린다.
+    const applyParsed = (parsed) => {
+      const d0 = App.newDraft;
+      if (!d0) return;
+      d0.pattern = d0.pattern || {};
+      const v0 = (d0.variations || [])[0] || {};
+      let filled = false;
+      if (parsed.code && !String(d0.pattern.code || "").trim()) { d0.pattern.code = parsed.code; filled = true; }
+      if (parsed.colorCode && !String(v0.colorCode || "").trim()) { v0.colorCode = parsed.colorCode; filled = true; }
+      if (parsed.colorName && !String(v0.colorName || "").trim()) { v0.colorName = parsed.colorName; filled = true; }
+      if (parsed.plate) {
+        d0.work = d0.work || {};
+        const plates = Array.isArray(d0.work.plate) ? d0.work.plate.slice() : [];
+        if (!plates.includes(parsed.plate)) { plates.push(parsed.plate); d0.work.plate = plates; filled = true; }
       }
-      $("#newimgfile")?.click();
+      if (filled) saveLS();
+      return filled;
     };
+
+    const stagePhoto = (file, parsed) => {
+      const d0 = App.newDraft || (App.newDraft = newDoc());
+      const vi = Math.max(0, (d0.variations || []).findIndex((x) => x.id === v.id));
+      startCropForDraft(d0, vi, file, {
+        stage: true,
+        onCropped: (f, rect) => {
+          App.newPhotos = App.newPhotos || [];
+          App.newPhotos.push({ file: f, rect, url: URL.createObjectURL(f) });
+          applyParsed(parsed);
+          renderDetail("__new__", null, App.newDraft);
+          const what = describeParse(parsed);
+          toast(what ? `사진 담김 · 파일명에서 ${what}` : "사진 담김 — 저장하면 함께 올라갑니다");
+        },
+      });
+    };
+
+    // 이미 있는 시편이면 그 시편에 사진만 붙인다 (새 시편을 또 만들지 않는다)
+    const attachToExisting = async (pidTarget, file) => {
+      const target = byId(pidTarget);
+      if (!target) return false;
+      const tv = (target.variations || [])[0];
+      if (!tv) return false;
+      const ok = await confirmDialog({
+        title: "이미 있는 시편입니다",
+        body: `${target.pattern.code} — 이 시편에 사진을 추가할까요?\n(취소하면 새 시편으로 등록합니다)`,
+        ok: "이 시편에 추가",
+      });
+      if (!ok) return false;
+      const nextSlot = ((tv.images || []).length) + 1;   // 기존 사진은 그대로 두고 뒤에 붙인다
+      startCropForDraft(target, 0, file, { slot: nextSlot }, async () => {
+          savelsSafe();
+          try {
+            await apiPut(`/api/patterns/${encodeURIComponent(target.id)}`, target, revOf(target));
+          } catch (e) { toast("저장 실패: " + e.message); return; }
+          toast("사진을 추가했습니다");
+          location.hash = `#/p/${encodeURIComponent(target.id)}/${encodeURIComponent(tv.id)}`;
+      });
+      return true;
+    };
+    const savelsSafe = () => { try { saveLS(); } catch (e) {} };
+
+    const intake = async (files) => {
+      const list = Array.from(files || []);
+      if (!list.length) return;
+      for (const f of list) {
+        const parsed = parsePhotoName(f.name, App.patterns);
+        if (parsed.matchId) {
+          const went = await attachToExisting(parsed.matchId, f);
+          if (went) continue;             // 기존 시편에 붙였으면 다음 파일로
+        }
+        stagePhoto(f, parsed);
+      }
+    };
+
+    const pickImg = () => $("#newimgfile")?.click();
     const fileEl = $("#newimgfile");
     if (fileEl) fileEl.onchange = () => {
-      const f = fileEl.files && fileEl.files[0];
+      const files = Array.from(fileEl.files || []);   // value 비우기 전에 복사 — FileList 는 살아 있는 목록이다
       fileEl.value = "";
-      if (!f) return;
-      const vi = Math.max(0, (App.newDraft.variations || []).findIndex((x) => x.id === v.id));
-      startCropForDraft(App.newDraft, vi, f, { slot: ((App.newDraft.variations[vi] || {}).images || []).length + 1 },
-        () => renderDetail("__new__", null, App.newDraft));
+      intake(files);
     };
     const addBtnEl = $("#newimgbtn");
     if (addBtnEl) addBtnEl.onclick = pickImg;
+    const clearBtn = $("#newimgclear");
+    if (clearBtn) clearBtn.onclick = () => { clearNewPhotos(); renderDetail("__new__", null, App.newDraft); };
     const dz = $("#newimgadd");
     if (dz) {
       dz.onclick = pickImg;
@@ -474,15 +544,18 @@ export function renderDetail(pid, vid, override) {
       dz.ondragleave = () => dz.classList.remove("is-over");
       dz.ondrop = (e) => {
         e.preventDefault(); dz.classList.remove("is-over");
-        const f = e.dataTransfer?.files && e.dataTransfer.files[0];
-        if (!f) return;
-        const vi = Math.max(0, (App.newDraft.variations || []).findIndex((x) => x.id === v.id));
-        startCropForDraft(App.newDraft, vi, f, { slot: ((App.newDraft.variations[vi] || {}).images || []).length + 1 },
-          () => renderDetail("__new__", null, App.newDraft));
+        intake(e.dataTransfer?.files);
       };
     }
+    // 대기 사진 자체도 드롭 대상 (이미 한 장 있으면 큰 영역이 사진으로 바뀌므로)
+    const galleryEl = $("#mainimg");
+    if (galleryEl) {
+      galleryEl.ondragover = (e) => { e.preventDefault(); galleryEl.classList.add("is-over"); };
+      galleryEl.ondragleave = () => galleryEl.classList.remove("is-over");
+      galleryEl.ondrop = (e) => { e.preventDefault(); galleryEl.classList.remove("is-over"); intake(e.dataTransfer?.files); };
+    }
     $("#newcancel").onclick = async () => {
-      if (await confirmDialog({ title: "작성을 취소할까요?", body: "지금 채운 내용은 저장되지 않습니다.", ok: "취소하기", danger: true })) { App.newDraft = null; location.hash = ""; }
+      if (await confirmDialog({ title: "작성을 취소할까요?", body: "지금 채운 내용과 담아 둔 사진이 사라집니다.", ok: "취소하기", danger: true })) { clearNewPhotos(); App.newDraft = null; location.hash = ""; }
     };
   } else {
     const addBtn = $("#addbtn");
@@ -497,6 +570,7 @@ export function renderDetail(pid, vid, override) {
       delete src.id; delete src.renamedFrom;
       src.pattern = Object.assign({}, src.pattern, { code: "" });     // 코드는 새로 (같으면 저장이 막힌다)
       (src.variations || []).forEach((vv) => { vv.images = []; delete vv.rating; });  // 사진은 원본 폴더 것이라 복사하지 않는다
+      clearNewPhotos();
       App.newDraft = src;
       location.hash = "#/new";
       toast("복제됨 — 패턴 코드를 새로 넣고 저장하세요 (사진은 다시 추가)");
