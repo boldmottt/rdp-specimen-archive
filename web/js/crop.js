@@ -11,7 +11,8 @@ function uploadId() {
 }
 
 /* ---------------- crop ---------------- */
-export const C = { file: null, img: null, z: 1, cx: 0.5, cy: 0.5, slot: 1 };
+export const C = { file: null, img: null, z: 1, cx: 0.5, cy: 0.5, slot: 1, rot: 0, rotated: null };
+// rotated = 회전(확장)한 캔버스. 기울기가 0 이면 null 이고 원본 파일을 그대로 올린다.
 
 function stageSize() {
   const el = $("#crop-stage");
@@ -33,6 +34,29 @@ function clampC() {
   C.cx = Math.min(1 - mx, Math.max(mx, C.cx));
   C.cy = Math.min(1 - my, Math.max(my, C.cy));
 }
+/**
+ * 기울기(도)를 적용해 확장 캔버스를 만든다 — CSS 회전은 캔버스가 커지지 않아 자르기 좌표가 어긋난다.
+ * 회전 각도는 시계방향 +, 캔버스 크기는 회전 후 바운딩 박스.
+ */
+function buildRotated() {
+  if (!C.img || !C.rot) { C.rotated = null; return null; }
+  const rad = (Math.abs(C.rot) * Math.PI) / 180;
+  const base = C.base || C.img;
+  const w = base.naturalWidth, h = base.naturalHeight;
+  const W = Math.round(Math.abs(w * Math.cos(rad)) + Math.abs(h * Math.sin(rad)));
+  const H = Math.round(Math.abs(w * Math.sin(rad)) + Math.abs(h * Math.cos(rad)));
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#fff";                     // 회전으로 생기는 빈 모서리는 흰색(인쇄 배경과 같게)
+  ctx.fillRect(0, 0, W, H);
+  ctx.translate(W / 2, H / 2);
+  ctx.rotate((C.rot * Math.PI) / 180);
+  ctx.drawImage(base, -w / 2, -h / 2);
+  C.rotated = cv;
+  return cv;
+}
+
 function layoutCrop() {
   if (!C.img) return;
   const { W, H } = stageSize();
@@ -61,11 +85,13 @@ function cropRect() {
 
 export function startCrop(file, opt) {
   C.file = file; C.slot = (opt && opt.slot) || 1;
-  C.z = 1; C.cx = 0.5; C.cy = 0.5;
+  C.z = 1; C.cx = 0.5; C.cy = 0.5; C.rot = 0; C.rotated = null;
+  const rotEl = document.querySelector("#crop-rot");
+  if (rotEl) rotEl.value = 0;
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
-    C.img = img;
+    C.img = img; C.base = img;
     $("#crop-img").src = url;
     $("#crop-modal").classList.add("on");
     $("#crop-zoom").value = 100;
@@ -82,6 +108,14 @@ export function startCrop(file, opt) {
     }
   };
   img.src = url;
+}
+
+/** 올릴 바이트 — 기울기를 줬으면 회전 캔버스를 JPEG 로, 아니면 원본 파일 그대로 */
+function uploadBytes() {
+  if (!C.rot || !C.rotated) return Promise.resolve(C.file);
+  return new Promise((resolve) => {
+    C.rotated.toBlob((b) => resolve(new File([b], "rotated.jpg", { type: "image/jpeg" })), "image/jpeg", 0.95);
+  });
 }
 
 async function commitUpload(res) {
@@ -113,7 +147,7 @@ async function uploadCenter() {
   try {
     const pid = uploadId();
     const vid = E.draft.variations[E.vIdx].id;
-    const res = await apiUpload(pid, vid, C.slot, C.file, null);
+    const res = await apiUpload(pid, vid, C.slot, await uploadBytes(), null);
     await commitUpload(res);
   } catch (e) { toast("업로드 실패: " + e.message); }
 }
@@ -142,6 +176,44 @@ export function bindCrop() {
     C.z = Number(e.target.value) / 100;
     layoutCrop();
   });
+  // 기울기 — 회전한 캔버스를 새 '지금 이미지'로 삼는다(확대·이동 계산은 그대로 재사용)
+  const rotInput = $("#crop-rot");
+  const resetRot = () => { if (rotInput) rotInput.value = 0; applyRot(0); };
+  const rotReset = $("#crop-rot-reset");
+  if (rotReset) rotReset.onclick = resetRot;
+  if (rotInput) rotInput.addEventListener("input", (e) => applyRot(Number(e.target.value)));
+  function applyRot(deg) {
+    if (!C.img) return;
+    C.rot = deg || 0;
+    const cv = buildRotated();
+    if (cv) {
+      const url = cv.toDataURL("image/jpeg", 0.95);
+      const img = new Image();
+      img.onload = () => {
+        C.img = img;                      // 회전본을 기준 이미지로 (naturalWidth = 회전 캔버스 폭)
+        $("#crop-img").src = url;
+        C.z = Math.max(1, Math.min(4, Number($("#crop-zoom").value) / 100));
+        layoutCrop();
+        const info = $("#crop-info");
+        if (info) info.textContent = `기울기 ${C.rot}° · 원본 ${img.naturalWidth}×${img.naturalHeight}`;
+      };
+      img.src = url;
+    } else {
+      // 0° — 회전 전 원본으로 되돌린다
+      const base = C.base || C.img;
+      const src = base.src || URL.createObjectURL(C.file);
+      const img = new Image();
+      img.onload = () => {
+        C.img = img;
+        $("#crop-img").src = src;
+        C.z = Math.max(1, Math.min(4, Number($("#crop-zoom").value) / 100));
+        layoutCrop();
+        const info2 = $("#crop-info");
+        if (info2) info2.textContent = `원본 ${img.naturalWidth}×${img.naturalHeight}`;
+      };
+      img.src = src;
+    }
+  }
   window.addEventListener("resize", () => {
     if ($("#crop-modal").classList.contains("on")) layoutCrop();
   });
@@ -151,7 +223,7 @@ export function bindCrop() {
     $("#crop-ok").disabled = true; $("#crop-ok").textContent = "업로드 중…";
     try {
       if (C.stage) {                       // 새 시편: 지금은 담아 두고 저장할 때 올린다
-        const file = C.file;
+        const file = await uploadBytes();
         $("#crop-modal").classList.remove("on");
         const cb = C.onCropped; C.onCropped = null; C.stage = false;
         if (cb) cb(file, rect);
@@ -159,7 +231,7 @@ export function bindCrop() {
       }
       const pid = uploadId();
       const vid = E.draft.variations[E.vIdx].id;
-      const res = await apiUpload(pid, vid, C.slot, C.file, rect);
+      const res = await apiUpload(pid, vid, C.slot, await uploadBytes(), rect);
       $("#crop-modal").classList.remove("on");
       await commitUpload(res);
     } catch (e) {

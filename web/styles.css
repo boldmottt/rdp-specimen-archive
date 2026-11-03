@@ -1212,3 +1212,8 @@ a.prop-status.ok:hover{background:#fff}
 .pending-photos{display:flex;gap:8px;margin-top:10px;overflow-x:auto}
 .pending-photos img{width:96px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--line-2)}
 #mainimg.is-over{outline:2px dashed var(--brand,#fc4c02);outline-offset:-4px}
+
+/* 자르기 컨트롤 — 확대·기울기 두 줄 */
+.crop-controls{gap:8px}
+.crop-controls #crop-rot{max-width:120px}
+.crop-controls .mini-btn{height:26px;padding:0 9px}

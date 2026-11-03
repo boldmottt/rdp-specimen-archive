@@ -62,7 +62,7 @@
   <div class="crop-box">
     <div class="crop-head">
       <strong id="crop-title">이미지 자르기</strong>
-      <span class="hint">170 : 70 고정 · 드래그로 위치, 슬라이더로 확대</span>
+      <span class="hint">170 : 70 고정 · 드래그로 위치, 슬라이더로 확대·기울기</span>
       <button class="icon-btn" id="crop-cancel2" aria-label="닫기">✕</button>
     </div>
     <div class="crop-stage" id="crop-stage">
@@ -72,6 +72,9 @@
     <div class="crop-controls">
       <label for="crop-zoom">확대</label>
       <input type="range" id="crop-zoom" min="100" max="400" value="100">
+      <label for="crop-rot">기울기</label>
+      <input type="range" id="crop-rot" min="-15" max="15" step="0.5" value="0">
+      <button type="button" class="mini-btn" id="crop-rot-reset" title="기울기 0°로">0°</button>
       <span id="crop-info" class="hint"></span>
     </div>
     <div class="crop-foot">
