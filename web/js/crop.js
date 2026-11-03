@@ -32,9 +32,10 @@ function bbox() {
   const w = (C.base && C.base.naturalWidth) || 1;
   const h = (C.base && C.base.naturalHeight) || 1;
   const rad = (Math.abs(C.rot) * Math.PI) / 180;
+  // 각 항에 절댓값을 먼저 — 180°/270° 에서 cos·sin 이 음수라 합이 음수가 되어 1×1 이 되던 버그
   return {
-    w: Math.max(1, Math.round(w * Math.cos(rad) + h * Math.sin(rad))),
-    h: Math.max(1, Math.round(w * Math.sin(rad) + h * Math.cos(rad))),
+    w: Math.max(1, Math.round(Math.abs(w * Math.cos(rad)) + Math.abs(h * Math.sin(rad)))),
+    h: Math.max(1, Math.round(Math.abs(w * Math.sin(rad)) + Math.abs(h * Math.cos(rad)))),
   };
 }
 
@@ -82,7 +83,7 @@ function paint() {
   ctx.restore();
 
   const info = $("#crop-info");
-  if (info) info.textContent = `${C.rot ? "기울기 " + C.rot + "° · " : ""}원본 ${C.base.naturalWidth}×${C.base.naturalHeight} → ${b.w}×${b.h}`;
+  if (info) info.textContent = `${C.rot ? "회전 " + C.rot + "° · " : ""}원본 ${C.base.naturalWidth}×${C.base.naturalHeight} → ${b.w}×${b.h}`;
 }
 
 /** 자를 영역 — 회전 후 바운딩 박스 좌표계(업로드 캔버스와 같은 좌표) */
@@ -137,8 +138,8 @@ function renderPreview(rect, maxW = 1200) {
 export function startCrop(file, opt) {
   C.file = file; C.slot = (opt && opt.slot) || 1;
   C.z = 1; C.cx = 0.5; C.cy = 0.5; C.rot = 0; C.base = null;
-  const rotEl = document.querySelector("#crop-rot");
-  if (rotEl) rotEl.value = 0;
+  const rotNum = document.querySelector("#crop-rot-num");
+  if (rotNum) rotNum.value = 0;
   const zoomEl = document.querySelector("#crop-zoom");
   if (zoomEl) zoomEl.value = 100;
   const url = URL.createObjectURL(file);
@@ -230,11 +231,38 @@ export function bindCrop() {
     paint();
   });
 
-  // 기울기 — 다시 그리기만 한다(인코딩 없음). 그래서 끌어도 튀지 않고, 미리보기가 곧 결과다.
-  const rotInput = $("#crop-rot");
-  const rotReset = $("#crop-rot-reset");
-  if (rotReset) rotReset.onclick = () => { if (rotInput) rotInput.value = 0; C.rot = 0; paint(); };
-  if (rotInput) rotInput.addEventListener("input", (e) => { C.rot = Number(e.target.value) || 0; paint(); });
+  /* 회전 — 슬라이더를 없앴다. 드래그하는 동안 계속 다시 그리면 이 맥(Retina)에서는 브라우저가
+     따라오지 못해 값이 튄다. 버튼·숫자는 한 번에 한 번만 그리므로 구조적으로 튈 수가 없다.
+     · ⟲/⟳ 90° : 통째로 돌리기(세로 사진 바로 세우기)
+     · ±0.1°/±1° + 각도 입력 : 미세 보정(직접 입력도 가능) */
+  const rotNum = $("#crop-rot-num");
+  const setRot = (deg) => {
+    // -180 ~ 180 으로 정리 (181 → -179)
+    let d = Number(deg) || 0;
+    while (d > 180) d -= 360;
+    while (d <= -180) d += 360;
+    d = Math.round(d * 10) / 10;                 // 0.1도 단위
+    C.rot = d;
+    if (rotNum) rotNum.value = String(d);
+    paint();
+  };
+  const step = (delta) => () => setRot(C.rot + delta);
+  const wire = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+  wire("#crop-rot-ccw", () => setRot(C.rot - 90));
+  wire("#crop-rot-cw", () => setRot(C.rot + 90));
+  wire("#crop-rot-dec1", step(-1));
+  wire("#crop-rot-dec01", step(-0.1));
+  wire("#crop-rot-inc01", step(0.1));
+  wire("#crop-rot-inc1", step(1));
+  wire("#crop-rot-reset", () => setRot(0));
+  if (rotNum) {
+    rotNum.addEventListener("change", () => setRot(rotNum.value));
+    rotNum.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); setRot(rotNum.value); }
+      if (e.key === "ArrowUp") { e.preventDefault(); setRot(C.rot + (e.shiftKey ? 1 : 0.1)); }
+      if (e.key === "ArrowDown") { e.preventDefault(); setRot(C.rot - (e.shiftKey ? 1 : 0.1)); }
+    });
+  }
 
   window.addEventListener("resize", () => {
     if ($("#crop-modal").classList.contains("on")) paint();

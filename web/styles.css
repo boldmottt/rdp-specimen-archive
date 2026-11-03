@@ -1213,6 +1213,10 @@ a.prop-status.ok:hover{background:#fff}
 #mainimg.is-over{outline:2px dashed var(--brand,#fc4c02);outline-offset:-4px}
 
 /* 자르기 컨트롤 — 확대·기울기 두 줄 */
-.crop-controls{gap:8px}
-.crop-controls #crop-rot{max-width:120px}
-.crop-controls .mini-btn{height:26px;padding:0 9px}
+.crop-controls{gap:10px;flex-wrap:wrap}
+.crop-controls label{white-space:nowrap}
+.crop-controls-rot{padding-top:8px}
+.crop-controls .mini-btn{height:26px;padding:0 8px}
+.crop-rot-set{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.crop-rot-set input[type="number"]{width:64px;height:26px;border:1px solid var(--line-2);border-radius:6px;
+  padding:0 6px;font:inherit;font-size:12px;text-align:right;font-variant-numeric:tabular-nums}

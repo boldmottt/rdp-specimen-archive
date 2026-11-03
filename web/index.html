@@ -72,10 +72,20 @@
     <div class="crop-controls">
       <label for="crop-zoom">확대</label>
       <input type="range" id="crop-zoom" min="100" max="400" value="100">
-      <label for="crop-rot">기울기</label>
-      <input type="range" id="crop-rot" min="-15" max="15" step="0.5" value="0">
-      <button type="button" class="mini-btn" id="crop-rot-reset" title="기울기 0°로">0°</button>
       <span id="crop-info" class="hint"></span>
+    </div>
+    <div class="crop-controls crop-controls-rot">
+      <label>회전</label>
+      <span class="crop-rot-set" role="group" aria-label="회전">
+        <button type="button" class="mini-btn" id="crop-rot-ccw" title="90도 왼쪽으로">⟲ 90°</button>
+        <button type="button" class="mini-btn" id="crop-rot-cw" title="90도 오른쪽으로">⟳ 90°</button>
+        <button type="button" class="mini-btn" id="crop-rot-dec1" title="1도 빼기">−1°</button>
+        <button type="button" class="mini-btn" id="crop-rot-dec01" title="0.1도 빼기">−0.1°</button>
+        <input type="number" id="crop-rot-num" min="-180" max="180" step="0.1" value="0" aria-label="회전 각도(도)">
+        <button type="button" class="mini-btn" id="crop-rot-inc01" title="0.1도 더하기">+0.1°</button>
+        <button type="button" class="mini-btn" id="crop-rot-inc1" title="1도 더하기">+1°</button>
+        <button type="button" class="mini-btn" id="crop-rot-reset" title="0도로">0°</button>
+      </span>
     </div>
     <div class="crop-foot">
       <button class="btn-line" id="crop-cancel">취소</button>
