@@ -1197,3 +1197,11 @@ a.prop-status.ok:hover{background:#fff}
 
 .confirm-dialog .cf-input{width:100%;margin-top:12px;border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
 .confirm-dialog .cf-input:focus{outline:none;border-color:var(--ink)}
+
+/* 새 시편: 사진을 화면에서 바로 넣기 */
+.empty-new{cursor:pointer;transition:border-color .15s,background .15s}
+.empty-new:hover,.empty-new:focus-visible{border-color:var(--ink-3);background:#f4f2ee;outline:none}
+.empty-new.is-over{border-color:var(--brand,#fc4c02);background:#fff6ef}
+.empty-new small{display:block;margin-top:6px;font-size:11px;color:#a9a69e}
+.new-imgrow{display:flex;align-items:center;gap:8px;margin-top:10px}
+.new-imgrow .muted{font-size:11px;color:#8d9198}

@@ -1,11 +1,12 @@
 /* RDP 시편 아카이브 — 시편 상세 · 배합표 · 예상색 */
-import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, confirmDialog, dash, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
+import { $, $$, App, html, raw, RESULT_LABEL, apiGet, apiPost, byId, clone, confirmDialog, dash, deriveId, esc, fmtDate, imgUrl, inCart, layers, paintDots, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
 import { inlineSave, inlineSettled, startInline } from "./inline.js";
 import { saveNewPattern } from "./catalog.js";
 import { showPlate } from "./plates.js";
 import { renderCart } from "./proposal.js";
 import { workOf, workSource } from "./work.js";
 import { openEditor } from "./editor.js";
+import { startCropForDraft } from "./crop.js";
 import { openHistory } from "./history.js";
 import { batchCompare, deltaText } from "./mix-compare.js";
 import { loadMixCheck, loadWorklogs } from "./worklog-link.js";
@@ -299,6 +300,8 @@ export function renderDetail(pid, vid, override) {
         <span class="nm">${esc(vName(x))}</span>
       </button>`).join("") : "";
   const images = v.images || [];
+  // 새 시편은 아직 저장 전이라 ID 가 없다 — 저장 때 쓸 ID(deriveId)로 사진을 올리고 읽는다
+  const imgPid = isNew ? deriveId(p.project, p.pattern.code) : p.id;
   const mixes = v.mixes || [];
   const sameAsVar = (v && v.sameAs) ? (p.variations || []).find((x) => x.id === v.sameAs) : null;
   const sameAsMixCount = sameAsVar ? ((sameAsVar.mixes || []).length) : 0;
@@ -332,13 +335,17 @@ export function renderDetail(pid, vid, override) {
                  <button class="btn-line${inCompare(p.id, v.id) ? " on" : ""}" id="cmpbtn" title="이 컬러를 나란히 비교에 담기/빼기 (최대 4개)">${inCompare(p.id, v.id) ? "✓ 비교" : "비교 +"}</button>
                  ${compareList().length ? `<a class="btn-line" id="cmpopen" href="#/compare" title="담은 컬러 나란히 보기">비교 보기 ${compareList().length}</a>` : ""}
                  <button class="btn-line" id="histbtn" title="저장할 때마다 남은 이전 상태 보기·되돌리기">이력</button>
+                 <button class="btn-line" id="dupebtn" title="이 시편을 복제해 새 시편을 만듭니다 (패턴 코드만 바꿔 등록)">복제</button>
                  <button class="btn-line" id="editbtn">편집</button>`}
           </div>
         </div>
 
         <div class="gallery">
-          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(p.id, images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : (isNew ? '<div class="empty-new"><span><b>편집</b>에서 사진을 바로 넣을 수 있습니다</span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
-          ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(p.id, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(imgUrl(p.id, im))}" alt="${esc(p.pattern.code + " " + vName(v))} 이미지 ${i + 1}">`).join("")}</div>` : ""}
+          <div class="main" id="mainimg">${images.length ? `<img src="${imgUrl(imgPid, images[0])}" alt="${esc(p.pattern.code + " " + vName(v))}">` : (isNew ? '<div class="empty-new" id="newimgadd" role="button" tabindex="0"><span><b>사진 추가</b> — 클릭해서 고르거나 끌어다 놓으세요<br><small>170:70 으로 잘라 저장합니다</small></span></div>' : '<div class="empty" style="display:grid;place-items:center;height:100%;color:#8d9198;font-size:11px;letter-spacing:.1em">IMAGE N/A</div>')}</div>
+          ${isNew ? `<input type="file" id="newimgfile" accept="image/*" hidden>
+            <div class="new-imgrow"><button type="button" class="mini-btn" id="newimgbtn">+ 사진 추가</button>
+            ${images.length ? `<span class="muted">${images.length}장 · 첫 장이 대표</span>` : `<span class="muted">저장 전에도 넣을 수 있습니다</span>`}</div>` : ""}
+          ${images.length > 1 ? `<div class="thumbs">${images.map((im, i) => `<img src="${imgUrl(imgPid, im)}" class="${i === 0 ? "on" : ""}" data-img="${esc(imgUrl(imgPid, im))}" alt="${esc(p.pattern.code + " " + vName(v))} 이미지 ${i + 1}">`).join("")}</div>` : ""}
           ${chips ? `<div class="vchips" style="margin-top:14px">${chips}</div>` : ""}
         </div>
 
@@ -437,6 +444,43 @@ export function renderDetail(pid, vid, override) {
     $("#newsave").onclick = () => saveNewPattern();
     $("#newfromwl").onclick = () => openWorklogPicker();
     $("#newedit").onclick = () => window.dispatchEvent(new CustomEvent("rdp:edit-new"));
+    // 사진 바로 추가 — 서랍을 거치지 않고 이 화면에서 고르고 자른다(저장은 한 번)
+    const pickImg = () => {
+      const d0 = App.newDraft || {};
+      if (!String(((d0.pattern || {}).code) || "").trim()) {
+        toast("패턴 코드를 먼저 입력하세요 — 사진은 코드가 정해진 폴더로 들어갑니다");
+        const codeEl = document.querySelector('[data-f="pattern.code"]');
+        if (codeEl) codeEl.click();   // 코드 칸을 바로 열어 준다
+        return;
+      }
+      $("#newimgfile")?.click();
+    };
+    const fileEl = $("#newimgfile");
+    if (fileEl) fileEl.onchange = () => {
+      const f = fileEl.files && fileEl.files[0];
+      fileEl.value = "";
+      if (!f) return;
+      const vi = Math.max(0, (App.newDraft.variations || []).findIndex((x) => x.id === v.id));
+      startCropForDraft(App.newDraft, vi, f, { slot: ((App.newDraft.variations[vi] || {}).images || []).length + 1 },
+        () => renderDetail("__new__", null, App.newDraft));
+    };
+    const addBtnEl = $("#newimgbtn");
+    if (addBtnEl) addBtnEl.onclick = pickImg;
+    const dz = $("#newimgadd");
+    if (dz) {
+      dz.onclick = pickImg;
+      dz.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickImg(); } };
+      dz.ondragover = (e) => { e.preventDefault(); dz.classList.add("is-over"); };
+      dz.ondragleave = () => dz.classList.remove("is-over");
+      dz.ondrop = (e) => {
+        e.preventDefault(); dz.classList.remove("is-over");
+        const f = e.dataTransfer?.files && e.dataTransfer.files[0];
+        if (!f) return;
+        const vi = Math.max(0, (App.newDraft.variations || []).findIndex((x) => x.id === v.id));
+        startCropForDraft(App.newDraft, vi, f, { slot: ((App.newDraft.variations[vi] || {}).images || []).length + 1 },
+          () => renderDetail("__new__", null, App.newDraft));
+      };
+    }
     $("#newcancel").onclick = async () => {
       if (await confirmDialog({ title: "작성을 취소할까요?", body: "지금 채운 내용은 저장되지 않습니다.", ok: "취소하기", danger: true })) { App.newDraft = null; location.hash = ""; }
     };
@@ -445,6 +489,18 @@ export function renderDetail(pid, vid, override) {
     if (addBtn) addBtn.onclick = () => { toggleCart(p.id, v.id); renderDetail(pid, v.id); renderCart(); };
     const editBtn = $("#editbtn");
     if (editBtn) editBtn.onclick = async () => { await inlineSettled(pid); openEditor(pid, v.id); };
+    // 복제 — 이 시편을 초안으로 떠서 '새 시편' 화면을 연다. 패턴 코드만 새로 입력하면 등록 끝.
+    const dupeBtn = $("#dupebtn");
+    if (dupeBtn) dupeBtn.onclick = () => {
+      const src = clone(byId(pid) || p);
+      delete src._file; delete src._mtime; delete src._sel;
+      delete src.id; delete src.renamedFrom;
+      src.pattern = Object.assign({}, src.pattern, { code: "" });     // 코드는 새로 (같으면 저장이 막힌다)
+      (src.variations || []).forEach((vv) => { vv.images = []; delete vv.rating; });  // 사진은 원본 폴더 것이라 복사하지 않는다
+      App.newDraft = src;
+      location.hash = "#/new";
+      toast("복제됨 — 패턴 코드를 새로 넣고 저장하세요 (사진은 다시 추가)");
+    };
     const cmpBtn = $("#cmpbtn");
     if (cmpBtn) cmpBtn.onclick = () => { toggleCompareItem(p.id, v.id); renderDetail(p.id, v.id); };
     const histBtn = $("#histbtn");

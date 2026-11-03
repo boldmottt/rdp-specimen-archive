@@ -4,8 +4,9 @@ import { E, renderDrawer } from "./editor.js";
 
 // 저장 전 새 시편의 사진은 저장할 때 쓸 파일 ID 폴더로 올린다 (편집기 저장과 같은 deriveId)
 function uploadId() {
-  const id = E.draft.id || deriveId(E.draft.project, E.draft.pattern.code);
-  if (!id) throw new Error("먼저 프로젝트와 패턴 코드를 입력하세요 (영문·숫자 포함)");
+  const code = String((E.draft.pattern || {}).code || "").trim();
+  const id = E.draft.id || deriveId(E.draft.project, code);
+  if (!code || !id) throw new Error("먼저 프로젝트와 패턴 코드를 입력하세요 (영문·숫자 포함)");
   return id;
 }
 
@@ -89,8 +90,20 @@ async function commitUpload(res) {
   v.images = v.images || [];
   v.images[C.slot - 1] = res.file;
   v.images = v.images.filter(Boolean);
-  renderDrawer();
+  if (C.onDone) { const cb = C.onDone; C.onDone = null; cb(); } else renderDrawer();
   toast(res.lowRes ? "저장됨 · 해상도가 낮습니다 (" + res.sourceWidth + "px)" : "이미지 저장됨");
+}
+
+/**
+ * 서랍 밖(새 시편 화면)에서 사진을 넣을 때 — 편집기 상태를 잠깐 이 초안으로 맞추고 자르기를 연다.
+ * 끝나면 onDone() 으로 그 화면을 다시 그린다.
+ */
+export function startCropForDraft(draft, vidx, file, opt, onDone) {
+  if (!draft) return;
+  E.draft = draft;
+  E.vIdx = Math.max(0, vidx || 0);
+  C.onDone = onDone || null;
+  startCrop(file, opt);
 }
 
 async function uploadCenter() {
