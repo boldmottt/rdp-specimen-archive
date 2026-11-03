@@ -112,6 +112,28 @@ function renderBBox() {
   return cv;
 }
 
+/**
+ * 화면에 보이는 그대로(회전 + 확대 + 위치) 잘라 낸 미리보기 — 새 시편 화면의 '담긴 사진'에 쓴다.
+ * 예전에는 담긴 사진을 원본 파일 그대로 보여 줘서, 기울기만 보이고 확대·위치는 빠진 것처럼 보였다
+ * (확대·위치는 저장할 때 서버가 rect 로 잘랐다). 저장 결과와 같은 영역을 그린다.
+ */
+function renderPreview(rect, maxW = 1200) {
+  const ow = Math.max(1, Math.round(Math.min(maxW, rect.w)));
+  const oh = Math.max(1, Math.round(ow * rect.h / rect.w));
+  const b = bbox();
+  const cv = document.createElement("canvas");
+  cv.width = ow; cv.height = oh;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, ow, oh);
+  ctx.scale(ow / rect.w, oh / rect.h);
+  ctx.translate(-rect.x, -rect.y);
+  ctx.translate(b.w / 2, b.h / 2);
+  ctx.rotate((C.rot * Math.PI) / 180);
+  ctx.drawImage(C.base, -C.base.naturalWidth / 2, -C.base.naturalHeight / 2);
+  return new Promise((resolve) => cv.toBlob((bl) => resolve(bl ? URL.createObjectURL(bl) : ""), "image/jpeg", 0.9));
+}
+
 export function startCrop(file, opt) {
   C.file = file; C.slot = (opt && opt.slot) || 1;
   C.z = 1; C.cx = 0.5; C.cy = 0.5; C.rot = 0; C.base = null;
@@ -224,9 +246,10 @@ export function bindCrop() {
     try {
       if (C.stage) {                       // 새 시편: 지금은 담아 두고 저장할 때 올린다
         const file = await uploadBytes();
+        const preview = C.base ? await renderPreview(rect) : "";   // 담긴 사진도 확대·위치까지 반영해 보여 준다
         $("#crop-modal").classList.remove("on");
         const cb = C.onCropped; C.onCropped = null; C.stage = false;
-        if (cb) cb(file, rect);
+        if (cb) cb(file, rect, preview);
         return;
       }
       const pid = uploadId();

@@ -476,9 +476,10 @@ export function renderDetail(pid, vid, override) {
       const vi = Math.max(0, (d0.variations || []).findIndex((x) => x.id === v.id));
       startCropForDraft(d0, vi, file, {
         stage: true,
-        onCropped: (f, rect) => {
+        onCropped: (f, rect, preview) => {
           App.newPhotos = App.newPhotos || [];
-          App.newPhotos.push({ file: f, rect, url: URL.createObjectURL(f) });
+          // url 은 '잘린 모습' 미리보기(확대·위치·기울기 반영) — 올리는 건 원본 + rect(서버가 같은 영역을 자른다)
+          App.newPhotos.push({ file: f, rect, url: preview || URL.createObjectURL(f) });
           applyParsed(parsed);
           renderDetail("__new__", null, App.newDraft);
           const what = describeParse(parsed);
