@@ -1288,3 +1288,38 @@ a.prop-status.ok:hover{background:#fff}
   body.report-mode .rp-table thead{display:table-header-group}
   body.report-mode *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* 개발 실적 — 사진 2열 카드 */
+.rp-cards{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.rp-pc{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;break-inside:avoid}
+.rp-pc-img{position:relative;display:block;aspect-ratio:170/70;background:#eceae5}
+.rp-pc-img img,.rp-pc-img .rp-noimg{width:100%;height:100%;object-fit:cover;display:block}
+.rp-pc-img .rp-noimg{display:grid;place-items:center;color:var(--ink-3);font-size:12px}
+.rp-pc-no{position:absolute;left:10px;top:10px;min-width:24px;height:24px;border-radius:999px;background:var(--rp-accent);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center;padding:0 6px}
+.rp-pc-body{padding:12px 14px 14px;border-top:3px solid var(--rp-accent)}
+.rp-pc-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.rp-pc-code{font-family:var(--mono);font-size:17px;font-weight:700;letter-spacing:.01em}
+.rp-pc-kind{font-size:11.5px;font-weight:650;color:#B85A00;background:var(--rp-accent-soft);border-radius:999px;padding:1px 8px}
+.rp-pc-date{margin-left:auto;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.rp-pc-name{margin-top:4px;font-size:14px;font-weight:600}
+.rp-pc-name small{font-weight:400;color:var(--ink-3);font-size:11.5px;margin-left:8px}
+.rp-pc-dl{display:grid;grid-template-columns:64px 1fr;gap:4px 10px;margin:10px 0 0;font-size:12.5px}
+.rp-pc-dl dt{color:var(--ink-3)}
+.rp-pc-dl dd{margin:0;min-width:0}
+@media (max-width:720px){.rp-cards{grid-template-columns:1fr}}
+@media print{
+  body.report-mode .rp-cards{grid-template-columns:1fr 1fr!important;gap:6mm}
+  body.report-mode .rp-pc{break-inside:avoid;page-break-inside:avoid}
+  body.report-mode .rp-pc-body{padding:3mm 4mm}
+}
+@media print{
+  body.report-mode .rp-list h3{margin:0 0 3mm;font-size:12pt}
+  body.report-mode .rp-cards{gap:4mm 6mm}
+  body.report-mode .rp-pc{border-radius:3mm}
+  body.report-mode .rp-pc-body{padding:2mm 3.5mm 2.5mm;border-top-width:2px}
+  body.report-mode .rp-pc-code{font-size:12pt}
+  body.report-mode .rp-pc-name{margin-top:.5mm;font-size:10pt}
+  body.report-mode .rp-pc-date,body.report-mode .rp-pc-kind{font-size:8.5pt}
+  body.report-mode .rp-pc-dl{grid-template-columns:auto 1fr auto 1fr;gap:.8mm 3mm;margin-top:1.5mm;font-size:8.5pt}
+  body.report-mode .rp-chip{font-size:8pt;padding:0 5px}
+}

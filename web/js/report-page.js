@@ -11,7 +11,7 @@
 import { $, $$, App, esc, thumbUrl } from "./core.js";
 import { KIND_LABEL, reportOptions, reportRows, summarize } from "./report-rules.js";
 
-const S = { year: null, kind: "", developer: "", vehicle: "", title: "" };
+const S = { year: null, kind: "", developer: "", vehicle: "", title: "", layout: "cards" };   // layout: cards(사진 2열) | table(엑셀식)
 
 const pad2 = (n) => String(n).padStart(2, "0");
 
@@ -27,6 +27,28 @@ function rankHTML(title, list, limit = 8) {
   return `<div class="rp-rank"><h4>${esc(title)}</h4>${list.slice(0, limit).map(([k, n]) => `<div class="rp-ri">
       <span class="k">${esc(k)}</span><span class="b"><i style="width:${Math.round((n / max) * 100)}%"></i></span><span class="n">${n}</span></div>`).join("")}
     ${list.length > limit ? `<div class="rp-more">외 ${list.length - limit}개</div>` : ""}</div>`;
+}
+
+/** 카드형 — 사진을 크게(2열), 아래에 하위 정보 */
+function cardHTML(r, i) {
+  const href = `#/p/${encodeURIComponent(r.ids[0])}`;
+  const img = r.image ? `<img src="${thumbUrl(r.image.pid, r.image.file, 960)}" alt="${esc(r.code)}">` : `<div class="rp-noimg">사진 없음</div>`;
+  const when = r.year ? `${r.year}년 ${r.month ? r.month + "월" : ""}${r.day ? " " + r.day + "일" : ""}` : "개발일 미상";
+  return `<article class="rp-pc">
+      <a class="rp-pc-img" href="${href}">${img}<span class="rp-pc-no">${i + 1}</span></a>
+      <div class="rp-pc-body">
+        <div class="rp-pc-top"><a class="rp-pc-code" href="${href}">${esc(r.code)}</a>
+          ${r.kind ? `<span class="rp-pc-kind">${esc(r.kind)} · ${esc(KIND_LABEL[r.kind] || "")}</span>` : ""}
+          <span class="rp-pc-date">${when}${r.source && r.source !== "code" ? " (추정)" : ""}</span></div>
+        <div class="rp-pc-name">${esc(r.name) || '<span class="rp-dim">패턴 이름 없음</span>'}${r.cat ? `<small>이미지 분류 ${esc(r.cat)}</small>` : ""}</div>
+        <dl class="rp-pc-dl">
+          <dt>담당자</dt><dd>${esc(r.developer) || '<span class="rp-dim">미입력</span>'}</dd>
+          <dt>제안 차종</dt><dd>${r.vehicles.map((v) => `<span class="rp-chip">${esc(v)}</span>`).join("") || '<span class="rp-dim">—</span>'}</dd>
+          <dt>컬러</dt><dd>${r.colors}개</dd>
+          ${r.remark ? `<dt>비고</dt><dd>${esc(r.remark)}</dd>` : ""}
+        </dl>
+      </div>
+    </article>`;
 }
 
 function rowHTML(r, i) {
@@ -72,9 +94,11 @@ function paint() {
       ${sm.noDate ? `<p class="rp-warn">개발일을 알 수 없는 패턴 ${sm.noDate}개는 연도 없이 셌습니다 — 패턴 코드 규칙(G50223F1)을 쓰거나 편집기에서 '개발 년월'을 적어 주세요.</p>` : ""}
     </section>
     ${rows.length ? `<section class="rp-page rp-list">
-      <h3>개발 리스트 <small>${rows.length}개 · 패턴 코드 하나당 한 줄 (여러 차종에 제안한 패턴도 한 번)</small></h3>
-      <table class="rp-table"><thead><tr><th class="c-no">#</th><th>개발년도</th><th>개발월</th><th>이미지</th><th>분류</th><th>패턴이름</th><th>패턴코드</th><th>담당자</th><th>제안차종</th><th>비고</th></tr></thead>
-        <tbody>${rows.map(rowHTML).join("")}</tbody></table>
+      <h3>개발 패턴 <small>${rows.length}개 · 패턴 코드 하나당 하나 (여러 차종에 제안한 패턴도 한 번)</small></h3>
+      ${S.layout === "table"
+        ? `<table class="rp-table"><thead><tr><th class="c-no">#</th><th>개발년도</th><th>개발월</th><th>이미지</th><th>분류</th><th>패턴이름</th><th>패턴코드</th><th>담당자</th><th>제안차종</th><th>비고</th></tr></thead>
+        <tbody>${rows.map(rowHTML).join("")}</tbody></table>`
+        : `<div class="rp-cards">${rows.map(cardHTML).join("")}</div>`}
     </section>` : ""}`;
 }
 
@@ -92,6 +116,8 @@ export function renderReport() {
         ${sel("rp-kind", "분류", S.kind, ["G", "M"], (k) => `${k} ${KIND_LABEL[k]}`)}
         ${sel("rp-dev", "담당자", S.developer, opt.developers)}
         ${sel("rp-veh", "제안 차종", S.vehicle, opt.vehicles)}
+        <div class="seg" role="radiogroup" aria-label="배치">${[["cards", "사진 2열"], ["table", "목록(엑셀식)"]].map(([k, l]) =>
+          `<label class="segbtn${S.layout === k ? " on" : ""}"><input type="radio" name="rp-layout" value="${k}"${S.layout === k ? " checked" : ""}>${l}</label>`).join("")}</div>
         <input id="rp-title" placeholder="보고서 제목 (비우면 자동)" value="${esc(S.title)}">
         <button type="button" class="btn-dark" id="rp-print">PDF 로 저장 · 인쇄</button>
       </div>
@@ -104,6 +130,11 @@ export function renderReport() {
   on("#rp-dev", (e) => { S.developer = e.target.value; paint(); });
   on("#rp-veh", (e) => { S.vehicle = e.target.value; paint(); });
   on("#rp-title", (e) => { S.title = e.target.value; paint(); });
+  $$('input[name="rp-layout"]').forEach((r) => (r.onchange = () => {
+    S.layout = r.value;
+    $$('input[name="rp-layout"]').forEach((x) => x.closest(".segbtn").classList.toggle("on", x.checked));
+    paint();
+  }));
   $("#rp-print").onclick = () => {
     const imgs = $$("#rp-body img");     // 사진이 다 뜬 뒤에 인쇄해야 PDF 에 빈칸이 안 생긴다
     imgs.forEach((im) => { im.loading = "eager"; });
