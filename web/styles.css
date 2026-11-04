@@ -1341,3 +1341,8 @@ a.prop-status.ok:hover{background:#fff}
   body.report-mode .rp-pc-dl{grid-template-columns:auto 1fr auto 1fr}
   body.report-mode .rp-list h3{margin:0 0 2mm;font-size:11pt}
 }
+
+#rp-listtitle{display:inline-block;min-width:4em;border-radius:6px;outline:none;cursor:text;padding:0 4px;margin-left:-4px}
+#rp-listtitle:hover{background:#f4f2ed}
+#rp-listtitle:focus{background:#fff;box-shadow:0 0 0 2px var(--rp-accent)}
+@media print{#rp-listtitle{background:none!important;box-shadow:none!important}}

@@ -8,6 +8,8 @@
  * 되돌리기: 편집기·목차가 이 파일을 안 쓰게 되돌리고 지우면 된다.
  */
 
+import { devInfo, vehiclesOf } from "./report-rules.js";
+
 /** 값별 개수 — [{val, n}] 많은 순, 빈 값 제외 */
 export function valueCounts(patterns, get) {
   const cnt = new Map();
@@ -47,7 +49,8 @@ export function isNewValue(value, known) {
 
 /* ---------------- 자동 태그 (파생) ----------------
  * 필드 값을 태그로 '저장'하지 않고 읽을 때 계산한다. 값이 바뀌면 태그도 저절로 바뀐다.
- * 프로젝트는 여기서 만들지 않는다(A줄 프로젝트 칩과 @가 이미 있다).
+ * 프로젝트 칩은 따로 있지만, '제안차종'은 등록 프로젝트 + 제안 차종(여러 개)을 모아 보여 준다.
+ * 개발년도는 패턴 코드(M-60213-F2 → 2026)에서 읽는다(report-rules.js).
  */
 const EMPTY_VALS = ["", "미정", "-", "—"];
 
@@ -78,15 +81,27 @@ export function layersOf(v) {
  */
 export function autoFacets(patterns, workOf, topPerKind = 6) {
   const kinds = [
+    { kind: "devyear", label: "개발년도", unit: "pattern", byValue: true },
+    { kind: "developer", label: "담당자", unit: "pattern" },
+    { kind: "project", label: "제안차종", unit: "pattern" },
     { kind: "code", label: "계열", unit: "pattern" },
     { kind: "client", label: "고객사", unit: "pattern" },
     { kind: "place", label: "작업장소", unit: "color" },
     { kind: "layers", label: "도수", unit: "color" },
+    { kind: "coat", label: "도장 컬러", unit: "color" },
   ];
   const out = [];
-  kinds.forEach(({ kind, label, unit }) => {
+  kinds.forEach(({ kind, label, unit, byValue }) => {
     const cnt = new Map();
+    const add = (val) => { val = String(val == null ? "" : val).trim(); if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1); };
     (patterns || []).forEach((p) => {
+      if (kind === "devyear") { add(devInfo(p).year || ""); return; }
+      if (kind === "developer") { add((p.pattern || {}).developer); return; }
+      if (kind === "project") { vehiclesOf(p).forEach(add); return; }      // 등록 프로젝트 + 제안 차종
+      if (kind === "coat") {                                               // 컬러마다 도장 코드(한 컬러에 같은 코드는 한 번)
+        (p.variations || []).forEach((v) => new Set((v.coating || []).map((c) => String((c && c.code) || "").trim())).forEach(add));
+        return;
+      }
       if (unit === "pattern") {
         let val = "";
         if (kind === "code") {
@@ -112,8 +127,9 @@ export function autoFacets(patterns, workOf, topPerKind = 6) {
     });
     if (cnt.size < 2) return;                       // 한 종류뿐이면 걸러낼 의미가 없다
     const values = [...cnt].map(([val, n]) => ({ val, n }))
-      .sort((a, b) => b.n - a.n || a.val.localeCompare(b.val, "ko"))
-      .slice(0, topPerKind);
+      .sort(byValue ? (a, b) => b.val.localeCompare(a.val, "ko", { numeric: true })   // 연도는 최근 순으로 전부
+        : (a, b) => b.n - a.n || a.val.localeCompare(b.val, "ko"))
+      .slice(0, byValue ? 30 : topPerKind);
     out.push({ kind, label, values });
   });
   return out;

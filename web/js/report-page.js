@@ -11,7 +11,9 @@
 import { $, $$, App, esc, thumbUrl } from "./core.js";
 import { KIND_LABEL, reportOptions, reportRows, summarize } from "./report-rules.js";
 
-const S = { year: null, kind: "", developer: "", vehicle: "", title: "", layout: "cards" };   // layout: cards(사진 2열) | table(엑셀식)
+const LIST_KEY = "rdp.reportListTitle";
+const loadListTitle = () => { try { return localStorage.getItem(LIST_KEY) || "개발 패턴"; } catch (e) { return "개발 패턴"; } };
+const S = { year: null, kind: "", developer: "", vehicle: "", title: "", layout: "cards", listTitle: loadListTitle() };   // layout: cards(사진 2열) | table(엑셀식)
 
 const pad2 = (n) => String(n).padStart(2, "0");
 
@@ -94,12 +96,25 @@ function paint() {
       ${sm.noDate ? `<p class="rp-warn no-print">개발일을 알 수 없는 패턴 ${sm.noDate}개는 연도 없이 셌습니다 — 패턴 코드 규칙(M-60213-F2)을 쓰거나 편집기에서 '개발 년월'을 적어 주세요.</p>` : ""}
     </section>
     ${rows.length ? `<section class="rp-page rp-list">
-      <h3>개발 패턴</h3>
+      <h3 id="rp-listtitle" contenteditable="plaintext-only" spellcheck="false" title="눌러서 제목 고치기">${esc(S.listTitle)}</h3>
       ${S.layout === "table"
         ? `<table class="rp-table"><thead><tr><th class="c-no">#</th><th>개발년도</th><th>개발월</th><th>이미지</th><th>분류</th><th>패턴이름</th><th>패턴코드</th><th>담당자</th><th>제안차종</th><th>비고</th></tr></thead>
         <tbody>${rows.map(rowHTML).join("")}</tbody></table>`
         : `<div class="rp-cards">${rows.map(cardHTML).join("")}</div>`}
     </section>` : ""}`;
+  bindListTitle();
+}
+
+/** 목록 제목(기본 '개발 패턴')을 그 자리에서 고친다 — 이 브라우저에 기억 */
+function bindListTitle() {
+  const h = $("#rp-listtitle");
+  if (!h) return;
+  h.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); h.blur(); } };
+  h.onblur = () => {
+    S.listTitle = h.textContent.replace(/\s+/g, " ").trim() || "개발 패턴";
+    h.textContent = S.listTitle;
+    try { localStorage.setItem(LIST_KEY, S.listTitle); } catch (e) {}
+  };
 }
 
 export function renderReport() {

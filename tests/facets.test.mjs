@@ -90,3 +90,17 @@ test("자동 태그 도수 — layerPlates 가 비어도 배합 도수를 센다
   const one = rows[0].values.find((v) => v.val === "1도");
   assert.equal(one.n, 1);
 });
+
+test("자동 태그 — 개발년도(최근 순) · 담당자 · 제안차종(프로젝트+제안 차종) · 도장 컬러", async () => {
+  const { autoFacets } = await import("../web/js/facets.js");
+  const ps = [
+    { project: "HX5", pattern: { code: "M-60213-F2", developer: "담당자A", vehicles: ["KQ2"] }, variations: [{ coating: [{ code: "C-1" }] }] },
+    { project: "KQ2", pattern: { code: "G-51104-T1", developer: "담당자B" }, variations: [{ coating: [{ code: "C-2" }, { code: "C-2" }] }] },
+    { project: "HX5", pattern: { code: "G-50301-F1", developer: "담당자A" }, variations: [{ coating: [{ code: "C-1" }] }] },
+  ];
+  const rows = Object.fromEntries(autoFacets(ps, null, 6).map((r) => [r.kind, r.values.map((v) => `${v.val}:${v.n}`)]));
+  assert.deepEqual(rows.devyear, ["2026:1", "2025:2"]);
+  assert.deepEqual(rows.developer, ["담당자A:2", "담당자B:1"]);
+  assert.deepEqual(rows.project, ["HX5:2", "KQ2:2"]);
+  assert.deepEqual(rows.coat, ["C-1:2", "C-2:1"]);
+});
