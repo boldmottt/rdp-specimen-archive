@@ -3,8 +3,8 @@
  * 연도(·분류·담당자·차종)를 고르면 그 해 개발한 패턴을 '패턴 코드 하나당 한 줄'로 모아
  *   1쪽: 요약(개발 수 · 월별 막대 · 분류 · 담당자 · 제안 차종)
  *   2쪽~: 개발 리스트 — 엑셀 양식 그대로(개발년도·개발월·이미지·분류·패턴이름·패턴코드·담당자·제안차종·비고)
- * 를 A4 가로로 보여 준다. [PDF 로 저장]은 브라우저 인쇄(대상: PDF 로 저장)를 연다.
- * 개발 시점은 패턴 코드(G50223F1 → 2025-02-23)에서 읽는다 — 규칙은 report-rules.js.
+ * 를 A4 세로로 보여 준다(사진 2열 · 한 쪽 8개). [PDF 로 저장]은 브라우저 인쇄(대상: PDF 로 저장)를 연다.
+ * 개발 시점은 패턴 코드(M-60213-F2 → 2026-02-13)에서 읽는다 — 규칙은 report-rules.js.
  *
  * 되돌리기: main.js 의 #/report 라우트, 목차 ⋯ 메뉴의 '개발 실적 보고서', 이 파일과 report-rules.js 를 지우면 된다.
  */
@@ -79,7 +79,7 @@ function paint() {
   body.innerHTML = `
     <section class="rp-page rp-cover">
       <header class="rp-head"><div><h1>${esc(title)}</h1>
-        <p>${scope ? esc(scope) + " · " : ""}${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())} 기준 · ${esc(App.config.company || "")} RDP 시편 아카이브</p></div>
+        <p>${scope ? esc(scope) + " · " : ""}${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())} 기준</p></div>
         <div class="rp-kpis">
           <div><b>${sm.total}</b><span>개발 패턴</span></div>
           <div><b>${sm.byVehicle.length}</b><span>제안 차종</span></div>
@@ -91,10 +91,10 @@ function paint() {
         <div class="rp-card">${rankHTML("담당자", sm.byDeveloper)}</div>
         <div class="rp-card">${rankHTML("제안 차종", sm.byVehicle, 10)}</div>
       </div>` : `<p class="rp-empty">조건에 맞는 패턴이 없습니다.</p>`}
-      ${sm.noDate ? `<p class="rp-warn">개발일을 알 수 없는 패턴 ${sm.noDate}개는 연도 없이 셌습니다 — 패턴 코드 규칙(G50223F1)을 쓰거나 편집기에서 '개발 년월'을 적어 주세요.</p>` : ""}
+      ${sm.noDate ? `<p class="rp-warn no-print">개발일을 알 수 없는 패턴 ${sm.noDate}개는 연도 없이 셌습니다 — 패턴 코드 규칙(M-60213-F2)을 쓰거나 편집기에서 '개발 년월'을 적어 주세요.</p>` : ""}
     </section>
     ${rows.length ? `<section class="rp-page rp-list">
-      <h3>개발 패턴 <small>${rows.length}개 · 패턴 코드 하나당 하나 (여러 차종에 제안한 패턴도 한 번)</small></h3>
+      <h3>개발 패턴</h3>
       ${S.layout === "table"
         ? `<table class="rp-table"><thead><tr><th class="c-no">#</th><th>개발년도</th><th>개발월</th><th>이미지</th><th>분류</th><th>패턴이름</th><th>패턴코드</th><th>담당자</th><th>제안차종</th><th>비고</th></tr></thead>
         <tbody>${rows.map(rowHTML).join("")}</tbody></table>`
@@ -121,7 +121,7 @@ export function renderReport() {
         <input id="rp-title" placeholder="보고서 제목 (비우면 자동)" value="${esc(S.title)}">
         <button type="button" class="btn-dark" id="rp-print">PDF 로 저장 · 인쇄</button>
       </div>
-      <p class="rp-hint no-print">인쇄 창에서 <b>대상: PDF 로 저장 · 용지 A4 가로 · 배경 그래픽 켜기</b>. 개발일은 패턴 코드(G50223F1 → 2025년 2월)에서 읽습니다.</p>
+      <p class="rp-hint no-print">인쇄 창에서 <b>대상: PDF 로 저장 · 용지 A4 세로 · 배경 그래픽 켜기</b>. 개발일은 패턴 코드(M-60213-F2 → 2026년 2월 13일)에서 읽습니다.</p>
       <div id="rp-body"></div>
     </div>`;
   const on = (id, fn) => { const el = $(id); if (el) el.oninput = el.onchange = fn; };

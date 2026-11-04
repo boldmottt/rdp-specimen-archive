@@ -266,10 +266,10 @@ function workRows() {
     ${fieldRow("생산 수량", "work.volume")}${note("volume")}`;
 }
 
-/** 패턴 코드에서 읽은 개발 정보 (G50223F1 → 지오메트릭 · 2025-02-23 · 분류 F) */
+/** 패턴 코드에서 읽은 개발 정보 (M-60213-F2 → 메테리얼 · 2026-02-13 · 분류 F) */
 function devNote(d) {
   const c = parsePatternCode((d.pattern || {}).code);
-  if (!c) return `<div class="field-note">패턴 코드가 G/M+숫자5자리 규칙(예: G50223F1)이 아니면 아래 '개발 년월'을 적어 주세요 — 개발 실적 보고서에 씁니다.</div>`;
+  if (!c) return `<div class="field-note">패턴 코드가 G/M-숫자5자리-분류 규칙(예: M-60213-F2)이 아니면 아래 '개발 년월'을 적어 주세요 — 개발 실적 보고서에 씁니다.</div>`;
   return `<div class="field-note dev-note">코드에서 읽음: <b>${KIND_LABEL[c.kind]}</b> · ${c.year}-${String(c.month).padStart(2, "0")}-${String(c.day).padStart(2, "0")} 개발${c.cat ? ` · 분류 ${esc(c.cat)}${c.seq ? c.seq : ""}` : ""}</div>`;
 }
 

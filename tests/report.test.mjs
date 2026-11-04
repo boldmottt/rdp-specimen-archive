@@ -63,3 +63,11 @@ test("요약 — 월별 · 분류 · 담당자 · 차종", () => {
   const o = reportOptions([P("A", "HX5", "G50223F1"), P("B", "HX5", "G61001F1")]);
   assert.deepEqual(o.years, [2026, 2025]);
 });
+
+test("실제 양식 M-60213-F2 — 하이픈이 있어도 같은 코드", () => {
+  assert.deepEqual(parsePatternCode("M-60213-F2"), { kind: "M", year: 2026, month: 2, day: 13, cat: "F", seq: 2 });
+  assert.deepEqual(parsePatternCode("G-51104-T1"), { kind: "G", year: 2025, month: 11, day: 4, cat: "T", seq: 1 });
+  const rows = reportRows([P("A", "HX5", "M-60213-F2"), P("B", "KQ2", "M60213F2")]);
+  assert.equal(rows.length, 1);                                  // 하이픈만 다른 같은 코드는 한 줄
+  assert.deepEqual(rows[0].vehicles, ["HX5", "KQ2"]);
+});

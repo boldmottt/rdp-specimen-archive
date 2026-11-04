@@ -1274,16 +1274,16 @@ a.prop-status.ok:hover{background:#fff}
 .rp-table .c-note{max-width:200px;color:var(--ink-2)}
 .dev-note b{color:#B85A00}
 @media (max-width:900px){.rp-grid{grid-template-columns:1fr 1fr}.rp-card.rp-wide{grid-column:1/-1}.rp-head{flex-direction:column;align-items:flex-start}}
-@page report{size:A4 landscape;margin:9mm}
+@page report{size:A4 portrait;margin:10mm 9mm}
 @media print{
   body.report-mode .topbar,body.report-mode .cartbar,body.report-mode .no-print,body.report-mode .foot{display:none!important}
   body.report-mode .wrap.report-page{page:report;padding:0;max-width:none}
   body.report-mode .rp-page{border:0;border-radius:0;padding:0;margin:0}
   body.report-mode .rp-cover{break-after:page}
-  body.report-mode .rp-grid{grid-template-columns:2fr 1fr 1fr 1fr!important;gap:8px}
-  body.report-mode .rp-card.rp-wide{grid-column:auto!important}
+  body.report-mode .rp-grid{grid-template-columns:1fr 1fr!important;gap:8px}
+  body.report-mode .rp-card.rp-wide{grid-column:1/-1!important}
   body.report-mode .rp-head{flex-direction:row!important;align-items:flex-end!important}
-  body.report-mode .rp-bars{height:130px}
+  body.report-mode .rp-bars{height:150px}
   body.report-mode .rp-card{padding:8px 10px}
   body.report-mode .rp-table thead{display:table-header-group}
   body.report-mode *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -1314,7 +1314,7 @@ a.prop-status.ok:hover{background:#fff}
 }
 @media print{
   body.report-mode .rp-list h3{margin:0 0 3mm;font-size:12pt}
-  body.report-mode .rp-cards{gap:4mm 6mm}
+  body.report-mode .rp-cards{gap:3.5mm 5mm}
   body.report-mode .rp-pc{border-radius:3mm}
   body.report-mode .rp-pc-body{padding:2mm 3.5mm 2.5mm;border-top-width:2px}
   body.report-mode .rp-pc-code{font-size:12pt}
@@ -1322,4 +1322,22 @@ a.prop-status.ok:hover{background:#fff}
   body.report-mode .rp-pc-date,body.report-mode .rp-pc-kind{font-size:8.5pt}
   body.report-mode .rp-pc-dl{grid-template-columns:auto 1fr auto 1fr;gap:.8mm 3mm;margin-top:1.5mm;font-size:8.5pt}
   body.report-mode .rp-chip{font-size:8pt;padding:0 5px}
+}
+@media print{
+  /* A4 세로 · 2열 × 4줄 = 한 쪽 8개 */
+  body.report-mode .rp-pc-img{aspect-ratio:170/66}
+  body.report-mode .rp-pc-body{padding:1.6mm 3mm 2mm}
+  body.report-mode .rp-pc-code{font-size:10.5pt}
+  body.report-mode .rp-pc-name{font-size:9pt}
+  body.report-mode .rp-pc-date,body.report-mode .rp-pc-kind{font-size:7.5pt}
+  body.report-mode .rp-pc-dl{grid-template-columns:auto 1fr;gap:.5mm 2.5mm;margin-top:1mm;font-size:7.5pt}
+  body.report-mode .rp-pc-no{width:5mm;min-width:5mm;height:5mm;font-size:7pt;left:2mm;top:2mm}
+  body.report-mode .rp-chip{font-size:7pt;padding:0 4px}
+  body.report-mode .rp-kpis b{font-size:22pt}
+  body.report-mode .rp-head h1{font-size:18pt}
+}
+@media print{
+  body.report-mode .rp-pc-img{aspect-ratio:170/66}
+  body.report-mode .rp-pc-dl{grid-template-columns:auto 1fr auto 1fr}
+  body.report-mode .rp-list h3{margin:0 0 2mm;font-size:11pt}
 }
