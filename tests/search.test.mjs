@@ -303,3 +303,29 @@ test("도수 두 개를 하나라도(OR) — 1도 또는 2도 컬러가 남는�
   assert.deepEqual(matchVars(p, parseQuery("layers:1도 layers:2도", { tagMode: "or" })), ["v01", "v02"]);
   assert.equal(matchVars(p, parseQuery("layers:1도 layers:2도")), null);   // AND 는 1도이면서 2도 = 없음
 });
+
+test("제안 차종 — @차종 · 차종: 은 프로젝트와 제안 차종(패턴·컬러)을 모두 본다", async () => {
+  const { parseQuery, matchVars } = await import("../web/js/search.js");
+  const p = { id: "X", project: "HX5", pattern: { code: "G50223F1", vehicles: ["NQ5"], developer: "담당자A" }, work: {},
+    variations: [{ id: "v1", vehicles: ["SP3"] }, { id: "v2" }] };
+  const hit = (q) => !!matchVars(p, parseQuery(q));
+  assert.equal(hit("@HX5"), true);
+  assert.equal(hit("@NQ5"), true);
+  assert.equal(hit("차종:SP3"), true);
+  assert.equal(hit("@KQ2"), false);
+  assert.equal(hit("담당자A"), true);                    // 글자 검색에 담당자도
+});
+
+test("개발년도 · 담당자 · 도장 컬러 조건", async () => {
+  const { parseQuery, matchVars } = await import("../web/js/search.js");
+  const p = { id: "X", project: "HX5", pattern: { code: "M-60213-F2", developer: "담당자A" }, work: {},
+    variations: [{ id: "v1", coating: [{ code: "C-1001" }] }, { id: "v2", coating: [{ code: "C-2002" }] }] };
+  const m = (q) => matchVars(p, parseQuery(q));
+  assert.deepEqual(m("개발년도:2026"), ["v1", "v2"]);
+  assert.deepEqual(m("devyear:2026년"), ["v1", "v2"]);
+  assert.equal(m("개발년도:2025"), null);
+  assert.deepEqual(m("담당자:담당자A"), ["v1", "v2"]);
+  assert.equal(m("담당자:담당자B"), null);
+  assert.deepEqual(m("도장:C-2002"), ["v2"]);                   // 컬러 단위
+  assert.deepEqual(m("coat:c-1001"), ["v1"]);
+});

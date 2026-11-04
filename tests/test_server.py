@@ -1951,3 +1951,21 @@ class BakeTests(Base):
         self.assertEqual(server.bake_auto_tick(now=now), [], "방금 고친 시편은 조용해질 때까지 기다린다")
         self.assertEqual(server.bake_auto_tick(now=now + server.BAKE_QUIET + 1), ["internal"])
         self.assertEqual(server.bake_auto_tick(now=now + server.BAKE_QUIET + 2), [], "바뀐 게 없으면 다시 굽지 않는다")
+
+
+class VehiclesTests(Base):
+    """제안 차종 — 한 패턴을 여러 차종에 제안한다. 쉼표 글자도 목록으로, 목록이 아니면 저장 거부."""
+
+    def test_vehicles_lists(self):
+        doc = pattern("P-G50223F1", "P", "G50223F1", [{"id": "v01", "vehicles": "SP3, NQ5"}])
+        doc["pattern"]["vehicles"] = "HX5, KQ2"
+        doc["pattern"]["developer"] = "담당자A"
+        st, r = self.put("P-G50223F1", doc, create=True)
+        self.assertEqual(st, 200, r)
+        saved = self.read_pattern("P-G50223F1")
+        self.assertEqual(saved["pattern"]["vehicles"], ["HX5", "KQ2"])
+        self.assertEqual(saved["variations"][0]["vehicles"], ["SP3", "NQ5"])
+        self.assertEqual(saved["pattern"]["developer"], "담당자A")
+        bad = pattern("P-G50224F1", "P", "G50224F1", [{"id": "v01"}])
+        bad["pattern"]["vehicles"] = [{"x": 1}]
+        self.assertEqual(self.put("P-G50224F1", bad, create=True)[0], 400)

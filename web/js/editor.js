@@ -1,4 +1,5 @@
 /* RDP 시편 아카이브 — 편집 서랍 (기본 · 컬러 · 배합 · 이미지 · JSON) */
+import { KIND_LABEL, parsePatternCode } from "./report-rules.js";
 import { $, $$, App, RESULT_LABEL, apiDelete, apiGet, apiPost, apiPut, byId, clone, colorNameFor, confirmDialog, deriveId, esc, flushNewPhotos, imgUrl, markSaved, normalizeDoc, revOf, saveLS, toast, todayLocal, vName } from "./core.js";
 import { renderCatalog } from "./catalog.js";
 import { addInkTag, bindRecipePreviews, inkInfo, inkLabel, inkOrder, inkPool, labOf, labText, labToCss, layerCodeOf, layerPlate, loadInkCatalog, mixTable, platePatterns, setLayerPlate, syncLayerPlates } from "./detail.js";
@@ -265,6 +266,13 @@ function workRows() {
     ${fieldRow("생산 수량", "work.volume")}${note("volume")}`;
 }
 
+/** 패턴 코드에서 읽은 개발 정보 (M-60213-F2 → 메테리얼 · 2026-02-13 · 분류 F) */
+function devNote(d) {
+  const c = parsePatternCode((d.pattern || {}).code);
+  if (!c) return `<div class="field-note">패턴 코드가 G/M-숫자5자리-분류 규칙(예: M-60213-F2)이 아니면 아래 '개발 년월'을 적어 주세요 — 개발 실적 보고서에 씁니다.</div>`;
+  return `<div class="field-note dev-note">코드에서 읽음: <b>${KIND_LABEL[c.kind]}</b> · ${c.year}-${String(c.month).padStart(2, "0")}-${String(c.day).padStart(2, "0")} 개발${c.cat ? ` · 분류 ${esc(c.cat)}${c.seq ? c.seq : ""}` : ""}</div>`;
+}
+
 export function renderDrawer() {
   const d = E.draft;
   renderVars();
@@ -282,6 +290,14 @@ export function renderDrawer() {
         ${fieldRow("영문명", "pattern.name", { ph: "Wood" })}
         ${fieldRow("한글명", "pattern.nameKo", { ph: "우드" })}
         ${fieldRow("태그", "pattern.tags", { ph: "우드, 엠보, 도어" })}
+        <div class="sec-label">개발 실적</div>
+        ${devNote(d)}
+        ${fieldRow("제안 차종", "pattern.vehicles", { ph: "HX5, KQ2 — 프로젝트 말고도 제안한 차종 (쉼표로)" })}
+        <div class="field-row"><label>개발 담당자</label>
+          <input data-k="pattern.developer" list="dev-list" value="${esc((d.pattern || {}).developer || "")}" placeholder="담당자 이름" autocomplete="off">
+          <datalist id="dev-list">${valueCounts(App.patterns, (pp) => (pp.pattern || {}).developer).map((x) => `<option value="${esc(x.val)}">`).join("")}</datalist>
+        </div>
+        ${parsePatternCode((d.pattern || {}).code) ? "" : fieldRow("개발 년월", "pattern.devDate", { ph: "2025-02 (코드 규칙에 안 맞을 때만)" })}
         <div class="sec-label">라벨</div>
         ${fieldRow("품목", "label.item", { ph: "Design Sample" })}
         ${fieldRow("구분", "label.type", { ph: "Padprint Layer 1" })}
@@ -309,6 +325,7 @@ export function renderDrawer() {
         ${fieldRow("컬러명", "variations." + E.vIdx + ".colorName", { ph: "다크 브라운" })}
         ${fieldRow("컬러코드", "variations." + E.vIdx + ".colorCode", { ph: "K-1116S", mono: true })}
         ${fieldRow("상태", "variations." + E.vIdx + ".status", { ph: "가승인" })}
+        ${fieldRow("제안 차종(이 컬러만)", "variations." + E.vIdx + ".vehicles", { ph: "이 컬러만 따로 제안한 차종 (쉼표로)" })}
         <div class="field-row is-locked"><label>작업일</label><input value="${esc(String(v.date || "").slice(0, 10))}" disabled></div>
         <div class="field-note"><button type="button" class="link-btn" id="goto-work-date">작업일은 「작업」에서 수정 →</button></div>
         ${fieldRow("Rev", "variations." + E.vIdx + ".rev", { ph: "0" })}
@@ -562,7 +579,7 @@ export function renderDrawer() {
     }
     const last = path[path.length - 1];
     let val = el.value;
-    if (last === "tags" || last === "plate") val = val.split(",").map((s) => s.trim()).filter(Boolean);
+    if (last === "tags" || last === "plate" || last === "vehicles") val = val.split(",").map((s) => s.trim()).filter(Boolean);
     // 컬러 라벨은 비우면 키를 지워서 공통 라벨을 쓰게 한다
     if (path[0] === "variations" && path[2] === "label" && val.trim() === "") {
       delete obj[last];

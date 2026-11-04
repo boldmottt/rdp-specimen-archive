@@ -326,10 +326,12 @@ export function normalizeDoc(p) {
   ["pattern", "label", "work"].forEach((k) => { if (!isObj(p[k])) p[k] = {}; });
   if ("plate" in p.work) p.work.plate = asList(p.work.plate);
   if ("tags" in p.pattern) p.pattern.tags = asList(p.pattern.tags);
+  if ("vehicles" in p.pattern) p.pattern.vehicles = asList(p.pattern.vehicles);
   if (p.history != null && !Array.isArray(p.history)) p.history = [];
   p.variations = (Array.isArray(p.variations) ? p.variations : []).filter(isObj);
   p.variations.forEach((v) => {
     ["coating", "images", "mixes"].forEach((k) => { if (!Array.isArray(v[k])) v[k] = []; });
+    if ("vehicles" in v) v.vehicles = asList(v.vehicles);
     ["label", "layerPlates", "layerPatterns"].forEach((k) => { if (k in v && !isObj(v[k])) delete v[k]; });
   });
   return p;

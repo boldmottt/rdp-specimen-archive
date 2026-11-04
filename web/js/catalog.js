@@ -423,6 +423,7 @@ export function renderCatalog() {
               <button type="button" data-act="none">결과 빼기 (${hitCount}개)</button>
               <button type="button" data-act="board">${App.project === "all" ? "컬러 보드 (프로젝트 선택)" : `${esc(App.project)} 컬러 보드`}</button>
               <button type="button" data-act="fromwl">작업일지에서 새 시편</button>
+              <button type="button" data-act="report">개발 실적 보고서</button>
               <button type="button" data-act="tidy">정리 도구</button>
               <button type="button" data-act="bake">보기 전용 파일 (맥 꺼져도 보기)</button>
               <button type="button" data-act="plates">동판 대장</button>
@@ -603,6 +604,7 @@ export function renderCatalog() {
       if (act === "csv") downloadCsv(list, (pid) => HITS.get(pid));
       else if (act === "none") removeAll("#morebtn");
       else if (act === "help") toast(QUERY_HELP, 6500);
+      else if (act === "report") location.hash = "#/report";
       else if (act === "tidy") location.hash = "#/tidy";
       else if (act === "bake") openBakeDialog({ ids: list.map((p) => p.id), total: App.patterns.length });
       else if (act === "plates") location.hash = "#/plates";

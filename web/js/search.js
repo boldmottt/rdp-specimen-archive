@@ -27,18 +27,20 @@
 
 import { workOf } from "./work.js";
 import { layersOf } from "./facets.js";
+import { devInfo } from "./report-rules.js";
 
 /* 한글 접두 → 영문 키. '상태:보류'처럼 한글로 쓴 조건도 같은 뜻으로 읽는다(예전엔 status: 만 됐다) */
 const ALIAS = {
   있음: "has", 날짜: "date", 작업일: "date", 수정: "updated", 별점: "rating", 깃발: "flag",
   상태: "status", 고객: "client", 고객사: "client", 동판: "plate", 컬러: "color", 색: "color",
-  장소: "place", 작업장소: "place", 코드: "code", 계열: "code", 도수: "layers", 태그: "tag", 프로젝트: "project",
+  장소: "place", 작업장소: "place", 차종: "project", 제안차종: "project",
+  개발년도: "devyear", 개발: "devyear", 담당자: "developer", 도장: "coat", 도장컬러: "coat", 코드: "code", 계열: "code", 도수: "layers", 태그: "tag", 프로젝트: "project",
 };
-const KEYED = new RegExp(`^(tag|project|plate|color|status|client|place|code|layers|has|date|updated|rating|flag|${Object.keys(ALIAS).join("|")}):([\\s\\S]*)$`, "i");
+const KEYED = new RegExp(`^(tag|project|plate|color|status|client|place|code|layers|has|date|updated|rating|flag|devyear|developer|coat|${Object.keys(ALIAS).join("|")}):([\\s\\S]*)$`, "i");
 const low = (s) => String(s == null ? "" : s).toLowerCase().trim();
 
 /** 컬러(베리에이션) 단위로만 판정되는 문법 — 나머지(tag·project)는 시편 단위 */
-export const VAR_KEYS = new Set(["plate", "color", "status", "place", "layers", "has", "date", "rating", "flag"]);
+export const VAR_KEYS = new Set(["plate", "color", "status", "place", "layers", "has", "date", "rating", "flag", "coat"]);
 
 /* 토큰 자르기. -제외 / #태그 / @프로젝트 / "따옴표" 를 붙여 쓸 수 있다.
    raw 는 토큰을 다시 지울 때(칩 토글) 원문을 그대로 되살리기 위해 남긴다. */
@@ -68,7 +70,7 @@ export function parseQuery(raw, opts) {
   const terms = [], notText = [], words = [];
   tokenize(raw).forEach((t) => {
     let key = "", val = t.text;
-    const KNOWN = ["tag", "project", "plate", "color", "status", "client", "place", "code", "layers", "has", "date", "updated", "rating", "flag"];
+    const KNOWN = ["tag", "project", "plate", "color", "status", "client", "place", "code", "layers", "has", "date", "updated", "rating", "flag", "devyear", "developer", "coat"];
     if (t.prefix && KNOWN.includes(t.prefix)) key = t.prefix;   // 아는 키일 때만 접두로 인정
     else if (!t.prefix && !t.sigil && /^★/.test(t.text)) { key = "rating"; val = t.text.slice(1); }   // ★3 · ★3+
     else if (t.sigil === "#") { key = "tag"; if (t.prefix) val = `${t.prefix}:${t.text}`; }   // #finish:matte 도 그룹 태그
@@ -91,12 +93,12 @@ export function parseQuery(raw, opts) {
 export function patternHay(p) {
   const a = (p && p.pattern) || {}, w = (p && p.work) || {}, lb = (p && p.label) || {};
   return [a.code, a.name, a.nameKo, p.projectName, p.client, lb.type,
-    (a.tags || []).join(" "), (w.plate || []).join(" "),
+    (a.tags || []).join(" "), (w.plate || []).join(" "), (a.vehicles || []).join(" "), a.developer,
     (p.variations || []).map((v) => [v.colorName, v.colorCode,
       (v.coating || []).map((c) => c.code).join(" "),
       Object.values(v.layerPlates || {}).join(" "),
       Object.values(v.layerPatterns || {}).join(" "),
-      (v.mixes || []).map((m) => m.plate || "").join(" ")].join(" ")).join(" ")]
+      (v.mixes || []).map((m) => m.plate || "").join(" "), (v.vehicles || []).join(" ")].join(" ")).join(" ")]
     .join(" ").toLowerCase();
 }
 
@@ -141,6 +143,7 @@ function testVar(p, v, t) {
   if (t.key === "date") return testDate(v.date, t.val);
   if (t.key === "rating") return testRating(v.rating, t.val);
   if (t.key === "flag") return ["on", "있음", "1", "true", "y"].includes(t.val) ? !!v.flag : !v.flag;
+  if (t.key === "coat") return (v.coating || []).some((c) => low(c && c.code) === t.val);   // 도장 컬러(도장 코드)
   if (t.key === "color") return low(v.colorCode).includes(t.val) || low(v.colorName).includes(t.val);
   if (t.key === "status") return low(v.status) === t.val;
   // 작업장소는 컬러별 유효값(workOf)으로 판정 — 같은 패턴의 다른 컬러는 걸리지 않는다
@@ -175,7 +178,10 @@ function updatedWithin(p, val, now) {
 /** 시편(패턴) 단위 조건 하나 — 태그·프로젝트·고객사·계열·수정일 */
 function testPattern(p, t) {
   if (t.key === "tag") return (p.pattern.tags || []).some((x) => low(x) === t.val);
-  if (t.key === "project") return low(p.project) === t.val || low(p.projectName) === t.val;
+  // 프로젝트 = 등록한 프로젝트 · 차종명 · 제안 차종(패턴과 컬러) — 한 패턴을 여러 차종에 제안하므로
+  if (t.key === "project") return low(p.project) === t.val || low(p.projectName) === t.val
+    || ((p.pattern || {}).vehicles || []).some((x) => low(x) === t.val)
+    || (p.variations || []).some((v) => (v.vehicles || []).some((x) => low(x) === t.val));
   if (t.key === "client") return low(p.client || (p.label || {}).company) === t.val;
   if (t.key === "code") {
     return /^[a-z]+$/.test(t.val)
@@ -183,6 +189,9 @@ function testPattern(p, t) {
       : low(p.pattern.code).startsWith(t.val);
   }
   if (t.key === "updated") return updatedWithin(p, t.val, Q_NOW);
+  // 개발년도 — 패턴 코드(M-60213-F2 → 2026)에서, 안 되면 개발 년월·가장 이른 작업일 (report-rules.js 와 같은 규칙)
+  if (t.key === "devyear") return String(devInfo(p).year || "") === t.val.replace(/년$/, "");
+  if (t.key === "developer") return low((p.pattern || {}).developer) === t.val;
   return true;
 }
 let Q_NOW;   // matchVars 호출 시 채운다(테스트가 now 를 넘길 수 있게)
@@ -260,6 +269,7 @@ export const QUERY_HELP =
   "검색 문법 — #태그  @프로젝트  plate:26_015  color:E3940  status:가승인\n" +
   "고객사 client:현대자동차 · 계열 code:G · 작업장소 place:API · 도수 layers:2\n" +
   "있음 has:사진/배합/동판/메모/태그/상태/고객 · 날짜 date:2026-10 / date:>2026-09-01 · 수정:7 (7일 이내)\n" +
+  "개발년도 개발년도:2026 · 담당자 담당자:이름 · 제안 차종 차종:HX5 · 도장 컬러 도장:C-1001\n" +
   "한글로도: 상태:보류 · 고객:가온 · 동판:26_015 · 컬러:블랙 · 장소:1공장 · 계열:G · 도수:2 · 태그:우드 · 프로젝트:HX5\n" +
   "별점 ★3 · ★3+ · rating:0(없음) · 깃발 flag:on/off\n" +
   "앞에 - 를 붙이면 제외 (예: #컬러세미나 -@MQ5) · 공백이 있는 태그는 #\"메탈 브라운\"";
