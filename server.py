@@ -409,6 +409,13 @@ def normalize_shape(doc: dict, coerce: bool = False) -> list:
             bad(pat, "tags", "pattern.tags는 태그 목록이어야 합니다", [])
         else:
             pat["tags"] = tags
+    # 제안 차종 — 한 패턴을 여러 차종에 제안한다(프로젝트 하나로는 담을 수 없어서). 쉼표 글자도 목록으로.
+    if isinstance(pat, dict) and "vehicles" in pat:
+        vs, wrong = _str_list(pat["vehicles"])
+        if wrong:
+            bad(pat, "vehicles", "pattern.vehicles는 차종 목록이어야 합니다", [])
+        else:
+            pat["vehicles"] = vs
     hist = doc.get("history")
     if hist is not None and (not isinstance(hist, list) or not all(isinstance(h, dict) for h in hist)):
         bad(doc, "history", "history는 객체 목록이어야 합니다", [])
@@ -424,6 +431,12 @@ def normalize_shape(doc: dict, coerce: bool = False) -> list:
             v["coating"] = []
         elif not isinstance(v["coating"], list) or not all(isinstance(c, dict) for c in v["coating"]):
             bad(v, "coating", f"{where}: coating은 객체 목록이어야 합니다", [])
+        if "vehicles" in v:                      # 이 컬러만 따로 제안한 차종
+            vs, wrong = _str_list(v["vehicles"])
+            if wrong:
+                bad(v, "vehicles", f"{where}: vehicles는 차종 목록이어야 합니다", [])
+            else:
+                v["vehicles"] = vs
         for key in ("label", "layerPlates", "layerPatterns"):
             if key in v and v[key] is None:
                 del v[key]

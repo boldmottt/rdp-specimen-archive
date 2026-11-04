@@ -32,7 +32,7 @@ import { layersOf } from "./facets.js";
 const ALIAS = {
   있음: "has", 날짜: "date", 작업일: "date", 수정: "updated", 별점: "rating", 깃발: "flag",
   상태: "status", 고객: "client", 고객사: "client", 동판: "plate", 컬러: "color", 색: "color",
-  장소: "place", 작업장소: "place", 코드: "code", 계열: "code", 도수: "layers", 태그: "tag", 프로젝트: "project",
+  장소: "place", 작업장소: "place", 차종: "project", 코드: "code", 계열: "code", 도수: "layers", 태그: "tag", 프로젝트: "project",
 };
 const KEYED = new RegExp(`^(tag|project|plate|color|status|client|place|code|layers|has|date|updated|rating|flag|${Object.keys(ALIAS).join("|")}):([\\s\\S]*)$`, "i");
 const low = (s) => String(s == null ? "" : s).toLowerCase().trim();
@@ -91,12 +91,12 @@ export function parseQuery(raw, opts) {
 export function patternHay(p) {
   const a = (p && p.pattern) || {}, w = (p && p.work) || {}, lb = (p && p.label) || {};
   return [a.code, a.name, a.nameKo, p.projectName, p.client, lb.type,
-    (a.tags || []).join(" "), (w.plate || []).join(" "),
+    (a.tags || []).join(" "), (w.plate || []).join(" "), (a.vehicles || []).join(" "), a.developer,
     (p.variations || []).map((v) => [v.colorName, v.colorCode,
       (v.coating || []).map((c) => c.code).join(" "),
       Object.values(v.layerPlates || {}).join(" "),
       Object.values(v.layerPatterns || {}).join(" "),
-      (v.mixes || []).map((m) => m.plate || "").join(" ")].join(" ")).join(" ")]
+      (v.mixes || []).map((m) => m.plate || "").join(" "), (v.vehicles || []).join(" ")].join(" ")).join(" ")]
     .join(" ").toLowerCase();
 }
 
@@ -175,7 +175,10 @@ function updatedWithin(p, val, now) {
 /** 시편(패턴) 단위 조건 하나 — 태그·프로젝트·고객사·계열·수정일 */
 function testPattern(p, t) {
   if (t.key === "tag") return (p.pattern.tags || []).some((x) => low(x) === t.val);
-  if (t.key === "project") return low(p.project) === t.val || low(p.projectName) === t.val;
+  // 프로젝트 = 등록한 프로젝트 · 차종명 · 제안 차종(패턴과 컬러) — 한 패턴을 여러 차종에 제안하므로
+  if (t.key === "project") return low(p.project) === t.val || low(p.projectName) === t.val
+    || ((p.pattern || {}).vehicles || []).some((x) => low(x) === t.val)
+    || (p.variations || []).some((v) => (v.vehicles || []).some((x) => low(x) === t.val));
   if (t.key === "client") return low(p.client || (p.label || {}).company) === t.val;
   if (t.key === "code") {
     return /^[a-z]+$/.test(t.val)

@@ -7,6 +7,7 @@ import { renderBoard } from "./board.js";
 import { renderPlates } from "./plates-page.js";
 import { renderCompare } from "./compare-page.js";
 import { renderTidy } from "./tidy-page.js";
+import { renderReport } from "./report-page.js";
 import { E, closeEditor, newDoc, openEditor, renderDrawer, saveDraft, syncTabs } from "./editor.js";
 import { bindCrop } from "./crop.js";
 
@@ -15,6 +16,7 @@ export function rerender() {
   const h = location.hash.replace(/^#/, "");
   document.body.classList.remove("board-mode");   // 컬러 보드 전용 인쇄 규칙은 이 화면에서만
   document.body.classList.remove("compare-mode");  // 비교 화면 인쇄 규칙(가로)도 그 화면에서만
+  document.body.classList.remove("report-mode");   // 개발 실적 보고서 인쇄 규칙(A4 가로)도 그 화면에서만
   const nav = $("#navhome");
   if (nav) nav.style.display = h ? "" : "none";
   if (h === "/new") {
@@ -27,6 +29,8 @@ export function rerender() {
     renderCart();
   } else if (h === "/compare") {
     renderCompare();
+  } else if (h === "/report") {
+    renderReport();
   } else if (h === "/tidy") {
     renderTidy();
   } else if (h === "/plates") {
