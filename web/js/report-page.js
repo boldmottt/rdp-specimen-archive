@@ -1,7 +1,8 @@
 /* RDP 시편 아카이브 — 패턴 개발 실적 보고서 (#/report)
  *
  * 연도(·분류·담당자·차종)를 고르면 그 해 개발한 패턴을 '패턴 코드 하나당 하나'로 모아 보여 준다.
- * [보고서 구성]에서 넣을 칸(요약 숫자 · 월별 개발 수 · 통계 · 사진 페이지 · 목록)과 순서를 고른다 — 이 브라우저에 기억.
+ * [보고서 구성]에서 넣을 칸(요약 숫자 · 월별 개발 수 · 통계 · 사진 페이지 · 목록)과 순서,
+ * 넣을 항목(담당자 · 제안 차종 · 비고 …)을 고른다 — 이 브라우저에 기억.
  * 칸 제목은 보고서에서 눌러서 고친다. A4 세로 인쇄(사진 페이지는 한 쪽 8개, 사진·목록 칸은 새 쪽에서 시작).
  * 화면은 무채색 모노톤, 포인트 컬러(NIFCO 오렌지)는 제목 아래 가는 줄에만.
  * 개발 시점은 패턴 코드(M-60213-F2 → 2026-02-13)에서 읽는다 — 규칙은 report-rules.js.
@@ -20,7 +21,13 @@ const SECTIONS = {
   table: { label: "목록 (엑셀식)", title: "개발 패턴 목록" },
 };
 const DEFAULT_LAYOUT = [["kpi", true], ["monthly", true], ["stats", true], ["cards", true], ["table", false]];
-const LS = { layout: "rdp.reportLayout", titles: "rdp.reportTitles" };
+const LS = { layout: "rdp.reportLayout", titles: "rdp.reportTitles", hidden: "rdp.reportHidden" };
+
+/* 넣을 항목 — 끄면 사진 카드 · 목록 · 요약 숫자 · 통계 어디에서도 빠진다. 패턴 코드는 늘 들어간다. */
+const FIELDS = {
+  no: "번호", date: "개발일", kind: "분류 (메테리얼·지오메트릭)", cat: "이미지 분류", name: "패턴 이름",
+  image: "사진 (목록 표)", developer: "담당자", vehicles: "제안 차종", colors: "베리에이션", remark: "비고",
+};
 const load = (k, d) => { try { const x = JSON.parse(localStorage.getItem(k)); return x == null ? d : x; } catch (e) { return d; } };
 const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
@@ -34,8 +41,13 @@ function loadLayout() {
 }
 const oldList = (() => { try { return localStorage.getItem("rdp.reportListTitle") || ""; } catch (e) { return ""; } })();
 const S = { year: null, kind: "", developer: "", vehicle: "", title: "", layout: loadLayout(),
-  titles: Object.assign(oldList ? { cards: oldList } : {}, load(LS.titles, {})), panel: false };
-const secTitle = (k) => S.titles[k] || SECTIONS[k].title;
+  titles: Object.assign(oldList ? { cards: oldList } : {}, load(LS.titles, {})), panel: false,
+  hidden: new Set((load(LS.hidden, []) || []).filter((k) => FIELDS[k])) };
+const has = (k) => !S.hidden.has(k);
+/** 통계 칸 기본 제목은 켜 둔 항목만 */
+const defTitle = (k) => k !== "stats" ? SECTIONS[k].title
+  : [has("kind") || has("cat") ? "분류" : "", has("developer") ? "담당자" : "", has("vehicles") ? "제안 차종" : ""].filter(Boolean).join(" · ") || "통계";
+const secTitle = (k) => S.titles[k] || defTitle(k);
 
 const pad2 = (n) => String(n).padStart(2, "0");
 
@@ -53,62 +65,78 @@ function rankHTML(title, list, limit = 8) {
     ${list.length > limit ? `<div class="rp-more">외 ${list.length - limit}개</div>` : ""}</div>`;
 }
 
-/** 카드형 — 사진을 크게(2열), 아래에 하위 정보 */
+/** 카드형 — 사진을 크게(2열), 아래에 하위 정보(켜 둔 항목만) */
+const dim = (t) => `<span class="rp-dim">${t}</span>`;
+const chips = (r) => r.vehicles.map((v) => `<span class="rp-chip">${esc(v)}</span>`).join("");
+const guessed = (r) => r.source && r.source !== "code";
+
 function cardHTML(r, i) {
   const href = `#/p/${encodeURIComponent(r.ids[0])}`;
   const img = r.image ? `<img src="${thumbUrl(r.image.pid, r.image.file, 960)}" alt="${esc(r.code)}">` : `<div class="rp-noimg">사진 없음</div>`;
   const when = r.year ? `${r.year}년 ${r.month ? r.month + "월" : ""}${r.day ? " " + r.day + "일" : ""}` : "개발일 미상";
+  const dl = [
+    has("developer") && `<dt>담당자</dt><dd>${esc(r.developer) || dim("미입력")}</dd>`,
+    has("vehicles") && `<dt>제안 차종</dt><dd>${chips(r) || dim("—")}</dd>`,
+    has("colors") && `<dt>베리에이션</dt><dd>${r.colors}개</dd>`,
+    has("remark") && r.remark && `<dt>비고</dt><dd>${esc(r.remark)}</dd>`,
+  ].filter(Boolean).join("");
+  const name = has("name") || (has("cat") && r.cat);
   return `<article class="rp-pc">
-      <a class="rp-pc-img" href="${href}">${img}<span class="rp-pc-no">${i + 1}</span></a>
+      <a class="rp-pc-img" href="${href}">${img}${has("no") ? `<span class="rp-pc-no">${i + 1}</span>` : ""}</a>
       <div class="rp-pc-body">
         <div class="rp-pc-top"><a class="rp-pc-code" href="${href}">${esc(r.code)}</a>
-          ${r.kind ? `<span class="rp-pc-kind">${esc(KIND_LABEL[r.kind] || r.kind)}</span>` : ""}
-          <span class="rp-pc-date">${when}${r.source && r.source !== "code" ? " (추정)" : ""}</span></div>
-        <div class="rp-pc-name">${esc(r.name) || '<span class="rp-dim">패턴 이름 없음</span>'}${r.cat ? `<small>이미지 분류 ${esc(r.cat)}</small>` : ""}</div>
-        <dl class="rp-pc-dl">
-          <dt>담당자</dt><dd>${esc(r.developer) || '<span class="rp-dim">미입력</span>'}</dd>
-          <dt>제안 차종</dt><dd>${r.vehicles.map((v) => `<span class="rp-chip">${esc(v)}</span>`).join("") || '<span class="rp-dim">—</span>'}</dd>
-          <dt>베리에이션</dt><dd>${r.colors}개</dd>
-          ${r.remark ? `<dt>비고</dt><dd>${esc(r.remark)}</dd>` : ""}
-        </dl>
+          ${has("kind") && r.kind ? `<span class="rp-pc-kind">${esc(KIND_LABEL[r.kind] || r.kind)}</span>` : ""}
+          ${has("date") ? `<span class="rp-pc-date">${when}${guessed(r) ? " (추정)" : ""}</span>` : ""}</div>
+        ${name ? `<div class="rp-pc-name">${has("name") ? esc(r.name) || dim("패턴 이름 없음") : ""}${has("cat") && r.cat ? `<small>이미지 분류 ${esc(r.cat)}</small>` : ""}</div>` : ""}
+        ${dl ? `<dl class="rp-pc-dl">${dl}</dl>` : ""}
       </div>
     </article>`;
 }
 
-function rowHTML(r, i) {
-  const img = r.image ? `<img src="${thumbUrl(r.image.pid, r.image.file, 240)}" alt="">` : `<div class="rp-noimg">사진 없음</div>`;
+/** 목록 표 — 켜 둔 항목만 칸으로 [항목, 머리글, class, 값] */
+const COLS = [
+  ["no", "#", "c-no", (r, i) => i + 1],
+  ["date", "개발년도", "c-y", (r) => r.year || "—"],
+  ["date", "개발월", "c-m", (r) => (r.month ? r.month + "월" : "—")],
+  ["image", "이미지", "c-img", (r, i, href) => `<a href="${href}">${r.image ? `<img src="${thumbUrl(r.image.pid, r.image.file, 240)}" alt="">` : `<div class="rp-noimg">사진 없음</div>`}</a>`],
+  ["kind", "분류", "c-k", (r) => (r.kind ? esc(KIND_LABEL[r.kind] || r.kind) : "—")],
+  ["name", "패턴이름", "c-name", (r) => `${esc(r.name) || dim("—")}${has("cat") && r.cat ? `<small>분류 ${esc(r.cat)}</small>` : ""}`],
+  ["", "패턴코드", "c-code", (r, i, href) => `<a href="${href}">${esc(r.code)}</a>${has("date") && guessed(r) ? `<small title="코드가 개발일 규칙(G/M+숫자 5자리)이 아니어서 ${r.source === "devDate" ? "직접 적은 개발 년월" : "가장 이른 작업일"}로 셌습니다">개발일 추정</small>` : ""}`],
+  ["developer", "담당자", "c-dev", (r) => esc(r.developer) || dim("미입력")],
+  ["vehicles", "제안차종", "c-veh", (r) => chips(r)],
+  ["colors", "베리에이션", "c-n", (r) => `${r.colors}개`],
+  ["remark", "비고", "c-note", (r) => esc(r.remark)],
+];
+const cols = () => COLS.filter(([k]) => !k || has(k));
+const rowHTML = (r, i) => {
   const href = `#/p/${encodeURIComponent(r.ids[0])}`;
-  return `<tr>
-      <td class="c-no">${i + 1}</td>
-      <td class="c-y">${r.year || "—"}</td><td class="c-m">${r.month ? r.month + "월" : "—"}</td>
-      <td class="c-img"><a href="${href}">${img}</a></td>
-      <td class="c-k">${r.kind ? esc(KIND_LABEL[r.kind] || r.kind) : "—"}</td>
-      <td class="c-name">${esc(r.name) || '<span class="rp-dim">—</span>'}${r.cat ? `<small>분류 ${esc(r.cat)}</small>` : ""}</td>
-      <td class="c-code"><a href="${href}">${esc(r.code)}</a>${r.source && r.source !== "code" ? `<small title="코드가 개발일 규칙(G/M+숫자 5자리)이 아니어서 ${r.source === "devDate" ? "직접 적은 개발 년월" : "가장 이른 작업일"}로 셌습니다">개발일 추정</small>` : ""}</td>
-      <td class="c-dev">${esc(r.developer) || '<span class="rp-dim">미입력</span>'}</td>
-      <td class="c-veh">${r.vehicles.map((v) => `<span class="rp-chip">${esc(v)}</span>`).join("")}</td>
-      <td class="c-note">${esc(r.remark)}</td>
-    </tr>`;
-}
+  return `<tr>${cols().map(([, , c, fn]) => `<td class="${c}">${fn(r, i, href)}</td>`).join("")}</tr>`;
+};
 
 /** 칸 제목 — 눌러서 고친다 */
 const headHTML = (k, tag = "h3") => `<${tag} class="rp-sec-h" data-sec="${k}" contenteditable="plaintext-only" spellcheck="false" title="눌러서 제목 고치기">${esc(secTitle(k))}</${tag}>`;
 
 const SECTION_HTML = {
-  kpi: (rows, sm) => `<section class="rp-sec rp-sec-kpi"><div class="rp-kpis">
-      <div><b>${sm.total}</b><span>개발 패턴</span></div>
-      <div><b>${sm.byVehicle.length}</b><span>제안 차종</span></div>
-      <div><b>${sm.colors}</b><span>베리에이션</span></div>
-      <div><b>${sm.byDeveloper.filter(([k]) => k !== "담당자 미입력").length}</b><span>담당자</span></div>
-    </div></section>`,
+  kpi: (rows, sm) => {
+    const k = [[sm.total, "개발 패턴"],
+      has("vehicles") && [sm.byVehicle.length, "제안 차종"],
+      has("colors") && [sm.colors, "베리에이션"],
+      has("developer") && [sm.byDeveloper.filter(([d]) => d !== "담당자 미입력").length, "담당자"]].filter(Boolean);
+    return `<section class="rp-sec rp-sec-kpi"><div class="rp-kpis" style="--n:${k.length}">${k.map(([n, t]) => `<div><b>${n}</b><span>${t}</span></div>`).join("")}</div></section>`;
+  },
   monthly: (rows, sm) => `<section class="rp-sec">${headHTML("monthly", "h4")}<div class="rp-card">${barsHTML(sm.byMonth)}</div></section>`,
-  stats: (rows, sm) => `<section class="rp-sec">${headHTML("stats", "h4")}<div class="rp-grid3">
-      <div class="rp-card">${rankHTML("분류", sm.byKind)}${rankHTML("이미지 분류", sm.byCat, 6)}</div>
-      <div class="rp-card">${rankHTML("담당자", sm.byDeveloper)}</div>
-      <div class="rp-card">${rankHTML("제안 차종", sm.byVehicle, 10)}</div></div></section>`,
+  stats: (rows, sm) => {
+    const cards = [
+      (has("kind") || has("cat")) && `${has("kind") ? rankHTML("분류", sm.byKind) : ""}${has("cat") ? rankHTML("이미지 분류", sm.byCat, 6) : ""}`,
+      has("developer") && rankHTML("담당자", sm.byDeveloper),
+      has("vehicles") && rankHTML("제안 차종", sm.byVehicle, 10),
+    ].filter(Boolean);
+    if (!cards.length) return "";
+    return `<section class="rp-sec">${headHTML("stats", "h4")}<div class="rp-grid3" style="--n:${cards.length}">${cards.map((c) => `<div class="rp-card">${c}</div>`).join("")}</div></section>`;
+  },
   cards: (rows) => `<section class="rp-sec rp-sec-page">${headHTML("cards")}<div class="rp-cards">${rows.map(cardHTML).join("")}</div></section>`,
   table: (rows) => `<section class="rp-sec rp-sec-page">${headHTML("table")}
-      <table class="rp-table"><thead><tr><th class="c-no">#</th><th>개발년도</th><th>개발월</th><th>이미지</th><th>분류</th><th>패턴이름</th><th>패턴코드</th><th>담당자</th><th>제안차종</th><th>비고</th></tr></thead>
+      <table class="rp-table"><thead><tr>${cols().map(([, t, c]) => `<th class="${c}">${t}</th>`).join("")}</tr></thead>
       <tbody>${rows.map(rowHTML).join("")}</tbody></table></section>`,
 };
 
@@ -142,6 +170,8 @@ function panelHTML() {
       <label><input type="checkbox" data-secon="${k}"${v ? " checked" : ""}> ${esc(SECTIONS[k].label)}</label>
       <span class="rp-mv"><button type="button" class="tool" data-up="${i}" aria-label="${esc(SECTIONS[k].label)} 위로"${i === 0 ? " disabled" : ""}>↑</button>
         <button type="button" class="tool" data-down="${i}" aria-label="${esc(SECTIONS[k].label)} 아래로"${i === S.layout.length - 1 ? " disabled" : ""}>↓</button></span></li>`).join("")}</ol>
+    <div class="rp-panel-h rp-panel-h2">넣을 항목 <small>끄면 사진 카드 · 목록 · 요약 숫자 · 통계에서 모두 빠져요 · 패턴 코드는 늘 들어가요</small></div>
+    <div class="rp-fields">${Object.entries(FIELDS).map(([k, t]) => `<label class="${has(k) ? "on" : ""}"><input type="checkbox" data-field="${k}"${has(k) ? " checked" : ""}> ${esc(t)}</label>`).join("")}</div>
   </div>`;
 }
 
@@ -160,7 +190,11 @@ function bindPanel() {
   const swap = (i, j) => { [S.layout[i], S.layout[j]] = [S.layout[j], S.layout[i]]; save(); };
   $$("[data-up]", p).forEach((b) => (b.onclick = () => { const i = Number(b.dataset.up); if (i > 0) swap(i, i - 1); }));
   $$("[data-down]", p).forEach((b) => (b.onclick = () => { const i = Number(b.dataset.down); if (i < S.layout.length - 1) swap(i, i + 1); }));
-  $("#rp-reset", p).onclick = () => { S.layout = DEFAULT_LAYOUT.map((x) => x.slice()); save(); };
+  $$("[data-field]", p).forEach((c) => (c.onchange = () => {
+    if (c.checked) S.hidden.delete(c.dataset.field); else S.hidden.add(c.dataset.field);
+    keep(LS.hidden, [...S.hidden]); save();
+  }));
+  $("#rp-reset", p).onclick = () => { S.layout = DEFAULT_LAYOUT.map((x) => x.slice()); S.hidden.clear(); keep(LS.hidden, []); save(); };
 }
 
 /** 칸 제목을 그 자리에서 고친다 — Enter 로 끝, 이 브라우저에 기억 */
@@ -170,7 +204,7 @@ function bindTitles() {
     h.onblur = () => {
       const k = h.dataset.sec;
       const v = h.textContent.replace(/\s+/g, " ").trim();
-      if (!v || v === SECTIONS[k].title) delete S.titles[k]; else S.titles[k] = v;
+      if (!v || v === defTitle(k)) delete S.titles[k]; else S.titles[k] = v;
       h.textContent = secTitle(k);
       keep(LS.titles, S.titles);
     };
