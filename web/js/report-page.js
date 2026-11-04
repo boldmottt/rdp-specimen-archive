@@ -38,13 +38,13 @@ function cardHTML(r, i) {
       <a class="rp-pc-img" href="${href}">${img}<span class="rp-pc-no">${i + 1}</span></a>
       <div class="rp-pc-body">
         <div class="rp-pc-top"><a class="rp-pc-code" href="${href}">${esc(r.code)}</a>
-          ${r.kind ? `<span class="rp-pc-kind">${esc(r.kind)} · ${esc(KIND_LABEL[r.kind] || "")}</span>` : ""}
+          ${r.kind ? `<span class="rp-pc-kind">${esc(KIND_LABEL[r.kind] || r.kind)}</span>` : ""}
           <span class="rp-pc-date">${when}${r.source && r.source !== "code" ? " (추정)" : ""}</span></div>
         <div class="rp-pc-name">${esc(r.name) || '<span class="rp-dim">패턴 이름 없음</span>'}${r.cat ? `<small>이미지 분류 ${esc(r.cat)}</small>` : ""}</div>
         <dl class="rp-pc-dl">
           <dt>담당자</dt><dd>${esc(r.developer) || '<span class="rp-dim">미입력</span>'}</dd>
           <dt>제안 차종</dt><dd>${r.vehicles.map((v) => `<span class="rp-chip">${esc(v)}</span>`).join("") || '<span class="rp-dim">—</span>'}</dd>
-          <dt>컬러</dt><dd>${r.colors}개</dd>
+          <dt>베리에이션</dt><dd>${r.colors}개</dd>
           ${r.remark ? `<dt>비고</dt><dd>${esc(r.remark)}</dd>` : ""}
         </dl>
       </div>
@@ -58,7 +58,7 @@ function rowHTML(r, i) {
       <td class="c-no">${i + 1}</td>
       <td class="c-y">${r.year || "—"}</td><td class="c-m">${r.month ? r.month + "월" : "—"}</td>
       <td class="c-img"><a href="${href}">${img}</a></td>
-      <td class="c-k">${r.kind ? `<b>${esc(r.kind)}</b><small>${esc(KIND_LABEL[r.kind] || "")}</small>` : "—"}</td>
+      <td class="c-k">${r.kind ? esc(KIND_LABEL[r.kind] || r.kind) : "—"}</td>
       <td class="c-name">${esc(r.name) || '<span class="rp-dim">—</span>'}${r.cat ? `<small>분류 ${esc(r.cat)}</small>` : ""}</td>
       <td class="c-code"><a href="${href}">${esc(r.code)}</a>${r.source && r.source !== "code" ? `<small title="코드가 개발일 규칙(G/M+숫자 5자리)이 아니어서 ${r.source === "devDate" ? "직접 적은 개발 년월" : "가장 이른 작업일"}로 셌습니다">개발일 추정</small>` : ""}</td>
       <td class="c-dev">${esc(r.developer) || '<span class="rp-dim">미입력</span>'}</td>
@@ -83,11 +83,11 @@ function paint() {
         <div class="rp-kpis">
           <div><b>${sm.total}</b><span>개발 패턴</span></div>
           <div><b>${sm.byVehicle.length}</b><span>제안 차종</span></div>
-          <div><b>${sm.colors}</b><span>컬러 베리에이션</span></div>
+          <div><b>${sm.colors}</b><span>베리에이션</span></div>
         </div></header>
       ${rows.length ? `<div class="rp-grid">
         <div class="rp-card rp-wide"><h4>월별 개발 수</h4>${barsHTML(sm.byMonth)}</div>
-        <div class="rp-card">${rankHTML("분류 (G·M)", sm.byKind)}${rankHTML("이미지 분류", sm.byCat, 6)}</div>
+        <div class="rp-card">${rankHTML("분류", sm.byKind)}${rankHTML("이미지 분류", sm.byCat, 6)}</div>
         <div class="rp-card">${rankHTML("담당자", sm.byDeveloper)}</div>
         <div class="rp-card">${rankHTML("제안 차종", sm.byVehicle, 10)}</div>
       </div>` : `<p class="rp-empty">조건에 맞는 패턴이 없습니다.</p>`}
@@ -113,7 +113,7 @@ export function renderReport() {
       <div class="rp-tools no-print">
         <h2>개발 실적 보고서</h2>
         ${sel("rp-year", "연도", S.year, opt.years, (y) => y + "년")}
-        ${sel("rp-kind", "분류", S.kind, ["G", "M"], (k) => `${k} ${KIND_LABEL[k]}`)}
+        ${sel("rp-kind", "분류", S.kind, ["G", "M"], (k) => KIND_LABEL[k])}
         ${sel("rp-dev", "담당자", S.developer, opt.developers)}
         ${sel("rp-veh", "제안 차종", S.vehicle, opt.vehicles)}
         <div class="seg" role="radiogroup" aria-label="배치">${[["cards", "사진 2열"], ["table", "목록(엑셀식)"]].map(([k, l]) =>
