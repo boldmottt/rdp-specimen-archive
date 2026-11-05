@@ -11,6 +11,7 @@
  */
 import { $, $$, App, esc, thumbUrl } from "./core.js";
 import { KIND_LABEL, reportOptions, reportRows, summarize } from "./report-rules.js";
+import { openReportBakeDialog } from "./bake-dialog.js";
 
 /* 보고서 구성 — 넣을 칸과 순서를 고른다(이 브라우저에 기억). 제목 글자도 칸마다 고칠 수 있다. */
 const SECTIONS = {
@@ -136,8 +137,8 @@ const SECTION_HTML = {
   },
   cards: (rows) => `<section class="rp-sec rp-sec-page">${headHTML("cards")}<div class="rp-cards">${rows.map(cardHTML).join("")}</div></section>`,
   table: (rows) => `<section class="rp-sec rp-sec-page">${headHTML("table")}
-      <table class="rp-table"><thead><tr>${cols().map(([, t, c]) => `<th class="${c}">${t}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map(rowHTML).join("")}</tbody></table></section>`,
+      <div class="rp-tscroll"><table class="rp-table"><thead><tr>${cols().map(([, t, c]) => `<th class="${c}">${t}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map(rowHTML).join("")}</tbody></table></div></section>`,
 };
 
 function paint() {
@@ -227,6 +228,7 @@ export function renderReport() {
         ${sel("rp-veh", "제안 차종", S.vehicle, opt.vehicles)}
         <button type="button" class="tool" id="rp-cfg" aria-expanded="${S.panel}">보고서 구성 ▾</button>
         <input id="rp-title" placeholder="보고서 제목 (비우면 자동)" value="${esc(S.title)}">
+        <button type="button" class="tool" id="rp-bake" title="맥이 꺼져 있어도 보게 — 사진까지 든 HTML · PDF 를 _bake 폴더에 (자동으로 새로 굽기도)">파일로 굽기</button>
         <button type="button" class="btn-dark" id="rp-print">PDF 로 저장 · 인쇄</button>
       </div>
       ${panelHTML()}
@@ -245,6 +247,8 @@ export function renderReport() {
     $("#rp-panel").hidden = !S.panel;
   };
   bindPanel();
+  $("#rp-bake").onclick = () => openReportBakeDialog({ year: S.year, kind: S.kind, developer: S.developer, vehicle: S.vehicle,
+    title: S.title, layout: S.layout, hidden: [...S.hidden], titles: S.titles });
   $("#rp-print").onclick = () => {
     const imgs = $$("#rp-body img");     // 사진이 다 뜬 뒤에 인쇄해야 PDF 에 빈칸이 안 생긴다
     imgs.forEach((im) => { im.loading = "eager"; });

@@ -1953,6 +1953,118 @@ class BakeTests(Base):
         self.assertEqual(server.bake_auto_tick(now=now + server.BAKE_QUIET + 2), [], "바뀐 게 없으면 다시 굽지 않는다")
 
 
+class ReportRulesPyTests(unittest.TestCase):
+    """bake_report.py 규칙이 web/js/report-rules.js 와 같은지 — tests/report.test.mjs 와 같은 예."""
+
+    def test_same_as_js(self):
+        import bake_report as br
+        self.assertEqual(br.parse_pattern_code("G50223F1"), {"kind": "G", "year": 2025, "month": 2, "day": 23, "cat": "F", "seq": 1})
+        self.assertEqual(br.parse_pattern_code("M-60213-F2"), {"kind": "M", "year": 2026, "month": 2, "day": 13, "cat": "F", "seq": 2})
+        self.assertEqual(br.parse_pattern_code("G-10305"), {"kind": "G", "year": 2021, "month": 3, "day": 5, "cat": "", "seq": None})
+        self.assertIsNone(br.parse_pattern_code("G51323F1"))
+        self.assertIsNone(br.parse_pattern_code("W01"))
+        d = br.dev_info({"pattern": {"code": "W01"}, "variations": [{"date": "2026.3.9"}, {"date": "2025-12-01"}]})
+        self.assertEqual((d["year"], d["month"], d["source"]), (2025, 12, "date"))
+
+        def P(pid, project, code, pat=None, label=None, variations=None):
+            return {"id": pid, "project": project, "pattern": {"code": code, **(pat or {})}, "label": label or {},
+                    "variations": variations or [{"id": "v01", "images": []}]}
+        ps = [P("HX5-G50223F1", "HX5", "G50223F1", {"nameKo": "패브릭 체크", "developer": "담당자A", "vehicles": ["NQ5"]},
+                variations=[{"id": "v01", "images": ["a.jpg"], "vehicles": ["SP3"]}]),
+              P("KQ2-G50223F1", "KQ2", "G50223F1"),
+              P("HX5-M50301T1", "HX5", "M50301T1", {"developer": "담당자B"}, {"remark": "선행"}),
+              P("HX5-W01", "HX5", "W01", variations=[{"id": "v01", "date": "2024-05-02"}])]
+        rows = br.report_rows(ps)
+        self.assertEqual([r["code"] for r in rows], ["W01", "G50223F1", "M50301T1"])
+        g = rows[1]
+        self.assertEqual(g["vehicles"], ["HX5", "NQ5", "SP3", "KQ2"])
+        self.assertEqual(g["image"], {"pid": "HX5-G50223F1", "file": "a.jpg"})
+        self.assertEqual((g["developer"], g["name"], g["kind"], g["cat"]), ("담당자A", "패브릭 체크", "G", "F"))
+        self.assertEqual([r["code"] for r in br.report_rows(ps, {"year": 2025})], ["G50223F1", "M50301T1"])
+        self.assertEqual([r["code"] for r in br.report_rows(ps, {"vehicle": "KQ2"})], ["G50223F1"])
+        self.assertEqual(len(br.report_rows([P("A", "HX5", "M-60213-F2"), P("B", "KQ2", "M60213F2")])), 1)
+        sm = br.summarize(br.report_rows([P("A", "HX5", "G50223F1", {"developer": "담당자A"}),
+                                          P("B", "HX5", "G50224T1", {"developer": "담당자A"}), P("C", "KQ2", "M50301F1")], {"year": 2025}))
+        self.assertEqual(sm["byMonth"][:3], [0, 2, 1])
+        self.assertEqual(sm["byKind"], [("지오메트릭", 2), ("메테리얼", 1)])
+        self.assertEqual(sm["byDeveloper"], [("담당자A", 2), ("담당자 미입력", 1)])
+        self.assertEqual(sm["byVehicle"], [("HX5", 2), ("KQ2", 1)])
+
+    def test_config_is_cleaned(self):
+        import bake_report as br
+        c = br.normalize_config({"year": "2026", "kind": "X", "layout": [["table", True], ["evil", True], ["table", False]],
+                                 "hidden": ["developer", "nope"], "titles": {"cards": "올해 패턴", "x": "y"}})
+        self.assertEqual(c["year"], 2026)
+        self.assertEqual(c["kind"], "")
+        self.assertEqual([k for k, _ in c["layout"]], ["table", "kpi", "monthly", "stats", "cards"])
+        self.assertEqual(c["layout"][0], ["table", True])
+        self.assertFalse(any(v for k, v in c["layout"][1:]), "빠진 칸은 꺼진 채로 붙인다")
+        self.assertEqual((c["hidden"], c["titles"]), (["developer"], {"cards": "올해 패턴"}))
+
+
+class ReportBakeTests(Base):
+    """개발 실적 보고서 굽기 — 고른 구성(칸·항목·제목·연도) 그대로, 사진은 파일 안에, 구성은 기억해서 자동으로 다시."""
+
+    def setUp(self):
+        super().setUp()
+        server.CFG["chromePath"] = os.path.join(self.tmp, "없는-chrome")
+        self._which = server.shutil.which
+        server.shutil.which = lambda *_a, **_k: None
+        os.makedirs(os.path.join(server.IMAGES, "HX5-G50223F1"), exist_ok=True)
+        from PIL import Image
+        Image.new("RGB", (340, 140), (120, 90, 60)).save(os.path.join(server.IMAGES, "HX5-G50223F1", "a.jpg"), "JPEG")
+        d = pattern("HX5-G50223F1", "HX5", "G-50223-F1", [{"id": "v01", "images": ["a.jpg"], "vehicles": ["SP3"]}])
+        d["pattern"].update(nameKo="<i>패브릭</i>", developer="담당자A")
+        d["label"]["remark"] = "선행 개발"
+        self.write_pattern(d)
+        self.write_pattern(pattern("KQ2-M60301T1", "KQ2", "M-60301-T1", [{"id": "v01"}]))
+        self.cfg = {"year": 2025, "layout": [["cards", True], ["kpi", True], ["table", True], ["monthly", False], ["stats", False]],
+                    "hidden": ["developer", "remark"], "titles": {"cards": "올해의 패턴"}, "title": "상반기 보고"}
+
+    def tearDown(self):
+        server.shutil.which = self._which
+        super().tearDown()
+
+    def read(self, name):
+        with open(os.path.join(server.bake_dir(), name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_bake_uses_config_and_remembers_it(self):
+        st, r = self.req("POST", "/api/bake/report", {"config": self.cfg, "pdf": False})
+        self.assertEqual(st, 200, r)
+        self.assertEqual((r["html"], r["rows"], r["pdf"]), ("개발실적보고서.html", 1, ""))
+        h = self.read(r["html"])
+        self.assertIn("data:image/jpeg;base64,", h)
+        self.assertIn("상반기 보고", h)
+        self.assertIn("올해의 패턴", h)
+        self.assertIn("G-50223-F1", h)
+        self.assertNotIn("M-60301-T1", h, "2025년만")
+        self.assertIn("&lt;i&gt;패브릭&lt;/i&gt;", h)
+        for w in ("담당자A", "선행 개발", "월별 개발 수", ">담당자<"):
+            self.assertNotIn(w, h, "끈 항목·칸은 빠진다")
+        self.assertLess(h.index("올해의 패턴"), h.index('class="rp-kpis"'), "칸 순서 그대로")
+        self.assertIn(".rp-pc{", h, "앱의 보고서 CSS 를 그대로 넣는다")
+        st, info = self.req("GET", "/api/bake")
+        self.assertEqual(info["report"]["titles"], {"cards": "올해의 패턴"})
+        self.assertIn("개발실적보고서.html", [f["name"] for f in info["files"]])
+        st, r2 = self.req("POST", "/api/bake/report", {"pdf": False})      # 구성 없이 = 마지막 구성
+        self.assertEqual((st, r2["rows"]), (200, 1))
+
+    def test_without_saved_config_is_400(self):
+        self.assertEqual(self.req("POST", "/api/bake/report", {"pdf": False})[0], 400)
+
+    def test_auto_rebakes_report_with_saved_config(self):
+        self.req("POST", "/api/bake/auto", {"report": True, "pdf": False})
+        self.assertEqual(server.bake_auto_tick(now=time.time() + server.BAKE_QUIET + 1), [], "구운 구성이 없으면 건너뜀")
+        self.req("POST", "/api/bake/report", {"config": self.cfg, "pdf": False})
+        hp = os.path.join(server.bake_dir(), "개발실적보고서.html")
+        os.utime(hp, (time.time() - 1000, time.time() - 1000))           # 시편이 보고서보다 나중에 바뀐 것처럼
+        now = time.time()
+        self.assertEqual(server.bake_auto_tick(now=now + server.BAKE_QUIET + 1), ["report"], "시편 자동 굽기는 꺼져 있어도 보고서만")
+        self.assertEqual(server.bake_auto_tick(now=now + server.BAKE_QUIET + 2), [])
+        self.assertIn("올해의 패턴", self.read("개발실적보고서.html"))
+
+
 class VehiclesTests(Base):
     """제안 차종 — 한 패턴을 여러 차종에 제안한다. 쉼표 글자도 목록으로, 목록이 아니면 저장 거부."""
 

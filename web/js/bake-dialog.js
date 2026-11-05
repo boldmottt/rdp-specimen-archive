@@ -80,3 +80,68 @@ export async function openBakeDialog(scope) {
   };
   load();
 }
+
+/** 개발 실적 보고서를 보기 전용 파일로 — 보고서 화면의 지금 구성(칸·항목·제목·연도) 그대로.
+ *  @param config  report-page.js 의 구성 {year, kind, developer, vehicle, title, layout, hidden, titles} */
+export async function openReportBakeDialog(config) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "recipe-preview bake-dlg";
+  dlg.innerHTML = `<button class="mini-btn recipe-close" type="button">닫기</button>
+    <h3>보고서를 보기 전용 파일로</h3>
+    <p class="recipe-help">맥이 꺼져 있어도 볼 수 있게 <b>지금 보이는 보고서 그대로</b>(칸 · 순서 · 넣을 항목 · 제목 · 연도) 사진까지 들어간
+      HTML 한 파일과 PDF 로 만들어요. 파일만 보내면 바로 열려요 — 고칠 수는 없는 사본이에요.</p>
+    <label class="bk-pdf"><input type="checkbox" id="bk-pdf" checked> PDF 도 만들기 <small id="bk-pdfnote"></small></label>
+    <div class="bulk-actions"><button type="button" class="btn-dark" id="bk-go">만들기</button></div>
+    <p class="bk-status" id="bk-status" aria-live="polite"></p>
+    <div class="bk-files" id="bk-files"></div>
+    <label class="bk-auto"><input type="checkbox" id="bk-auto"> <span>시편을 고치면 <b>이 보고서도 자동으로 새로 굽기</b>
+      (마지막으로 [만들기]한 구성으로 · 고친 뒤 2분 조용할 때, 서버가 켜져 있는 동안)</span></label>
+    <p class="recipe-help bk-tip">데이터 폴더가 구글 드라이브에 있으면 휴대폰 <b>드라이브 앱 → RDP-Archive → _bake → 개발실적보고서.pdf</b>.
+      드라이브에서 [공유] → 링크를 보내면 맥이 꺼져 있어도 상대가 바로 열어 봐요.</p>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector(".recipe-close").onclick = () => dlg.close();
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.showModal();
+
+  const $d = (s) => dlg.querySelector(s);
+  const paintFiles = (info) => {
+    const files = (info.files || []).filter((f) => f.name.startsWith("개발실적보고서"));
+    $d("#bk-files").innerHTML = files.length
+      ? `<p class="bk-where">저장 위치: <code>${esc(info.folder)}</code></p><ul>${files.map((f) => `<li><a href="${fileUrl(f.name)}" download="${esc(f.name)}">${esc(f.name)}</a>
+          <span>${kb(f.size)} · ${esc(f.mtime)}</span></li>`).join("")}</ul>`
+      : `<p class="bk-where">아직 구운 보고서가 없어요 — 저장 위치: <code>${esc(info.folder)}</code></p>`;
+  };
+  const load = async () => {
+    try {
+      const info = await apiGet("/api/bake");
+      paintFiles(info);
+      $d("#bk-auto").checked = !!(info.auto && info.auto.report);
+      if (!info.pdfReady) {
+        $d("#bk-pdf").checked = false;
+        $d("#bk-pdf").disabled = true;
+        $d("#bk-pdfnote").textContent = "— 이 컴퓨터에서 Chrome 을 찾지 못했어요. HTML 을 열어 인쇄 → PDF 로 저장하면 돼요";
+      }
+    } catch (e) { $d("#bk-status").textContent = "불러오지 못했어요: " + e.message; }
+  };
+  $d("#bk-auto").onchange = async (e) => {
+    try {
+      await apiPost("/api/bake/auto", { report: e.target.checked });
+      toast(e.target.checked ? "시편을 고치면 보고서도 자동으로 새로 구워요 (마지막으로 만든 구성으로)" : "보고서 자동 굽기를 껐어요");
+    } catch (err) { e.target.checked = !e.target.checked; toast("바꾸지 못했어요: " + err.message); }
+  };
+  $d("#bk-go").onclick = async () => {
+    const go = $d("#bk-go");
+    go.disabled = true;
+    $d("#bk-status").textContent = "만드는 중… 사진이 많으면 1~2분 걸려요";
+    try {
+      const r = await apiPost("/api/bake/report", { config, pdf: $d("#bk-pdf").checked });
+      $d("#bk-status").innerHTML = `완료 — 패턴 ${r.rows}개 (${esc(r.bakedAt)} 기준)
+        · <a href="${fileUrl(r.html)}" download="${esc(r.html)}">HTML ${kb(r.htmlSize)}</a>${r.pdf ? ` · <a href="${fileUrl(r.pdf)}" download="${esc(r.pdf)}">PDF ${kb(r.pdfSize)}</a>` : ""}
+        ${r.pdfError ? `<br><small>${esc(r.pdfError)}</small>` : ""}`;
+      await load();
+    } catch (e) {
+      $d("#bk-status").textContent = "만들지 못했어요: " + e.message;
+    } finally { go.disabled = false; }
+  };
+  load();
+}
