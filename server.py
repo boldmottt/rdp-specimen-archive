@@ -40,6 +40,7 @@ from urllib.parse import urlparse, parse_qs, unquote, quote
 from pccs import api as pccs_api   # 작업일지(PCCS3) — PyYAML이 없어도 import는 된다
 from colorlab import api as lab_api   # 컬러연구소 — 측색 라이브러리 · 색 예측
 import bake as bake_mod   # 보기 전용 파일 굽기 (서버 없이 보는 HTML · PDF)
+import bake_report as bake_report_mod   # 개발 실적 보고서를 보기 전용 파일로
 from colorlab import colormath as cm   # 대표색(사진) → LAB · ΔE2000
 
 try:
@@ -2276,10 +2277,10 @@ def bake_dir() -> str:
     return d
 
 
-def _bake_img(pid, name) -> str:
-    """사진 → 480px 축소본(카드와 같은 캐시)을 data: URL 로. 못 읽으면 '' (그 컬러는 '사진 없음')."""
+def _bake_img(pid, name, w=480) -> str:
+    """사진 → 축소본(카드와 같은 캐시, 기본 480px)을 data: URL 로. 못 읽으면 '' (그 컬러는 '사진 없음')."""
     try:
-        path, _src = ensure_thumb(pid, name, 480)
+        path, _src = ensure_thumb(pid, name, w)
         with open(path, "rb") as f:
             return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode("ascii")
     except Exception:   # noqa: BLE001 — 사진 하나 때문에 굽기 전체가 멈추면 안 된다
@@ -2358,6 +2359,52 @@ def bake(audience="internal", ids=None, pdf=True) -> dict:
         return out
 
 
+REPORT_BAKE_NAME = "개발실적보고서"
+
+
+def _report_cfg_path() -> str:
+    return os.path.join(bake_dir(), "report.json")
+
+
+def report_cfg_get():
+    """마지막으로 구운 보고서 구성 (없으면 None)."""
+    try:
+        with open(_report_cfg_path(), encoding="utf-8") as f:
+            return bake_report_mod.normalize_config(json.load(f))
+    except (OSError, ValueError):
+        return None
+
+
+def bake_report(cfg=None, pdf=True) -> dict:
+    """개발 실적 보고서를 보기 전용 HTML(+PDF)로 굽는다. cfg 를 주면 그 구성을 기억하고, 없으면 마지막 구성으로."""
+    with BAKE_LOCK:
+        if cfg is not None:
+            cfg = bake_report_mod.normalize_config(cfg)
+            atomic_write(_report_cfg_path(), json.dumps(cfg, ensure_ascii=False, indent=2).encode("utf-8"))
+        else:
+            cfg = report_cfg_get()
+            if cfg is None:
+                raise ValueError("아직 구운 보고서 구성이 없습니다 — 보고서 화면에서 한 번 구워 주세요")
+        docs = load_all()[0]
+        baked_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        html, n = bake_report_mod.build_report_html(docs, _bake_img, cfg, css=bake_report_mod.report_css(WEB),
+                                                    brand=CFG.get("brand", "RDP"), baked_at=baked_at)
+        folder = bake_dir()
+        hp = os.path.join(folder, REPORT_BAKE_NAME + ".html")
+        atomic_write(hp, html.encode("utf-8"))
+        out = {"ok": True, "folder": folder, "html": REPORT_BAKE_NAME + ".html", "htmlSize": os.path.getsize(hp),
+               "bakedAt": baked_at, "rows": n, "pdf": "", "pdfError": ""}
+        if pdf:
+            pp = os.path.join(folder, REPORT_BAKE_NAME + ".pdf")
+            err = html_to_pdf(hp, pp)
+            if err:
+                out["pdfError"] = err
+            else:
+                out["pdf"] = REPORT_BAKE_NAME + ".pdf"
+                out["pdfSize"] = os.path.getsize(pp)
+        return out
+
+
 def bake_files() -> list:
     d = bake_dir()
     return sorted(({"name": n, "size": os.path.getsize(os.path.join(d, n)),
@@ -2376,7 +2423,8 @@ def bake_auto_get() -> dict:
     except (OSError, ValueError):
         a = {}
     aud = [x for x in (a.get("audiences") or ["internal"]) if x in BAKE_NAMES] or ["internal"]
-    return {"enabled": bool(a.get("enabled")), "audiences": aud, "pdf": a.get("pdf", True) is not False}
+    return {"enabled": bool(a.get("enabled")), "audiences": aud, "pdf": a.get("pdf", True) is not False,
+            "report": bool(a.get("report"))}   # report: 개발 실적 보고서도 마지막 구성으로 다시 굽기
 
 
 def bake_auto_set(body) -> dict:
@@ -2387,6 +2435,8 @@ def bake_auto_set(body) -> dict:
         cur["audiences"] = [x for x in body["audiences"] if x in BAKE_NAMES] or ["internal"]
     if "pdf" in body:
         cur["pdf"] = bool(body["pdf"])
+    if "report" in body:
+        cur["report"] = bool(body["report"])
     atomic_write(_bake_auto_path(), json.dumps(cur, ensure_ascii=False, indent=2).encode("utf-8"))
     return cur
 
@@ -2404,18 +2454,27 @@ BAKE_QUIET = 120        # 마지막 저장 뒤 이만큼(초) 조용하면 굽�
 def bake_auto_tick(now=None) -> list:
     """자동 굽기 한 번: 켜져 있고, 마지막으로 구운 뒤 시편이 바뀌었고, 바뀐 지 BAKE_QUIET 초가 지났으면 굽는다."""
     a = bake_auto_get()
-    if not a["enabled"] or other_servers():
+    if not (a["enabled"] or a["report"]) or other_servers():
         return []   # 다른 PC 서버도 켜져 있으면 굽지 않는다(같은 파일을 두 곳에서 쓰지 않게)
     now = now or time.time()
     changed = _latest_change()
     done = []
-    for aud in a["audiences"]:
-        hp = os.path.join(bake_dir(), BAKE_NAMES[aud] + ".html")
+
+    def due(name):
+        hp = os.path.join(bake_dir(), name + ".html")
         last = os.path.getmtime(hp) if os.path.isfile(hp) else 0.0
-        if changed > last and now - changed >= BAKE_QUIET:
-            r = bake(aud, None, a["pdf"])
-            print(f"[bake] 자동으로 구웠어요: {r['html']}{' + ' + r['pdf'] if r['pdf'] else ''}{' (' + r['pdfError'] + ')' if r['pdfError'] else ''}")
+        return changed > last and now - changed >= BAKE_QUIET
+
+    def said(r):
+        print(f"[bake] 자동으로 구웠어요: {r['html']}{' + ' + r['pdf'] if r['pdf'] else ''}{' (' + r['pdfError'] + ')' if r['pdfError'] else ''}")
+
+    for aud in a["audiences"] if a["enabled"] else []:
+        if due(BAKE_NAMES[aud]):
+            said(bake(aud, None, a["pdf"]))
             done.append(aud)
+    if a["report"] and report_cfg_get() is not None and due(REPORT_BAKE_NAME):
+        said(bake_report(None, a["pdf"]))
+        done.append("report")
     return done
 
 
@@ -2745,7 +2804,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(400, str(e))
             if p == "/api/bake":
                 return self.json({"ok": True, "folder": bake_dir(), "files": bake_files(), "auto": bake_auto_get(),
-                                  "pdfReady": bool(find_chrome())})
+                                  "pdfReady": bool(find_chrome()), "report": report_cfg_get()})
             if p == "/api/bake/file":
                 name = (parse_qs(u.query).get("name") or [""])[0]
                 if name not in {f["name"] for f in bake_files()}:
@@ -3050,6 +3109,15 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(self.read_body() or b"{}")
                     ids = body.get("ids") if isinstance(body.get("ids"), list) else None
                     return self.json(bake(str(body.get("audience") or "internal"), ids, body.get("pdf", True) is not False))
+                except ValueError as e:
+                    return self.error(400, str(e))
+            if p == "/api/bake/report":
+                try:
+                    body = json.loads(self.read_body() or b"{}")
+                    if not isinstance(body, dict):
+                        raise ValueError("JSON 형식 오류")
+                    cfg = body.get("config") if isinstance(body.get("config"), dict) else None
+                    return self.json(bake_report(cfg, body.get("pdf", True) is not False))
                 except ValueError as e:
                     return self.error(400, str(e))
             if p == "/api/bake/auto":

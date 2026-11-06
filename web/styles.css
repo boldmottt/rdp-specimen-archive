@@ -1227,7 +1227,8 @@ a.prop-status.ok:hover{background:#fff}
 .rp-tools h2{margin:0 8px 0 0;font-size:22px}
 .rp-tools label{display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--ink-2)}
 .rp-tools select,.rp-tools input{height:34px;border:1px solid var(--line-2);border-radius:8px;background:#fff;font:inherit;font-size:13px;padding:0 8px}
-.rp-tools input{min-width:220px}
+.rp-tools input{min-width:170px}
+.rp-tools #rp-title{width:220px}
 .rp-tools select:focus,.rp-tools input:focus{outline:none;border-color:var(--rp-ink)}
 .rp-tools .tool[aria-expanded="true"]{background:var(--rp-ink);color:#fff;border-color:var(--rp-ink)}
 .rp-tools .btn-dark{margin-left:auto;background:var(--rp-ink);border-color:var(--rp-ink);font-weight:650}
@@ -1370,3 +1371,8 @@ h4.rp-sec-h{font-size:13px;color:var(--ink-2)}
   body.report-mode .rp-pc-no{width:5mm;min-width:5mm;height:5mm;font-size:7pt;left:2mm;top:2mm}
   body.report-mode .rp-chip{font-size:7pt;padding:0 4px}
 }
+.rp-tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.rp-bm{white-space:nowrap}
+@media (max-width:520px){.rp-bars{gap:3px}.rp-bm{font-size:9px;letter-spacing:-.04em}.rp-bn{font-size:10px}}
+@media print{body.report-mode .rp-tscroll{overflow:visible}}
+/* 개발 실적 보고서 끝 */
