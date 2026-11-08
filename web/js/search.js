@@ -238,7 +238,15 @@ export function matchVars(p, Q) {
 
   const vt = Q.terms.filter((t) => VAR_KEYS.has(t.key));
   const vars = p.variations || [];
-  if (!vt.length) return vars.map((v) => v.id);
+  if (!vt.length) {
+    // 컬러 문법 없이 그냥 단어로 찾았는데 그 단어가 **이 시편의 컬러 코드·이름과 같으면**
+    // 그 컬러로 좁힌다 — 그래야 카드 사진·배지가 검색한 컬러를 가리킨다(예: 'F3024' 만 입력).
+    if (Q.text && !Q.notText.length) {
+      const hitVars = vars.filter((v) => low(v.colorCode).includes(Q.text) || low(v.colorName).includes(Q.text));
+      if (hitVars.length && hitVars.length < vars.length) return hitVars.map((v) => v.id);
+    }
+    return vars.map((v) => v.id);
+  }
   const vids = vars.filter((v) => evalTerms(vt, orKeys, (t) => testVar(p, v, t) !== t.neg)).map((v) => v.id);
   return vids.length ? vids : null;
 }

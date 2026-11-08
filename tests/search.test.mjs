@@ -329,3 +329,28 @@ test("개발년도 · 담당자 · 도장 컬러 조건", async () => {
   assert.deepEqual(m("도장:C-2002"), ["v2"]);                   // 컬러 단위
   assert.deepEqual(m("coat:c-1001"), ["v1"]);
 });
+
+test("그냥 단어로 찾아도 그 단어가 컬러 코드·이름이면 그 컬러로 좁힌다", () => {
+  const p = mk("A", "G-1", "P", [], [
+    { id: "v01", colorCode: "B3961", colorName: "블랙", layerPlates: { "1도": "26_012" } },
+    { id: "v02", colorCode: "F3024", colorName: "실버", layerPlates: { "1도": "26_012" } },
+  ]);
+  // 코드만 입력 (color: 접두 없이)
+  assert.deepEqual(matchVars(p, parseQuery("F3024")), ["v02"]);
+  // 이름만 입력
+  assert.deepEqual(matchVars(p, parseQuery("실버")), ["v02"]);
+  // 컬러와 무관한 단어는 좁히지 않는다
+  assert.deepEqual(matchVars(p, parseQuery("G-1")), ["v01", "v02"]);
+  // color: 문법은 예전과 같다
+  assert.deepEqual(matchVars(p, parseQuery("color:F3024")), ["v02"]);
+});
+
+test("이름이 붙은 컬러도 코드로 찾으면 그 컬러가 걸린다 (현장 사례 F3024·실버)", () => {
+  const p = mk("A", "G-2", "P", [], [
+    { id: "v01", colorCode: "B3961", colorName: "블랙", layerPlates: { "1도": "26_012" } },
+    { id: "v02", colorCode: "E3940", colorName: "메탈 브라운", layerPlates: { "1도": "26_012" } },
+    { id: "v03", colorCode: "F3024", colorName: "실버", layerPlates: { "1도": "26_012" } },
+  ]);
+  assert.deepEqual(matchVars(p, parseQuery("F3024")), ["v03"]);
+  assert.deepEqual(matchVars(p, parseQuery("color:F3024")), ["v03"]);
+});
