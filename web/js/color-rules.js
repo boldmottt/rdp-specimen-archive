@@ -55,3 +55,19 @@ export function badgeFor(pid, vid, de, best) {
   if (typeof d !== "number" || !Number.isFinite(d)) return null;
   return { de: d, label: deLabel(d), isBest: !!(best && best.vid === vid) };
 }
+
+/**
+ * 검색이 컬러를 좁혔을 때(도장 컬러·작업장소·상태 …) 카드에 처음 보여 줄 컬러.
+ *   걸린 컬러 중 사진이 있는 첫 컬러 → 없으면 걸린 첫 컬러. 좁히지 않았으면(전부 걸림) 원래대로 첫 컬러.
+ * @param vars  패턴의 variations
+ * @param hits  matchVars 가 돌려준 걸린 컬러 id 배열 (없으면 전부 걸린 것으로)
+ */
+export function hitFirst(vars, hits) {
+  const list = vars || [];
+  if (!list.length) return null;
+  const set = new Set(hits || list.map((v) => v.id));
+  if (list.every((v) => set.has(v.id))) return list[0].id;
+  const hit = list.filter((v) => set.has(v.id));
+  const withImg = hit.find((v) => (v.images || []).length);
+  return (withImg || hit[0] || list[0]).id;
+}

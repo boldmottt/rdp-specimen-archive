@@ -254,6 +254,8 @@ a.media:focus-visible::after{content:"";position:absolute;inset:0;z-index:2;poin
 .vchip.in .nm{color:var(--ink);font-weight:600}
 .vchip.in:after{content:"✓";font-size:11px;font-weight:700;margin-left:-1px}
 .vchip-all{padding:4px 10px;color:var(--ink-2)}
+.vchip.miss{opacity:.42}
+.vchip.miss:hover,.vchip.miss.on{opacity:1}
 .vchip-all:hover{border-color:var(--ink);color:var(--ink)}
 
 /* cart bar */
