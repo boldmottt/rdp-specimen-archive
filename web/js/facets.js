@@ -92,14 +92,22 @@ export function autoFacets(patterns, workOf, topPerKind = 6) {
   ];
   const out = [];
   kinds.forEach(({ kind, label, unit, byValue }) => {
-    const cnt = new Map();
+    const cnt = new Map();     // 값 → 시편(카드) 수 — 눌렀을 때 결과의 'N장'과 같다
+    const cols = new Map();    // 값 → 컬러 수 (컬러 단위 칩의 안내용)
     const add = (val) => { val = String(val == null ? "" : val).trim(); if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1); };
+    const addVar = (seen, val) => {   // 컬러 하나의 값 — 시편 수는 시편마다 한 번만
+      val = String(val == null ? "" : val).trim();
+      if (EMPTY_VALS.includes(val)) return;
+      cols.set(val, (cols.get(val) || 0) + 1);
+      if (!seen.has(val)) { seen.add(val); cnt.set(val, (cnt.get(val) || 0) + 1); }
+    };
     (patterns || []).forEach((p) => {
       if (kind === "devyear") { add(devInfo(p).year || ""); return; }
       if (kind === "developer") { add((p.pattern || {}).developer); return; }
       if (kind === "project") { vehiclesOf(p).forEach(add); return; }      // 등록 프로젝트 + 제안 차종
       if (kind === "coat") {                                               // 컬러마다 도장 코드(한 컬러에 같은 코드는 한 번)
-        (p.variations || []).forEach((v) => new Set((v.coating || []).map((c) => String((c && c.code) || "").trim())).forEach(add));
+        const seen = new Set();
+        (p.variations || []).forEach((v) => new Set((v.coating || []).map((c) => String((c && c.code) || "").trim())).forEach((x) => addVar(seen, x)));
         return;
       }
       if (unit === "pattern") {
@@ -115,6 +123,7 @@ export function autoFacets(patterns, workOf, topPerKind = 6) {
         if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1);
         return;
       }
+      const seen = new Set();
       (p.variations || []).forEach((v) => {
         let val = "";
         if (kind === "place") val = String((workOf ? workOf(p, v) : (p.work || {})).place || "").trim();
@@ -122,11 +131,11 @@ export function autoFacets(patterns, workOf, topPerKind = 6) {
           const n = layersOf(v).length;
           val = n ? layerLabel(n) : "";
         }
-        if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1);
+        addVar(seen, val);
       });
     });
     if (cnt.size < 2) return;                       // 한 종류뿐이면 걸러낼 의미가 없다
-    const values = [...cnt].map(([val, n]) => ({ val, n }))
+    const values = [...cnt].map(([val, n]) => (unit === "color" ? { val, n, colors: cols.get(val) || 0 } : { val, n }))
       .sort(byValue ? (a, b) => b.val.localeCompare(a.val, "ko", { numeric: true })   // 연도는 최근 순으로 전부
         : (a, b) => b.n - a.n || a.val.localeCompare(b.val, "ko"))
       .slice(0, byValue ? 30 : topPerKind);

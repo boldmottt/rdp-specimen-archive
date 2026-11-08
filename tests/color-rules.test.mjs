@@ -3,7 +3,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bestVar, deLabel, baseVid, badgeFor } from "../web/js/color-rules.js";
+import { bestVar, deLabel, baseVid, badgeFor, hitFirst } from "../web/js/color-rules.js";
 
 const de = new Map([["P1/v01", 8.4], ["P1/v02", 2.3], ["P1/v03", 5.0], ["P2/v01", 1.0]]);
 
@@ -54,4 +54,13 @@ test("badgeFor — 그 컬러의 ΔE 가 없으면 null(배지를 숨긴다)", (
   assert.equal(badgeFor("P9", "v01", de, best), null, "다른 시편");
   assert.equal(badgeFor("P1", "", de, best), null);
   assert.equal(badgeFor("P1", "v01", null, best), null);
+});
+
+test("hitFirst — 검색에 걸린 컬러(사진 있는 것 먼저)를 카드에 보여 준다", () => {
+  const vars = [{ id: "v1", images: ["a.jpg"] }, { id: "v2", images: [] }, { id: "v3", images: ["c.jpg"] }];
+  assert.equal(hitFirst(vars, ["v1", "v2", "v3"]), "v1", "좁히지 않았으면 원래대로 첫 컬러");
+  assert.equal(hitFirst(vars, undefined), "v1");
+  assert.equal(hitFirst(vars, ["v2", "v3"]), "v3", "걸린 것 중 사진 있는 것");
+  assert.equal(hitFirst(vars, ["v2"]), "v2", "사진 없어도 걸린 컬러");
+  assert.equal(hitFirst([], ["v1"]), null);
 });

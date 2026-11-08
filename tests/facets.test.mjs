@@ -54,8 +54,10 @@ test("autoFacets — 종류별 값과 개수", () => {
   const byKind = Object.fromEntries(f.map((x) => [x.kind, x]));
   assert.deepEqual(byKind.code.values.map((v) => `${v.val}:${v.n}`), ["M:2", "G:1"]);
   assert.deepEqual(byKind.client.values.map((v) => `${v.val}:${v.n}`), ["현대자동차:1", "HYUNDAI:1"]);
-  // 작업장소는 컬러 단위로 센다(A 는 두 컬러 모두 공통값 미성통상 → 2)
-  assert.deepEqual(byKind.place.values.map((v) => `${v.val}:${v.n}`), ["미성통상:2", "API:1"]);
+  // 작업장소는 컬러마다 판정하지만 칩 숫자는 '장(시편)' — 눌렀을 때 결과의 N장과 같다.
+  // A 는 두 컬러 모두 미성통상 → 1장 · 컬러 2개
+  assert.deepEqual(byKind.place.values.map((v) => `${v.val}:${v.n}`).sort(), ["API:1", "미성통상:1"]);
+  assert.equal(byKind.place.values.find((v) => v.val === "미성통상").colors, 2);
   assert.deepEqual(byKind.layers.values.map((v) => `${v.val}:${v.n}`), ["1도:2", "2도:1"]);
 });
 
@@ -103,4 +105,15 @@ test("자동 태그 — 개발년도(최근 순) · 담당자 · 제안차종(�
   assert.deepEqual(rows.developer, ["담당자A:2", "담당자B:1"]);
   assert.deepEqual(rows.project, ["HX5:2", "KQ2:2"]);
   assert.deepEqual(rows.coat, ["C-1:2", "C-2:1"]);
+});
+
+test("도장 컬러 칩 숫자 = 걸리는 시편 수 (컬러 수는 따로)", async () => {
+  const { autoFacets } = await import("../web/js/facets.js");
+  const ps = [
+    { pattern: { code: "G-1" }, variations: [{ id: "v1", coating: [{ code: "DC-1" }] }, { id: "v2", coating: [{ code: "DC-1" }] }, { id: "v3", coating: [{ code: "DC-2" }] }] },
+    { pattern: { code: "G-2" }, variations: [{ id: "v1", coating: [{ code: "DC-1" }] }] },
+  ];
+  const coat = autoFacets(ps, null, 6).find((r) => r.kind === "coat");
+  const dc1 = coat.values.find((v) => v.val === "DC-1");
+  assert.deepEqual([dc1.n, dc1.colors], [2, 3]);   // 2장 · 컬러 3개
 });

@@ -6,7 +6,7 @@ import { parseQuery, matchVars, tokenize, tagToken, withoutToken, tagCounts, fie
 // 선택·일괄 편집·CSV (규칙은 bulk-rules.js, 화면은 bulk.js). 서로 import 하지 않고 데이터를 넘긴다.
 import { bindPicks, selectionBarHTML, openBulkDialog, downloadCsv } from "./bulk.js";
 // 색 정렬에서 "가장 가까운 컬러"를 고르는 규칙 — 정렬 키와 카드 표시가 같은 함수를 쓴다
-import { bestVar, deLabel, baseVid, badgeFor } from "./color-rules.js";
+import { bestVar, deLabel, baseVid, hitFirst, badgeFor } from "./color-rules.js";
 import { autoFacets } from "./facets.js";
 import { compareFromSelection } from "./compare-page.js";
 import { openWorklogPicker } from "./from-worklog.js";
@@ -209,7 +209,11 @@ function cardHTML(p) {
   // 색 정렬 중에는 '기준색과 가장 가까운 컬러'를 보여 준다. 커서를 올린 칩(p._sel)이 있으면 그게 우선.
   const colorMode = App.sort === "color" && !!App.de;   // 색 정렬 중인가(배지 자리를 그릴지 결정)
   const best = colorMode ? BEST.get(p.id) : null;
-  const vid = baseVid({ sel: p._sel, best, first: vars[0] && vars[0].id });
+  // 검색이 컬러를 좁혔으면(도장:DC-101 등) 걸린 컬러를 먼저 보여 준다 — 사진도 그 컬러의 것
+  const hits = HITS.get(p.id);
+  const narrowed = !!hits && hits.length < vars.length;
+  const hitSet = new Set(hits || []);
+  const vid = baseVid({ sel: p._sel, best, first: hitFirst(vars, hits) });
   const v = varOf(p, vid) || vars[0];
   // 배지는 '지금 보이는 컬러'의 ΔE — 사진과 배지가 항상 같은 컬러를 가리킨다.
   // 색 정렬일 때만 자리를 만들고(최근순·코드순은 예전과 똑같이 배지가 없다),
@@ -225,7 +229,7 @@ function cardHTML(p) {
   const dot = (x) => (x.images && x.images.length ? html`<span class="vdot" data-src="${thumbUrl(p.id, x.images[0], 120)}"></span>` : raw('<span class="vdot"></span>'));
   const chips = vars.length > 1
     ? html`${vars.map((x) => html`
-      <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}${best && best.vid === x.id ? " best" : ""}" data-sel="${x.id}" title="클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
+      <button class="vchip${inCart(p.id, x.id) ? " in" : ""}${x.id === (v && v.id) ? " on" : ""}${best && best.vid === x.id ? " best" : ""}${narrowed && !hitSet.has(x.id) ? " miss" : ""}" data-sel="${x.id}" title="${narrowed && !hitSet.has(x.id) ? "검색 조건에 안 걸린 컬러 · " : ""}클릭: 제안서에 담기/빼기 · 커서를 올리면 미리보기">
         ${dot(x)}
         <span class="nm">${vName(x)}</span>
       </button>`)}<button class="vchip vchip-all" data-all="1" title="이 패턴의 모든 컬러를 한 번에">${vars.every((x) => inCart(p.id, x.id)) ? "전체 빼기" : `전체 ${vars.length}색`}</button>`
@@ -344,7 +348,7 @@ export function renderCatalog() {
         const tok = fieldToken(row.kind, v.val);
         const on = hasToken(App.q, tok);
         return `<button class="chip auto${on ? " on" : ""}" data-auto="${esc(tok)}"
-          title="${esc(row.label)} ${esc(v.val)} — 눌러서 거르기(자동 태그, 저장되지 않음)">${esc(v.val)}<span class="n">${v.n}</span></button>`;
+          title="${esc(row.label)} ${esc(v.val)} — ${v.n}장${v.colors != null && v.colors !== v.n ? ` · 컬러 ${v.colors}개` : ""} · 눌러서 거르기(자동 태그, 저장되지 않음)">${esc(v.val)}<span class="n">${v.n}</span></button>`;
       }).join("");
       return `<span class="auto-group"><span class="auto-lbl">${esc(row.label)}</span>${chips}</span>`;
     }).join("");
