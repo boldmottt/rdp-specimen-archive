@@ -187,15 +187,76 @@ def validate(doc):
         raise model.ModelError("Yule–Nielsen n은 1~10")
     cards = {k: _check_meas((st.get("cards") or {}).get(k), f"기본 {t}") for k, t in (("white", "흰 카드"), ("black", "검정 카드"))}
     settings = {"yn": yn}
+    if st.get("observer") not in (None, ""):
+        if str(st["observer"]) not in cm.OBSERVERS:
+            raise model.ModelError("관찰자는 2 또는 10 (°)")
+        settings["observer"] = str(st["observer"])
+    settings["tolerance"] = _check_tolerance(st.get("tolerance"))
     if st.get("basis") not in (None, ""):
         if st["basis"] not in cm.BASES:
             raise model.ModelError(f"3채널 기저는 {' / '.join(cm.BASES)} 중 하나")
         settings["basis"] = st["basis"]
     if any(cards.values()):
         settings["cards"] = {k: v for k, v in cards.items() if v}
-    fits = doc.get("fits") or {}
     return {"schema": "colorlab/v1", "inks": inks, "substrates": subs, "plates": plates, "transfers": transfers,
-            "settings": settings, "fits": {"active": _check_run(fits.get("active")), "previous": _check_run(fits.get("previous"))}}
+            "settings": settings, "fits": _check_fits(doc.get("fits"))}
+
+
+def _check_tolerance(t):
+    """허용 기준: 공식(ΔE00 / ΔE*ab / CMC 2:1) · 한도 · (선택) 축별 한도 |ΔL| |Δa| |Δb|."""
+    t = t if isinstance(t, dict) else {}
+    formula = str(t.get("formula") or "de00")
+    if formula not in cm.FORMULAS:
+        raise model.ModelError("허용 공식은 de00 / de76 / cmc 중 하나")
+    limit = _num(t.get("limit", 1.0), "허용 한도")
+    if not 0 < limit <= 50:
+        raise model.ModelError("허용 한도는 0 초과 50 이하")
+    axes = {}
+    for k in ("dL", "da", "db"):
+        v = (t.get("axes") or {}).get(k) if isinstance(t.get("axes"), dict) else None
+        if v not in (None, ""):
+            v = _num(v, f"{k} 한도")
+            if v <= 0:
+                raise model.ModelError(f"{k} 한도는 0보다 커야 합니다")
+            axes[k] = v
+    return {"formula": formula, "limit": limit, **({"axes": axes} if axes else {})}
+
+
+def tolerance(doc_or_lib):
+    st = doc_or_lib.settings if hasattr(doc_or_lib, "settings") else (doc_or_lib.get("settings") or {})
+    try:
+        return _check_tolerance(st.get("tolerance"))
+    except model.ModelError:
+        return {"formula": "de00", "limit": 1.0}
+
+
+def judge(tol, target, lab):
+    """고객 규격으로 판정: {공식, 값, 한도, 합격, 넘은 축}."""
+    label, fn = cm.FORMULAS[tol["formula"]]
+    v = fn(tuple(target), tuple(lab))
+    parts = cm.lab_parts(tuple(target), tuple(lab))
+    over = [k for k, lim in (tol.get("axes") or {}).items() if abs(parts[k]) > lim]
+    return {"formula": label, "value": round(v, 2), "limit": tol["limit"], "ok": v <= tol["limit"] and not over,
+            "over": over}
+
+
+def _check_fits(fits):
+    """보정 프로필 목록 — 동판 × 모드 × 계산 공간마다 하나. 예전 형식 {'active', 'previous'}도 받아 바꾼다."""
+    fits = fits or {}
+    if not isinstance(fits, dict):
+        raise model.ModelError("fits는 객체여야 합니다")
+    runs = {}
+    for r in model.fits_runs(fits):
+        r = _check_run(r)
+        runs[model.run_key(r)] = r                     # 같은 키가 둘이면 나중 것
+    prev = {}
+    old = fits.get("previous")
+    if isinstance(old, dict) and "mode" in old:        # 예전 형식: 바로 전 프로필 하나
+        old = {model.run_key(old): old}
+    for k, r in (old or {}).items() if isinstance(old, dict) else []:
+        if r:
+            prev[str(k)] = _check_run(r)
+    return {"runs": list(runs.values()), "previous": prev}
 
 
 def _check_run(run):
@@ -414,7 +475,7 @@ def recipe_preview(lib, doc, body, mode):
     total = sum(recipe["inks"].values())
     ingredients = [{"name": n, "g": g, "pct": g / total * 100} for n, g in recipe["inks"].items()]
     warnings = ["모델 예상색이며 실측값이 아닙니다. 혼합·새 바탕은 실측 검증이 필요합니다.",
-                "LAB/화면 견본은 D65·2° 가정입니다. 측정 조건과 다르면 비교할 수 없습니다."]
+                f"분광으로 계산한 LAB는 D65·{lib.observer}° 기준입니다 (라이브러리 › 계산 설정). 측정 조건과 다르면 비교할 수 없습니다."]
     if not plate:
         warnings.append("동판 미지정: 상대 두께 ×1.00, 퍼짐 없음 가정")
     if len(ingredients) < len([v for v in (body.get("recipe") or {}).get("inks", {}).values() if float(v) > 0]):
@@ -423,15 +484,16 @@ def recipe_preview(lib, doc, body, mode):
         solid = (lib.inks[n].get("cal") or {}).get("solid")
         if solid:
             warnings += [x["msg"] for x in fitmod.diagnose_measurement(solid, mode, space, n)]
-    if lib.profile:
-        bounds = (lib.profile.get("applicability") or {}).get("tones")
+    runs = [lib.plate_run(plate, mode, space)] if plate else []
+    runs += [lib.ink_run(n, mode, space) for n in recipe["inks"]]
+    for run in [r for i, r in enumerate(runs) if r and r not in runs[:i]]:
+        bounds = (run.get("applicability") or {}).get("tones")
         if bounds and not bounds[0] <= tone <= bounds[1]:
-            warnings.append(f"망점 {tone * 100:g}%는 보정 시료 범위 {bounds[0] * 100:g}~{bounds[1] * 100:g}% 밖: 외삽 가정입니다.")
-        stale = fitmod.stale_reasons(lib.profile, doc)
-        warnings += ["보정 프로필 재맞추기 필요: " + x for x in stale]
-        confidence = (lib.profile.get("confidence") or {}).get("level")
+            warnings.append(f"망점 {tone * 100:g}%는 동판 {run.get('plate')} 보정 시료 범위 {bounds[0] * 100:g}~{bounds[1] * 100:g}% 밖: 외삽 가정입니다.")
+        warnings += [f"동판 {run.get('plate')} 보정 프로필 재맞추기 필요: " + x for x in fitmod.stale_reasons(run, doc)]
+        confidence = (run.get("confidence") or {}).get("level")
         if confidence:
-            warnings.append(f"저장된 보정 프로필 신뢰도: {confidence} (현재 배합의 검증 결과는 아님)")
+            warnings.append(f"동판 {run.get('plate')} 보정 프로필 신뢰도: {confidence} (현재 배합의 검증 결과는 아님)")
     return {**result, "ingredients": ingredients, "warnings": list(dict.fromkeys(warnings))}
 
 
@@ -482,10 +544,15 @@ def describe_library(doc, lib=None):
                             "dot50": round(info["dot50"], 4), "gain_src": info["gain_src"], "accuracy": acc,
                             "samples": sum(1 for t in doc.get("transfers") or [] if t.get("plate") == p["lot"])}
     fits = doc.get("fits") or {}
-    profile = {"active": _run_summary(fits.get("active"), doc), "previous": _run_summary(fits.get("previous"), None),
-               "basis": lib.basis}
+    runs = sorted(model.fits_runs(fits), key=lambda r: (str(r.get("plate")), r.get("mode") or ""))
+    prev = fits.get("previous") if isinstance(fits.get("previous"), dict) and "mode" not in fits.get("previous", {}) else (
+        {model.run_key(fits["previous"]): fits["previous"]} if isinstance(fits.get("previous"), dict) else {})
+    profile = {"runs": [dict(_run_summary(r, doc), key=model.run_key(r)) for r in runs],
+               "previous": {k: _run_summary(v, None) for k, v in (prev or {}).items() if v},
+               "basis": lib.basis, "observer": lib.observer}
     return {"inks": inks, "substrates": subs, "plates": plates, "transfers": trs, "profile": profile,
-            "db_codes": list(model.DB_INK_CODES)}
+            "db_codes": list(model.DB_INK_CODES), "tolerance": tolerance(doc),
+            "formulas": {k: v[0] for k, v in cm.FORMULAS.items()}}
 
 
 def _run_summary(run, doc):
@@ -605,31 +672,56 @@ def apply_profile(data_root, backup_dir, body, base_rev):
         raise model.ModelError("적용할 수 없는 결과입니다: " + " / ".join(run["confidence"]["reasons"]))
     if level == "낮음" and not body.get("ack_low"):
         raise model.ModelError("신뢰도가 낮은 결과입니다 — 확인 표시 후 적용해 주세요")
-    fits = doc.get("fits") or {}
-    doc["fits"] = {"active": run, "previous": fits.get("active") or fits.get("previous")}
+    fits = _check_fits(doc.get("fits"))
+    key = model.run_key(run)
+    runs = [r for r in fits["runs"] if model.run_key(r) != key]
+    old = [r for r in fits["runs"] if model.run_key(r) == key]
+    prev = dict(fits["previous"])
+    if old:
+        prev[key] = old[0]
+    doc["fits"] = {"runs": runs + [run], "previous": prev}
     code, r = save_library(data_root, backup_dir, doc, doc.get("updatedAt"))
     return code, {**r, "id": run.get("id")}
 
 
-def switch_profile(data_root, backup_dir, action, base_rev):
-    """revert: 바로 전 프로필로 되돌리기 · off: 프로필 끄기 (끈 것은 '바로 전'으로 남는다)."""
+def switch_profile(data_root, backup_dir, action, base_rev, key=None):
+    """그 동판·모드 프로필(key = '동판|모드|공간')만: revert 바로 전 프로필로 · off 끄기 (끈 것은 '바로 전'으로 남는다).
+    key를 안 주면 가장 최근에 적용한 프로필."""
     with _guard:
         doc = load_library(data_root)
-    fits = doc.get("fits") or {}
+    fits = _check_fits(doc.get("fits"))
+    runs, prev = list(fits["runs"]), dict(fits["previous"])
+    if not key:
+        key = model.run_key(sorted(runs, key=lambda r: str(r.get("created") or ""))[-1]) if runs else (next(iter(prev), None))
+    cur = [r for r in runs if model.run_key(r) == key]
+    rest = [r for r in runs if model.run_key(r) != key]
     if action == "revert":
-        if not fits.get("previous"):
+        if key not in prev:
             raise model.ModelError("되돌릴 이전 프로필이 없습니다")
-        doc["fits"] = {"active": fits["previous"], "previous": fits.get("active")}
+        back = prev.pop(key)
+        if cur:
+            prev[key] = cur[0]
+        doc["fits"] = {"runs": rest + [back], "previous": prev}
     else:
-        if not fits.get("active"):
+        if not cur:
             raise model.ModelError("켜져 있는 프로필이 없습니다")
-        doc["fits"] = {"active": None, "previous": fits["active"]}
+        prev[key] = cur[0]
+        doc["fits"] = {"runs": rest, "previous": prev}
     return save_library(data_root, backup_dir, doc, base_rev)
 
 
 def handle(method, path, query, body, ctx):
     """ctx: {'data': dataRoot, 'backup': 백업 폴더, 'patterns': fn, 'worklog': fn|None, 'rev': X-Base-Rev}
     반환: (HTTP 상태, JSON)."""
+    try:
+        obs = (load_library(ctx["data"]).get("settings") or {}).get("observer") or "2"
+    except (OSError, ValueError, AttributeError):
+        obs = "2"
+    with cm.use_observer(obs):
+        return _handle(method, path, query, body, ctx)
+
+
+def _handle(method, path, query, body, ctx):
     try:
         if method == "GET" and path == "/api/lab/inks":
             return 200, {"ok": True, **ink_catalog(load_library(ctx["data"]))}
@@ -654,6 +746,7 @@ def handle(method, path, query, body, ctx):
             a, b = _lab3(body.get("a"), "기준"), _lab3(body.get("b"), "비교")
             parts = cm.lab_parts(a, b)
             return 200, {"ok": True, "dE2000": round(cm.delta_e2000(a, b), 3), "dE76": round(cm.delta_e76(a, b), 3),
+                         "dEcmc": round(cm.delta_e_cmc(a, b), 3), "judge": judge(tolerance(lib), a, b),
                          "parts": {k: round(v, 3) for k, v in parts.items()}, "text": cm.describe(parts),
                          "hex": [cm.lab_to_hex(a), cm.lab_to_hex(b)]}
         if path == "/api/lab/recipe-preview":
@@ -666,9 +759,11 @@ def handle(method, path, query, body, ctx):
             if body.get("target"):
                 t = _lab3(body["target"], "목표")
                 r["target"] = {"lab": t, "hex": cm.lab_to_hex(t)}
+                tol = tolerance(lib)
                 for v in list(r["regions"].values()) + ([r["average"]] if "average" in r else []):
                     v["dE"] = round(cm.delta_e2000(v["lab"], t), 2)
                     v["diff"] = cm.describe(cm.lab_parts(t, v["lab"]))
+                    v["judge"] = judge(tol, t, v["lab"])
             return 200, {"ok": True, **r}
         if path == "/api/lab/recommend":
             r = model.recommend(lib, _lab3(body.get("target"), "목표"), _substrate(body), body.get("inks") or [],
@@ -676,21 +771,30 @@ def handle(method, path, query, body, ctx):
                                 ink_total=_num(body.get("ink_total") or 60, "잉크 합계"), under=body.get("under") or None,
                                 plate=body.get("plate"), hardener_pct=_num(body.get("hardener_pct", 20), "경화제%"),
                                 thinner_pct=_num(body.get("thinner_pct", 30), "신나%"),
-                                matting_pct=_num(body.get("matting_pct", 0), "소광제%"), tone=_tone(body))
-            return 200, {"ok": True, **r}
+                                matting_pct=_num(body.get("matting_pct", 0), "소광제%"), tone=_tone(body),
+                                formula=tolerance(lib)["formula"])
+            tol, tgt = tolerance(lib), _lab3(body.get("target"), "목표")
+            for c in r["candidates"]:
+                c.pop("score", None)
+                c["judge"] = judge(tol, tgt, c["lab"])
+            return 200, {"ok": True, **r, "tolerance": tol}
         if path == "/api/lab/correct":
             r = model.correct(lib, body.get("current"), _lab3(body.get("measured"), "측정"), _lab3(body.get("target"), "목표"),
                               _substrate(body), mode=mode, adjustable=body.get("adjustable") or None,
                               under=body.get("under") or None, plate=body.get("plate"),
-                              change_weight=_num(body.get("change_weight", 0.5), "변경 벌점"), tone=_tone(body))
-            return 200, {"ok": True, **r}
+                              change_weight=_num(body.get("change_weight", 0.5), "변경 벌점"), tone=_tone(body),
+                              formula=tolerance(lib)["formula"])
+            tol, tgt = tolerance(lib), _lab3(body.get("target"), "목표")
+            r["now"]["judge"] = judge(tol, tgt, _lab3(body.get("measured"), "측정"))
+            r["expected"]["judge"] = judge(tol, tgt, r["expected"]["lab"])
+            return 200, {"ok": True, **r, "tolerance": tol}
         if path == "/api/lab/profile/preview":
             run = fitmod.run_profile(load_library(ctx["data"]), mode=mode, plate=body.get("plate"), space=body.get("space"))
             return 200, {"ok": True, "run": run, "snapshot": fitmod.fingerprint(run["snapshot"])}
         if path == "/api/lab/profile/apply":
             return apply_profile(ctx["data"], ctx["backup"], body, ctx.get("rev"))
         if path in ("/api/lab/profile/revert", "/api/lab/profile/off"):
-            return switch_profile(ctx["data"], ctx["backup"], path.rsplit("/", 1)[1], ctx.get("rev"))
+            return switch_profile(ctx["data"], ctx["backup"], path.rsplit("/", 1)[1], ctx.get("rev"), body.get("key"))
         return 404, {"ok": False, "error": "not found"}
     except model.ModelError as e:
         return 400, {"ok": False, "error": str(e)}

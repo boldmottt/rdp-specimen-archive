@@ -514,7 +514,7 @@ class ProfileStoreTests(unittest.TestCase):
         st, r = api.handle("POST", "/api/lab/profile/apply", {}, {"mode": "sci", "plate": "DEMO_002", "snapshot": j["snapshot"]}, self.ctx())
         self.assertEqual(st, 200)
         doc = api.load_library(self.dir)
-        run = doc["fits"]["active"]
+        run = doc["fits"]["runs"][-1]
         self.assertEqual(run["id"], r["id"])
         self.assertIn("transfers", run["snapshot"])
         self.assertEqual(fit.stale_reasons(run, doc), [])
@@ -540,7 +540,7 @@ class ProfileStoreTests(unittest.TestCase):
         api.save_library(self.dir, self.backup, doc, doc["updatedAt"])
         st, r = api.handle("POST", "/api/lab/profile/apply", {}, {"mode": "sci", "plate": "DEMO_002", "snapshot": j["snapshot"]}, self.ctx())
         self.assertEqual(st, 409)
-        self.assertIsNone(api.load_library(self.dir)["fits"]["active"])
+        self.assertFalse(model.fits_runs(api.load_library(self.dir).get("fits")))
 
     def test_low_confidence_needs_ack(self):
         doc = api.load_library(self.dir)
@@ -756,8 +756,8 @@ class HttpTests(unittest.TestCase):
         st, j = self.req("POST", "/api/lab/predict", {"substrate": "흰 카드", "layer1": recipe({"Y2": 60}), "plate": "DEMO_002"})
         self.assertEqual((st, j["sources"]), (200, {"Y2": "profile"}))
         st, j = self.req("GET", "/api/lab/library")
-        self.assertEqual(j["info"]["profile"]["active"]["inks"], ["Y2"])
-        self.assertEqual(j["info"]["profile"]["active"]["stale"], [])
+        self.assertEqual(j["info"]["profile"]["runs"][0]["inks"], ["Y2"])
+        self.assertEqual(j["info"]["profile"]["runs"][0]["stale"], [])
         rev = j["library"]["updatedAt"]
         st, j = self.req("POST", "/api/lab/profile/off", {}, extra={"X-Base-Rev": rev})
         self.assertEqual(st, 200)
@@ -766,7 +766,7 @@ class HttpTests(unittest.TestCase):
         rev = api.load_library(self.dir)["updatedAt"]
         st, j = self.req("POST", "/api/lab/profile/revert", {}, extra={"X-Base-Rev": rev})
         self.assertEqual(st, 200)
-        self.assertEqual(api.load_library(self.dir)["fits"]["active"]["plate"], "DEMO_002")
+        self.assertEqual(api.load_library(self.dir)["fits"]["runs"][-1]["plate"], "DEMO_002")
         st, j = self.req("POST", "/api/lab/predict", {"substrate": "없는코드", "layer1": recipe({"WH": 1})})
         self.assertEqual(st, 400)
         st, j = self.req("POST", "/api/lab/predict", b"not json")
@@ -852,3 +852,95 @@ class P0FixTests(unittest.TestCase):
         info = api.describe_library(synth.library())
         self.assertIn("BL", info["db_codes"])
         self.assertIn("VL", info["db_codes"])
+
+
+class P1Tests(unittest.TestCase):
+    """심층 리뷰 P1: 프로필 여러 개(동판×모드) · 다른 동판 잉크를 고정값으로 · 추정 전파 · 관찰자 · 허용 기준."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="lab-p1-")
+        self.backup = os.path.join(self.dir, "_backup")
+        doc = synth.library()
+        # DEMO_003: 같은 Y2를 막두께 ×1.3 · 다른 망점 곡선으로 찍은 동판 (DEMO_002와 같은 LPI)
+        v = synth.SOLID_ONLY["Y2"]
+        curve = [[0.2, 0.3], [0.4, 0.55], [0.6, 0.75], [0.8, 0.93], [0.95, 0.99]]
+        doc["plates"].append({"lot": "DEMO_003", "lpi": 150, "depth_um": 30, "coverage": {"1도": 0.6}})
+        doc["plates"].append({"lot": "P_NEW", "lpi": 150, "depth_um": 25, "coverage": {"1도": 0.6}})
+        for tone in (95, 80, 60, 40):
+            rec = {"inks": {"Y2": 60}, "hardener": {"g": 12}, "thinner": {"g": 18}}
+            cov = synth.curve_at(curve, tone / 100)
+            meas = {m: [round(x, 2) for x in synth.patch_lab(synth._lab_mode(synth.WHITE_CARD, m), v["k"], v["s"], rec, cov, m, 1.3)]
+                    for m in ("sci", "sce")}
+            doc["transfers"].append({"date": "2026-02-01", "plate": "DEMO_003", "substrate": "흰 카드",
+                                     "layer1": {"inks": {"Y2": 60}, "tone": tone}, "thinner_pct": 30, "hardener_pct": 20,
+                                     "matting_pct": 0, "measured": meas})
+        api.save_library(self.dir, self.backup, doc, "")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def apply(self, plate, mode="sci"):
+        d = api.load_library(self.dir)
+        run = fit.run_profile(d, mode, plate)
+        code, r = api.apply_profile(self.dir, self.backup, {"mode": mode, "plate": plate, "space": run["space"],
+                                                            "snapshot": fit.fingerprint(run["snapshot"]), "ack_low": True}, d["updatedAt"])
+        self.assertEqual(code, 200, r)
+        return run
+
+    def test_second_plate_keeps_first_and_fits_relative_thickness(self):
+        self.apply("DEMO_002")
+        run3 = self.apply("DEMO_003")
+        self.assertEqual(run3["inks"], {}, "Y2는 DEMO_002 프로필 값을 고정으로 썼다")
+        self.assertAlmostEqual(run3["plates"]["DEMO_003"]["thickness"], 1.3, delta=0.05)
+        doc = api.load_library(self.dir)
+        self.assertEqual(sorted(r["plate"] for r in doc["fits"]["runs"]), ["DEMO_002", "DEMO_003"])
+        lib = model.Library(doc)
+        r = model.predict(lib, "흰 카드", {"inks": {"Y2": 10}, "hardener": {"g": 2}, "thinner": {"g": 3}}, plate="DEMO_002")
+        self.assertEqual(r["sources"], {"Y2": "profile"})          # 첫 동판 잉크도 그대로
+        self.assertEqual(lib.plate_info("DEMO_003", "sci", run3["space"])["thickness_src"], "보정 프로필 (기준 동판 대비 상대값)")
+        # 끄기·되돌리기는 그 동판만
+        key = model.run_key(run3)
+        api.switch_profile(self.dir, self.backup, "off", api.load_library(self.dir)["updatedAt"], key)
+        self.assertEqual([r["plate"] for r in api.load_library(self.dir)["fits"]["runs"]], ["DEMO_002"])
+        api.switch_profile(self.dir, self.backup, "revert", api.load_library(self.dir)["updatedAt"], key)
+        self.assertEqual(len(api.load_library(self.dir)["fits"]["runs"]), 2)
+
+    def test_same_lpi_plate_uses_profile_curve_and_sce_hint(self):
+        run = self.apply("DEMO_002")
+        lib = model.Library(api.load_library(self.dir))
+        info = lib.plate_info("P_NEW", "sci", run["space"])
+        self.assertIn("DEMO_002", info["gain_src"])
+        self.assertGreater(info["dot50"], 0.55)                     # 퍼짐 없음(50%)이 아니라 프로필 곡선
+        self.assertIn("프로필 값 포함", info["thickness_src"])
+        with self.assertRaises(model.ModelError) as e:
+            lib.ink_params("Y2", "sce", "xyz")
+        self.assertIn("SCI", str(e.exception))                      # 다른 모드엔 프로필이 있다고 알려 줌
+
+    def test_old_fits_format_is_migrated(self):
+        doc = api.load_library(self.dir)
+        run = fit.run_profile(doc, "sci", "DEMO_002")
+        doc["fits"] = {"active": run, "previous": None}
+        clean = api.validate(doc)
+        self.assertEqual([r["plate"] for r in clean["fits"]["runs"]], ["DEMO_002"])
+        self.assertEqual(model.Library(doc).ink_run("Y2", "sci", run["space"])["plate"], "DEMO_002")
+
+    def test_observer_setting_changes_spectral_lab(self):
+        spec = [0.05 + 0.85 / (1 + math.exp((480 - w) / 12)) for w in cm.WAVELENGTHS]     # 노랑
+        a, b = cm.spectrum_to_lab(spec, "2"), cm.spectrum_to_lab(spec, "10")
+        self.assertGreater(cm.delta_e2000(a, b), 0.5)
+        with cm.use_observer("10"):
+            self.assertEqual(model.meas_lab({"sci_spec": spec}, "sci"), b)
+        self.assertEqual(model.meas_lab({"sci_spec": spec}, "sci"), a)
+        self.assertEqual(api.validate({"settings": {"observer": "10"}})["settings"]["observer"], "10")
+        with self.assertRaises(model.ModelError):
+            api.validate({"settings": {"observer": "5"}})
+
+    def test_tolerance_judge_and_formula(self):
+        tol = api._check_tolerance({"formula": "de76", "limit": 1.0, "axes": {"db": 0.5}})
+        j = api.judge(tol, (85, -3, 80), (85, -3, 83))
+        self.assertEqual((j["formula"], j["value"], j["ok"], j["over"]), ("ΔE*ab", 3.0, False, ["db"]))
+        j00 = api.judge(api._check_tolerance({}), (85, -3, 80), (85, -3, 83))
+        self.assertTrue(j00["ok"])                                   # 같은 차이가 ΔE00로는 합격 (0.64)
+        self.assertAlmostEqual(cm.delta_e_cmc((50, 2.6772, -79.7751), (50, 0, -82.7485)), 1.7387, places=3)
+        with self.assertRaises(model.ModelError):
+            api._check_tolerance({"formula": "xx"})

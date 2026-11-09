@@ -335,7 +335,7 @@
     S.res.predict = `<div class="cl-card"><h3>예측 결과</h3>
       <div class="cl-swatches">${r.target ? `<div class="cl-tile tgt">${sw(r.target.hex, 1)}<b>목표</b><span>${labStr(r.target.lab)}</span></div>` : ""}
       ${regs.map(([k, v]) => `<div class="cl-tile${k === "average" ? " avg" : ""}">${sw(v.hex, 1)}<b>${esc(REGION[k] || k)}</b><span>${labStr(v.lab)}</span>
-        ${v.dE != null ? `<em class="${v.dE <= 1 ? "ok" : v.dE <= 2.5 ? "mid" : "ng"}">ΔE ${v.dE.toFixed(2)}</em><small>${esc(v.diff)}</small>` : ""}</div>`).join("")}</div>
+        ${v.dE != null ? `${judgeTag(v.judge, v.dE)}<small>${esc(v.diff)}</small>` : ""}</div>`).join("")}</div>
       ${noteBox(r)}
       <div class="cl-actions"><button class="cl-btn ghost" data-copy="${esc(yaml)}">일지용 복사 (batches)</button>
       <button class="cl-btn ghost" data-similar="${esc(JSON.stringify((r.average || r.regions.overlap || r.regions.layer1).lab))}">비슷한 과거 사례 찾기</button></div></div>`;
@@ -404,11 +404,11 @@
       max_inks: +val("max", 3), ink_total: +val("total", 60), under: u, hardener_pct: pct.hard, thinner_pct: pct.thin, matting_pct: pct.mat, tone: getTone() };
     const r = await api("POST", "/api/lab/recommend", body);
     const layer = under ? "2도" : "1도";
-    S.res.recommend = `<div class="cl-card"><h3>추천 후보 <small>${esc(S.mode.toUpperCase())} · ΔE2000 순</small></h3>
+    S.res.recommend = `<div class="cl-card"><h3>추천 후보 <small>${esc(S.mode.toUpperCase())} · ${esc(((S.info && S.info.formulas) || {})[(r.tolerance || {}).formula] || "ΔE00")} 순</small></h3>
       <div class="cl-cands">${r.candidates.map((c, i) => `<div class="cl-cand">
         <div class="cl-pair">${sw(r.target_hex, 1)}${sw(c.hex, 1)}</div>
         <div class="cl-cand-b"><b>${i + 1}. ${esc(inkText(c.inks))}</b>
-          <span class="${c.dE <= 1 ? "ok" : c.dE <= 2.5 ? "mid" : "ng"}">ΔE ${c.dE.toFixed(2)}</span> <small>${esc(c.diff)} · ${labStr(c.lab)}</small>
+          ${judgeTag(c.judge, c.dE)} <small>${esc(c.diff)} · ${labStr(c.lab)}</small>
           <div class="cl-actions">
             <button class="cl-btn ghost sm" data-topredict="${esc(JSON.stringify({ layer, inks: c.inks, pct, target: target.join(" "), under: under ? val("u.inks") : "", tone: body.tone }))}">예측으로</button>
             <button class="cl-btn ghost sm" data-copy="${esc(batchYaml(layer, c.inks, pct))}">일지용 복사</button></div></div></div>`).join("")}</div>
@@ -447,8 +447,8 @@
     S.res.correct = `<div class="cl-card"><h3>보정 결과</h3>
       <div class="cl-swatches">
         <div class="cl-tile tgt">${sw(labToHex(body.target), 1)}<b>목표</b><span>${labStr(body.target)}</span></div>
-        <div class="cl-tile">${sw(r.now.hex, 1)}<b>지금</b><span>${labStr(body.measured)}</span><em class="${r.now.dE <= 1 ? "ok" : r.now.dE <= 2.5 ? "mid" : "ng"}">ΔE ${r.now.dE.toFixed(2)}</em><small>${esc(r.now.diff)}</small></div>
-        <div class="cl-tile avg">${sw(r.expected.hex, 1)}<b>보정 후 (예상)</b><span>${labStr(r.expected.lab)}</span><em class="${r.expected.dE <= 1 ? "ok" : r.expected.dE <= 2.5 ? "mid" : "ng"}">ΔE ${r.expected.dE.toFixed(2)}</em><small>${esc(r.expected.diff)}</small></div>
+        <div class="cl-tile">${sw(r.now.hex, 1)}<b>지금</b><span>${labStr(body.measured)}</span>${judgeTag(r.now.judge, r.now.dE)}<small>${esc(r.now.diff)}</small></div>
+        <div class="cl-tile avg">${sw(r.expected.hex, 1)}<b>보정 후 (예상)</b><span>${labStr(r.expected.lab)}</span>${judgeTag(r.expected.judge, r.expected.dE)}<small>${esc(r.expected.diff)}</small></div>
       </div>
       <div class="cl-change">${esc(r.change_text)}</div>
       <p>새 배합: <b>${esc(inkText(r.inks))}</b></p>
@@ -493,7 +493,8 @@
     const r = await api("POST", "/api/lab/deltae", { a, b });
     const p = r.parts;
     S.res.de = `<div class="cl-card"><div class="cl-pair xl">${sw(r.hex[0], 1)}${sw(r.hex[1], 1)}</div>
-      <div class="cl-de"><b class="${r.dE2000 <= 1 ? "ok" : r.dE2000 <= 2.5 ? "mid" : "ng"}">ΔE2000 ${r.dE2000.toFixed(2)}</b> <span>ΔE76 ${r.dE76.toFixed(2)}</span></div>
+      <div class="cl-de"><b class="${deClass(r.dE2000)}">ΔE2000 ${r.dE2000.toFixed(2)}</b> <span>ΔE*ab ${r.dE76.toFixed(2)}</span> <span>CMC(2:1) ${r.dEcmc.toFixed(2)}</span></div>
+      ${r.judge ? `<p>고객 기준: ${judgeTag(r.judge)}</p>` : ""}
       <p class="cl-change">${esc(r.text)}</p>
       <table class="cl-table narrow"><tr><th>ΔL 밝기</th><th>Δa 빨강+/녹색−</th><th>Δb 노랑+/파랑−</th><th>ΔC 채도</th><th>ΔH 색상</th></tr>
       <tr class="mono">${["dL", "da", "db", "dC", "dH"].map((k) => `<td>${p[k] > 0 ? "+" : ""}${p[k].toFixed(2)}</td>`).join("")}</tr></table></div>`;
@@ -514,7 +515,7 @@
   function markDirty() {
     S.dirty = true; status();
     const b = $("#save"); if (b) b.classList.add("hot");
-    PROFILE_BUTTONS.forEach((sel) => { const x = $(sel); if (x) { x.disabled = true; x.title = "라이브러리를 저장한 뒤 할 수 있어요"; } });
+    [...PROFILE_BUTTONS.map((sel) => $(sel)), ...$$("[data-prof-off], [data-prof-revert]")].forEach((x) => { if (x) { x.disabled = true; x.title = "라이브러리를 저장한 뒤 할 수 있어요"; } });
   }
   function blockedByEdits() {
     if (!S.dirty) return false;
@@ -643,11 +644,29 @@
       <p class="cl-note">망점 패치의 평균색을 낼 때 빛이 잉크 가장자리에서 번지는 정도. 1이면 단순 면적 평균. 동판의 망점 곡선이 이 효과까지 함께 담으므로 보통 1로 두세요.</p>
       <label class="cl-f sm"><span>3채널 기저 <em>분광이 없을 때</em></span><select data-p="settings.basis">
         ${[["xyz", "XYZ (권장)"], ["srgb", "sRGB (예전 방식)"]].map(([v, t]) => `<option value="${v}"${((L.settings && L.settings.basis) || "xyz") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
-      <p class="cl-note">XYZ는 진한 노랑·파랑도 잘리지 않습니다. sRGB는 화면 색역 밖 색이 잘려 오차가 커집니다. 바꾸면 보정 프로필을 다시 계산해야 해요.</p></div>
+      <p class="cl-note">XYZ는 진한 노랑·파랑도 잘리지 않습니다. sRGB는 화면 색역 밖 색이 잘려 오차가 커집니다. 바꾸면 보정 프로필을 다시 계산해야 해요.</p>
+      <label class="cl-f sm"><span>측색기 관찰자 <em>분광 → LAB</em></span><select data-p="settings.observer">
+        ${[["2", "2° (CIE 1931)"], ["10", "10° (CIE 1964) — 자동차 업계 보통"]].map(([v, t]) => `<option value="${v}"${String((L.settings && L.settings.observer) || "2") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+      <p class="cl-note">측색기 화면의 LAB가 D65/10°이면 10°로 맞추세요. 분광으로 계산한 LAB를 측색기 LAB와 같은 조건으로 비교합니다 (채도 높은 색은 2°/10° 차이가 수 ΔE). LAB만 쓰는 계산에는 영향이 없어요.</p>
+      <h4>허용 기준 <small>고객 규격 — 합격 표시와 배합 추천·보정의 목표에 씁니다</small></h4>
+      <div class="cl-grid">
+        <label class="cl-f sm"><span>공식</span><select data-p="settings.tolerance.formula">
+          ${[["de00", "ΔE00 (CIEDE2000)"], ["de76", "ΔE*ab (CIE76)"], ["cmc", "ΔE CMC(2:1)"]].map(([v, t]) => `<option value="${v}"${(((L.settings || {}).tolerance || {}).formula || "de00") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label class="cl-f xs"><span>한도</span><input type="number" step="0.1" min="0.1" data-p="settings.tolerance.limit" data-type="num" value="${esc(((L.settings || {}).tolerance || {}).limit ?? 1)}"></label>
+        ${["dL", "da", "db"].map((k) => `<label class="cl-f xs"><span>|${{ dL: "ΔL", da: "Δa", db: "Δb" }[k]}| 한도 <em>선택</em></span><input type="number" step="0.1" min="0" data-p="settings.tolerance.axes.${k}" data-type="num" value="${esc((((L.settings || {}).tolerance || {}).axes || {})[k] ?? "")}"></label>`).join("")}
+      </div></div>
     <div id="spec-panel"></div>`;
   }
 
   const deClass = (d) => (d <= 1 ? "ok" : d <= 2.5 ? "mid" : "ng");
+  // 고객 허용 기준 판정 (라이브러리 › 계산 설정). 판정이 없으면 ΔE00 그대로
+  const AXIS = { dL: "ΔL", da: "Δa", db: "Δb" };
+  function judgeTag(j, de00) {
+    if (!j) return de00 == null ? "" : `<em class="${deClass(de00)}">ΔE ${de00.toFixed(2)}</em>`;
+    const cls = j.ok ? "ok" : j.value <= j.limit * 2 && !j.over.length ? "mid" : "ng";
+    const over = j.over.length ? ` · ${j.over.map((k) => AXIS[k] || k).join("·")} 한도 넘음` : "";
+    return `<em class="${cls}" title="고객 기준 ${esc(j.formula)} ≤ ${j.limit}${de00 != null ? ` · ΔE00 ${de00.toFixed(2)}` : ""}">${esc(j.formula)} ${j.value.toFixed(2)} ${j.ok ? "✓" : "✗"}${over}</em>`;
+  }
   // 회사 DB 잉크 칸 — 서버(model.DB_INK_CODES)가 정한 목록. 못 받았을 때만 기본 9종
   const DB_CODES = () => (S.info && S.info.db_codes) || ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D", "BL", "VL"];
   const recipeText = (inks) => Object.entries(inks || {}).map(([k, v]) => `${k} ${v}`).join(", ");
@@ -711,21 +730,28 @@
 
   function viewProfile() {
     const info = (S.info && S.info.profile) || {};
-    const act = info.active, prev = info.previous;
+    const runs = info.runs || [], prevs = info.previous || {};
     const L = E();
     const counts = {};
-    (L.transfers || []).forEach((t) => { if (t.plate) counts[t.plate] = (counts[t.plate] || 0) + 1; });
+    (L.transfers || []).forEach((t) => { if (t.plate && !t.validation) counts[t.plate] = (counts[t.plate] || 0) + 1; });
     const lots = (L.plates || []).map((p) => p.lot).filter(Boolean);
-    const plate = S.prof.plate || (act && act.plate) || [...lots].sort((a, b) => (counts[b] || 0) - (counts[a] || 0))[0] || "";
+    const plate = S.prof.plate || [...lots].sort((a, b) => (counts[b] || 0) - (counts[a] || 0))[0] || "";
     const run = S.prof.run && S.prof.run.plate === plate && S.prof.run.mode === S.mode ? S.prof.run : null;
-    return `<div class="cl-card" id="profile"><h3>보정 프로필 <small>은폐 도막 + 전사 시료로 잉크·동판을 함께 맞추기</small></h3>
-      <div class="cl-prof-active">${act ? `<b>적용 중</b> 동판 ${esc(act.plate)} · ${esc(act.mode.toUpperCase())} · ${esc(SPACE_LABEL[act.space] || act.space)}
-          · 잉크 ${esc(act.inks.join(", ") || "(측정 보정 잉크만)")} · <span class="cl-tag ${confClass(act.confidence.level)}">신뢰도 ${esc(act.confidence.level)}</span>
-          <span class="cl-note">${esc((act.created || "").replace("T", " "))}</span>
-          ${act.stale && act.stale.length ? `<span class="cl-tag mid" title="계산 이후 바뀐 입력">재맞추기 필요 — ${esc(act.stale.join(" · "))}</span>` : ""}
-          <span class="grow"></span><button class="cl-btn ghost sm" id="prof-off"${S.dirty ? " disabled" : ""}>끄기</button>`
-        : `<span class="cl-note">적용한 프로필이 없습니다 — 은폐 도막만 있는 잉크는 프로필을 적용해야 계산됩니다.</span><span class="grow"></span>`}
-        ${prev ? `<button class="cl-btn ghost sm" id="prof-revert"${S.dirty ? " disabled" : ""} title="${esc(`동판 ${prev.plate} · ${prev.mode.toUpperCase()} · ${(prev.created || "").replace("T", " ")}`)}">${act ? "바로 전 프로필로 되돌리기" : "바로 전 프로필 다시 켜기"}</button>` : ""}</div>
+    const keys = new Set(runs.map((r) => r.key));
+    const offOnly = Object.entries(prevs).filter(([k]) => !keys.has(k));
+    const dis = S.dirty ? " disabled" : "";
+    return `<div class="cl-card" id="profile"><h3>보정 프로필 <small>동판 × 모드(SCI/SCE)마다 하나 — 처음 잉크를 맞춘 동판이 막두께 기준 ×1.00, 다음 동판들은 그 잉크로 막두께·망점 곡선을 맞춤</small></h3>
+      ${runs.length || offOnly.length ? `<table class="cl-table narrow"><thead><tr><th>동판</th><th>모드</th><th>잉크 (산란을 맞춘 것)</th><th>신뢰도</th><th>상태</th><th></th></tr></thead><tbody>
+        ${runs.map((a) => `<tr><td><b>${esc(a.plate)}</b></td><td>${esc(a.mode.toUpperCase())} · ${esc(SPACE_LABEL[a.space] || a.space)}</td>
+          <td>${esc((a.inks || []).join(", ") || "— (막두께·망점 곡선만)")}</td>
+          <td><span class="cl-tag ${confClass(a.confidence.level)}">${esc(a.confidence.level)}</span></td>
+          <td>${a.stale && a.stale.length ? `<span class="cl-tag mid" title="계산 이후 바뀐 입력">재맞추기 필요 — ${esc(a.stale.join(" · "))}</span>` : `<span class="cl-note">${esc((a.created || "").replace("T", " "))}</span>`}</td>
+          <td><button class="cl-btn ghost sm" data-prof-off="${esc(a.key)}"${dis}>끄기</button>
+            ${prevs[a.key] ? `<button class="cl-btn ghost sm" data-prof-revert="${esc(a.key)}"${dis}>바로 전으로</button>` : ""}</td></tr>`).join("")}
+        ${offOnly.map(([k, p]) => `<tr class="off"><td>${esc(p.plate)}</td><td>${esc(p.mode.toUpperCase())} · ${esc(SPACE_LABEL[p.space] || p.space)}</td>
+          <td colspan="3" class="cl-note">꺼 둠</td><td><button class="cl-btn ghost sm" data-prof-revert="${esc(k)}"${dis}>다시 켜기</button></td></tr>`).join("")}
+        </tbody></table>`
+        : `<p class="cl-note">적용한 프로필이 없습니다 — 은폐 도막만 있는 잉크는 프로필을 적용해야 계산됩니다.</p>`}
       <div class="cl-actions">
         <label class="cl-f sm"><span>동판</span><select id="prof-plate">${lots.map((l) => `<option value="${esc(l)}"${l === plate ? " selected" : ""}>${esc(l)} (시료 ${counts[l] || 0})</option>`).join("")}</select></label>
         <span class="cl-note">모드: <b>${S.mode.toUpperCase()}</b> (오른쪽 위에서 바꿈)${S.mode === "sce" ? " — 은폐 도막(광택)과 종이 시료(무광)를 SCE로 비교하면 오차가 커요. SCI 권장" : ""}</span>
@@ -808,11 +834,12 @@
     render();
   }
 
-  async function switchProfile(action) {
+  async function switchProfile(action, key) {
     if (blockedByEdits()) return;
-    if (!confirm(action === "off" ? "적용 중인 보정 프로필을 끌까요? (바로 전 프로필로 남아서 다시 켤 수 있어요)" : "바로 전 프로필로 바꿀까요?")) return;
+    const what = key ? `동판 ${key.split("|")[0]} · ${(key.split("|")[1] || "").toUpperCase()} ` : "";
+    if (!confirm(action === "off" ? `${what}보정 프로필을 끌까요? (바로 전 프로필로 남아서 다시 켤 수 있어요)` : `${what}바로 전 프로필로 바꿀까요?`)) return;
     try {
-      await api("POST", `/api/lab/profile/${action}`, {}, { "X-Base-Rev": S.rev });
+      await api("POST", `/api/lab/profile/${action}`, { key }, { "X-Base-Rev": S.rev });
       await loadLibrary();
       toast(action === "off" ? "프로필을 껐습니다" : "바로 전 프로필로 바꿨습니다");
     } catch (e) { toast(e.message, true); if (e.status === 409) await loadLibrary(); }
@@ -908,8 +935,8 @@
     if ($("#prof-run")) $("#prof-run").onclick = runProfile;
     if ($("#prof-apply")) $("#prof-apply").onclick = applyProfile;
     if ($("#prof-ack")) $("#prof-ack").onchange = (e) => { S.prof.ack = e.target.checked; render(); };
-    if ($("#prof-off")) $("#prof-off").onclick = () => switchProfile("off");
-    if ($("#prof-revert")) $("#prof-revert").onclick = () => switchProfile("revert");
+    $$("[data-prof-off]", root).forEach((b) => (b.onclick = () => switchProfile("off", b.dataset.profOff)));
+    $$("[data-prof-revert]", root).forEach((b) => (b.onclick = () => switchProfile("revert", b.dataset.profRevert)));
   }
 
   function openSpec(path) {

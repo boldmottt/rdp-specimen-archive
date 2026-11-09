@@ -78,9 +78,15 @@ def _solid_rho(cal, mode, space):
     return [(1 - r) ** 2 / (2 * r) for r in rinf], rinf
 
 
+def other_runs(doc, mode, plate):
+    """이 동판·모드를 뺀 나머지 적용 프로필 — 거기서 맞춘 잉크는 이 동판 계산에 '고정값'으로 쓴다
+    (잉크 기준은 처음 잉크를 맞춘 동판 ×1.00 하나로 이어지고, 새 동판은 막두께·망점 곡선만 맞춘다)."""
+    return [r for r in model.fits_runs(doc.get("fits")) if not (r.get("plate") == plate and r.get("mode") == mode)]
+
+
 def choose_space(doc, mode, plate, basis):
     """이 동판 시료·바탕·은폐 도막이 모두 분광을 가지면 분광, 아니면 3채널 기저."""
-    lib = model.Library({**doc, "fits": None})
+    lib = model.Library({**doc, "fits": {"runs": other_runs(doc, mode, plate)}})
     rows = [t for t in doc.get("transfers") or [] if t.get("plate") == plate]
     if not rows:
         return basis
@@ -103,7 +109,7 @@ def choose_space(doc, mode, plate, basis):
 
 def collect(doc, mode, plate, space):
     """이 동판의 전사 시료를 계산용으로 정리하고, 못 쓰는 시료는 이유를 남긴다."""
-    base = model.Library({**doc, "fits": None})      # 측정 경로만 (적용된 프로필은 무시)
+    base = model.Library({**doc, "fits": {"runs": other_runs(doc, mode, plate)}})   # 이 동판 프로필은 빼고
     samples, excluded, inks = [], [], {}
     for i, t in enumerate(doc.get("transfers") or []):
         no = i + 1
@@ -266,7 +272,10 @@ def _fit(samples, inks, space, mode, yn, warm=None, outer=40):
         sse = sum(_sse(patch(smp, films[id(smp)], c[smp["design"]], yn), smp["m"]) for smp in samples)
         return c, sse
 
-    t = 1.0 if free else float((warm or {}).get("t") or 1.0)
+    # 막두께: 고정 잉크만 쓴 시료가 있으면 그 시료가 막두께를 정한다(다른 동판에서 맞춘 잉크 기준).
+    #         자유 잉크만 있으면 이 동판이 그 잉크의 기준(×1.00)
+    fit_t = not free or any(s["free"] is None for s in samples)
+    t = float((warm or {}).get("t") or 1.0) if fit_t else 1.0
     prev = None
     for _ in range(outer):
         for n in free:
@@ -285,13 +294,13 @@ def _fit(samples, inks, space, mode, yn, warm=None, outer=40):
                 best = min((km.nelder_mead(err, c0, step=0.4, iters=600, tol=1e-16, xtol=1e-7) for c0 in cands),
                            key=lambda r: r[1])
                 theta[n] = list(best[0])
-        if not free:
+        if fit_t:
             t = math.exp(km.golden(lambda u: solve_c(theta, math.exp(u))[1], math.log(0.2), math.log(5.0), iters=60))
         c, cur = solve_c(theta, t)
-        if len(free) <= 1 and space != "spec" or (prev is not None and abs(prev - cur) <= 1e-14 + 1e-9 * prev):
+        if (len(free) <= 1 and space != "spec" and not (free and fit_t)) or (prev is not None and abs(prev - cur) <= 1e-14 + 1e-9 * prev):
             break
         prev = cur
-    return {"theta": theta, "c": c, "t": t, "free": free, "sse": cur,
+    return {"theta": theta, "c": c, "t": t, "free": free, "sse": cur, "fit_t": fit_t,
             "penalty": sum(prior_penalty(theta[n], space) for n in free)}
 
 
@@ -498,7 +507,9 @@ def snapshot(doc, mode, plate):
     subs = {s.get("code", ""): fingerprint([x for x in doc.get("substrates") or [] if x.get("code") == s.get("code")])
             for s in doc.get("substrates") or [] if s.get("code") in used}
     st = doc.get("settings") or {}
-    return {"transfers": rows, "inks": inks, "substrates": subs,
+    prof = sorted(([r.get("plate"), r.get("space"), used] for r in other_runs(doc, mode, plate) if r.get("mode") == mode
+                   for used in [{n: v for n, v in (r.get("inks") or {}).items() if n in names}] if used), key=json.dumps)
+    return {"transfers": rows, "inks": inks, "substrates": subs, "prof_inks": fingerprint(prof),
             "settings": fingerprint([st.get("yn", 1.0), st.get("basis"), st.get("cards")]), "mode": mode, "plate": plate}
 
 
@@ -526,6 +537,8 @@ def stale_reasons(run, doc):
         out.append("바탕 측정 변경")
     if old.get("settings") != now["settings"]:
         out.append("계산 설정·기본 카드값 변경")
+    if "prof_inks" in old and old["prof_inks"] != now["prof_inks"]:
+        out.append("잉크 기준이 된 다른 동판 프로필 변경")
     return out
 
 
@@ -540,6 +553,11 @@ def run_profile(doc, mode="sci", plate=None, space=None):
         plate = max(counts, key=counts.get) if counts and max(counts.values()) else None
     if not plate or plate not in lots:
         raise model.ModelError("전사 시료가 있는 동판을 고르세요")
+    with cm.use_observer((doc.get("settings") or {}).get("observer") or "2"):
+        return _run_profile(doc, mode, plate, space)
+
+
+def _run_profile(doc, mode, plate, space):
     lib = model.Library({**doc, "fits": None})
     basis = lib.basis
     space = space or choose_space(doc, mode, plate, basis)
@@ -560,6 +578,7 @@ def run_profile(doc, mode="sci", plate=None, space=None):
             meas_issues += diagnose_measurement(lib.inks[n]["cal"]["solid"], mode, space, f"{n} 은폐 도막")
 
     base = {"model_version": MODEL_VERSION, "mode": mode, "space": space, "basis": basis, "plate": plate, "yn": yn,
+            "observer": cm.current_observer(),
             "excluded": excluded, "measurement_issues": meas_issues,
             "snapshot": snapshot(doc, mode, plate)}
     if not samples:
@@ -591,7 +610,8 @@ def run_profile(doc, mode="sci", plate=None, space=None):
         fitted[n] = {"k": k, "s": s, "samples": sum(1 for x in samples if x["free"] == n), "theta": fit["theta"][n]}
     designs = sorted(fit["c"])
     assumptions = [
-        f"막두께는 동판 {plate} 기준 상대값 (×1.00, µm 아님)" if fit["free"] else f"동판 {plate} 막두께는 측정 보정 잉크로 맞춤",
+        (f"막두께는 동판 {plate} 기준 상대값 (×1.00, µm 아님)" if not fit["fit_t"]
+         else f"동판 {plate} 막두께 ×{fit['t']:.3f}은 고정 잉크(측정 보정·다른 동판 프로필) 기준으로 맞춤 (µm 아님)"),
         "패치 = 바탕과 연속 전사막을 실효 덮임 비율로 섞은 평균" + (" (Yule–Nielsen n=1)" if yn == 1 else f" (Yule–Nielsen n={yn:g})"),
         "흡수/산란 비율은 은폐 도막에서, 산란 크기는 전사 시료에서"
         + (f" — 채널별 산란은 공통 값에서 벗어날수록 벌점 (세기 {SCATTER_PRIOR:g}, 벌점은 색 오차와 따로 표시)"
