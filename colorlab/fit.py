@@ -625,6 +625,9 @@ def _run_profile(doc, mode, plate, space):
         "tones": [designs[0], designs[-1]],
         "conditions": sorted({json.dumps([doc["transfers"][s["no"] - 1].get(k) for k in ("thinner_pct", "hardener_pct", "matting_pct")])
                               for s in samples}),
+        # 공정·측정 조건 (적어 둔 것만) — 다른 설비·측정 시점에서는 검증되지 않았다
+        **{k: sorted({str(doc["transfers"][s["no"] - 1].get(k)) for s in samples if doc["transfers"][s["no"] - 1].get(k)})
+           for k in ("machine", "pad", "cure", "instrument")},
     }
     return {**base, "ok": True, "id": fingerprint([base["snapshot"], MODEL_VERSION, round(time.time())]),
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "seconds": round(time.time() - t0, 2),

@@ -208,6 +208,36 @@
     return p;
   }
 
+  // 분광 입력 칸 (선택) — 붙여 넣은 글자를 그대로 두고, 계산할 때 31개로 읽는다
+  const specField = (k, label, hint) => `<label class="cl-f wide"><span>${esc(label)}${hint ? ` <em>${esc(hint)}</em>` : ""}</span>
+      <textarea data-k="${esc(k)}" rows="2" placeholder="400~700 nm 반사율 (% 또는 0~1) — 측색기에서 붙여 넣기">${esc(val(k))}</textarea></label>`;
+  function getSpec(k, lab) {
+    const t = val(k);
+    if (!String(t || "").trim()) return null;
+    const r = parseSpec(t, "auto", lab);
+    if (r.error) throw new Error(`분광: ${r.error}`);
+    return r.vals;
+  }
+  // 3채널 근사일 때: 이 라이브러리로 전사 시료를 예측한 실제 오차
+  function accuracyBox(r) {
+    if (r.space === "spec" || !r.accuracy) return "";
+    const a = r.accuracy;
+    const bits = [a.single != null ? `단독 잉크 ${a.single_n}개 평균 ΔE ${a.single.toFixed(2)}` : "", a.mix != null ? `혼합·2도 ${a.mix_n}개 평균 ΔE ${a.mix.toFixed(2)}` : ""].filter(Boolean);
+    return `<p class="cl-empty">⚠ <b>3채널 근사 (LAB만)</b> — 잉크를 섞으면 실제와 수 ΔE 다를 수 있어요. 이 결과는 <b>출발점</b>으로 쓰고, 찍어 본 뒤 <a href="#/correct">보정 추천</a>으로 맞추세요.
+      ${bits.length ? `<br>이 라이브러리로 전사 시료를 예측한 오차: ${bits.join(" · ")} (보정에 쓴 시료 포함이라 실제보다 좋게 나올 수 있음 — 검증용 시료로 확인)` : "<br>전사 시료가 없어 실제 오차를 아직 몰라요."}
+      잉크·바탕에 분광을 넣으면 분광 계산으로 바뀝니다.</p>`;
+  }
+  const weighLine = (w) => {
+    const e = Object.entries(w || {});
+    if (!e.length) return "";
+    const hot = e.some(([, v]) => v >= 0.3);
+    return `<small class="${hot ? "bad" : "cl-note"}">계량 민감도 (0.1 g 잘못 달면): ${e.map(([k, v]) => `${esc(k)} ΔE ${v.toFixed(2)}${v >= 0.3 ? " ⚠" : ""}`).join(" · ")}${hot ? " — 양을 늘려 만들거나 정밀 저울을 쓰세요" : ""}</small>`;
+  };
+  const metaTable = (rows) => rows && rows.length ? `<table class="cl-table narrow"><tr><th>조명</th><th>기준</th><th>비교</th><th>ΔE00</th></tr>
+      ${rows.map((m) => `<tr><td>${esc(m.label)}</td><td class="mono">${labStr(m.a)}</td><td class="mono">${labStr(m.b)}</td><td class="${deClass(m.dE)}">${m.dE.toFixed(2)}</td></tr>`).join("")}</table>
+      <p class="cl-note">D65에서 같아도 A(백열등)·F11(매장 조명)에서 ΔE가 크면 메타메리즘 — 조명에 따라 다른 색으로 보입니다.</p>` : "";
+  const altLine = (v) => (v.alt ? `<small class="cl-note">A ${labStr(v.alt.A)}<br>F11 ${labStr(v.alt.F11)}</small>` : "");
+
   // 잰 자리의 설계 망점 % (빈칸·100 = 솔리드)
   const toneField = () => `<label class="cl-f sm"><span>잰 자리 망점 % <em>솔리드=100</em></span><input data-k="tone" type="number" step="1" min="1" max="100" value="${esc(val("tone", 100))}"></label>`;
   function getTone() {
@@ -318,6 +348,7 @@
         ${two ? `<label class="cl-f sm"><span>2도 망점 % <em>빈칸=솔리드</em></span><input data-k="cov2" type="number" step="1" min="0" max="100" value="${esc(val("cov2"))}"></label>` : ""}
         ${labField("target", "목표 LAB", "선택 — 있으면 ΔE 표시")}
       </div>
+      ${specField("tspec", "목표 분광", "선택 — 분광 계산이면 조명별 차이(메타메리즘)")}
       <div class="cl-actions"><button class="cl-btn" id="go">예측</button></div></div>
       <div id="out">${S.res.predict || ""}</div>`;
   }
@@ -329,13 +360,18 @@
     if (c1 !== "" || (two && c2 !== "")) body.coverage = { "1도": c1 === "" ? 1 : (+c1 || 0) / 100, "2도": two ? (c2 === "" ? 1 : (+c2 || 0) / 100) : 0 };
     const t = getLab("target", false, "목표");
     if (t) body.target = t;
+    const ts = getSpec("tspec", t);
+    if (ts) body.target_spec = ts;
     const r = await api("POST", "/api/lab/predict", body);
     const regs = Object.entries(r.regions).concat(r.average ? [["average", r.average]] : []);
     const yaml = [batchYaml("1도", body.layer1.inks, pctOf("l1"))].concat(two ? [batchYaml("2도", body.layer2.inks, pctOf("l2"))] : []).join("\n");
     S.res.predict = `<div class="cl-card"><h3>예측 결과</h3>
       <div class="cl-swatches">${r.target ? `<div class="cl-tile tgt">${sw(r.target.hex, 1)}<b>목표</b><span>${labStr(r.target.lab)}</span></div>` : ""}
       ${regs.map(([k, v]) => `<div class="cl-tile${k === "average" ? " avg" : ""}">${sw(v.hex, 1)}<b>${esc(REGION[k] || k)}</b><span>${labStr(v.lab)}</span>
-        ${v.dE != null ? `${judgeTag(v.judge, v.dE)}<small>${esc(v.diff)}</small>` : ""}</div>`).join("")}</div>
+        ${v.dE != null ? `${judgeTag(v.judge, v.dE)}<small>${esc(v.diff)}</small>` : ""}${altLine(v)}</div>`).join("")}</div>
+      ${r.metamerism ? `<h4>목표 분광과 조명별 차이 <small>메타메리즘</small></h4><table class="cl-table narrow"><tr>${Object.keys(r.metamerism).map((k) => `<th>${esc(k)}</th>`).join("")}</tr>
+        <tr>${Object.values(r.metamerism).map((d) => `<td class="${deClass(d)}">ΔE ${d.toFixed(2)}</td>`).join("")}</tr></table>` : ""}
+      ${accuracyBox(r)}
       ${noteBox(r)}
       <div class="cl-actions"><button class="cl-btn ghost" data-copy="${esc(yaml)}">일지용 복사 (batches)</button>
       <button class="cl-btn ghost" data-similar="${esc(JSON.stringify((r.average || r.regions.overlap || r.regions.layer1).lab))}">비슷한 과거 사례 찾기</button></div></div>`;
@@ -345,6 +381,27 @@
 
   function bindResult(out) {
     $$("[data-copy]", out).forEach((b) => (b.onclick = () => copy(b.dataset.copy)));
+    $$("[data-tocorrect]", out).forEach((b) => (b.onclick = () => {
+      const d = JSON.parse(b.dataset.tocorrect);
+      const cf = (S.f.correct = S.f.correct || {});
+      cf["cur.inks"] = inkText(d.recipe.inks).replace(/ · /g, ", ");
+      Object.assign(cf, { "cur.thin": d.recipe.thinner, "cur.hard": d.recipe.hardener, "cur.mat": d.recipe.matting,
+        measured: d.lab.join(" "), target: d.target.join(" "), tone: d.recipe.tone || 100, use_prev: false });
+      const refs = ((S.info && S.info.substrates) || []).map((s) => s.ref);
+      const ref = d.substrate && (refs.find((r) => r === d.substrate) || refs.find((r) => r.split("@")[0] === String(d.substrate).split("@")[0]));
+      if (ref) cf["sub.ref"] = ref;
+      if (d.plate && ((S.lib && S.lib.plates) || []).some((p) => p.lot === d.plate)) cf.plate = d.plate;
+      S.res.correct = ""; location.hash = "#/correct";
+      toast(ref ? "과거 기록을 지금 배합·잰 값으로 넣었어요 — 확인하고 [보정 추천]" : "배합·잰 값을 넣었어요 — 바탕을 골라 주세요", !ref);
+    }));
+    $$("[data-nexttrial]", out).forEach((b) => (b.onclick = () => {
+      const cf = (S.f.correct = S.f.correct || {});
+      Object.assign(cf, { "prev.inks": cf["cur.inks"], "prev.thin": cf["cur.thin"], "prev.hard": cf["cur.hard"], "prev.mat": cf["cur.mat"],
+        prev_m: cf.measured, use_prev: true, measured: "" });
+      cf["cur.inks"] = inkText(JSON.parse(b.dataset.nexttrial)).replace(/ · /g, ", ");
+      S.res.correct = ""; render(); window.scrollTo(0, 0);
+      toast("새 배합을 '지금 배합'으로 옮겼어요 — 찍어서 잰 LAB를 넣고 다시 보정하세요");
+    }));
     $$("[data-similar]", out).forEach((b) => (b.onclick = () => {
       (S.f.similar = S.f.similar || {}).target = JSON.parse(b.dataset.similar).join(" ");
       S.res.similar = ""; S.autoRun = "similar"; location.hash = "#/similar";
@@ -372,9 +429,15 @@
       const on = val(k, defOn(i));
       const swc = (S.info.inks.find((x) => x.name === i.name) || {}).swatch;
       const hex = swc && swc.on_white ? swc.on_white.hex : "transparent";
-      return `<label class="cl-ink"><input type="checkbox" data-k="${esc(k)}"${on ? " checked" : ""}>${sw(hex)}${esc(i.name)}${i.clear ? " <em>투명</em>" : ""}</label>`;
+      const ready = inkReady(i.name);
+      return `<label class="cl-ink${ready ? "" : " off"}" title="${ready ? "" : "지금 모드로 계산할 수 없어요 — 측정값이나 보정 프로필이 필요합니다"}"><input type="checkbox" data-k="${esc(k)}"${on ? " checked" : ""}>${sw(hex)}${esc(i.name)}${i.clear ? " <em>투명</em>" : ready ? "" : " <em>계산 불가</em>"}</label>`;
     }).join("")}</div>`;
   }
+  // 지금 모드에서 계산할 수 있는 잉크 (측정 보정 또는 적용한 프로필) — 못 하는 잉크는 기본으로 체크하지 않는다
+  const inkReady = (name) => {
+    const i = ((S.info && S.info.inks) || []).find((x) => x.name === name);
+    return !!(i && (i.clear || ((i.status || {})[`${S.mode}_tri`] || {}).ok || ((i.status || {})[`${S.mode}_spec`] || {}).ok));
+  };
   const checkedInks = (prefix, defOn) => ((S.lib && S.lib.inks) || []).filter((i) => i.name !== MATTING && val(`${prefix}:${i.name}`, defOn(i))).map((i) => i.name);
 
   function viewRecommend() {
@@ -383,7 +446,7 @@
       <div class="cl-grid">${labField("target", "목표 LAB")}${toneField()}${subField("sub")}${plateField("plate")}</div>
       <label class="cl-check"><input type="checkbox" data-k="under" data-re="1"${under ? " checked" : ""}> 2도 배합 고르기 (이미 정한 1도 위에 찍음)</label>
       ${under ? recipeField("u", "아래 1도 배합") : ""}
-      <h4>쓸 수 있는 잉크</h4>${inkChecks("ink", (i) => !i.clear)}
+      <h4>쓸 수 있는 잉크</h4>${inkChecks("ink", (i) => !i.clear && inkReady(i.name))}
       <div class="cl-grid">
         <label class="cl-f sm"><span>최대 잉크 수</span><select data-k="max">${[1, 2, 3, 4].map((n) => `<option${String(val("max", 3)) === String(n) ? " selected" : ""}>${n}</option>`).join("")}</select></label>
         <label class="cl-f sm"><span>잉크 합계 g <em>만들 양</em></span><input data-k="total" type="number" step="1" min="1" value="${esc(val("total", 60))}"></label>
@@ -400,19 +463,20 @@
     const pct = pctOf("r");
     const target = getLab("target", true, "목표");
     const u = under ? getRecipe("u") : null;
-    const body = { mode: S.mode, target, substrate: getSub("sub"), plate: val("plate") || null, inks: checkedInks("ink", (i) => !i.clear),
+    const body = { mode: S.mode, target, substrate: getSub("sub"), plate: val("plate") || null, inks: checkedInks("ink", (i) => !i.clear && inkReady(i.name)),
       max_inks: +val("max", 3), ink_total: +val("total", 60), under: u, hardener_pct: pct.hard, thinner_pct: pct.thin, matting_pct: pct.mat, tone: getTone() };
     const r = await api("POST", "/api/lab/recommend", body);
     const layer = under ? "2도" : "1도";
-    S.res.recommend = `<div class="cl-card"><h3>추천 후보 <small>${esc(S.mode.toUpperCase())} · ${esc(((S.info && S.info.formulas) || {})[(r.tolerance || {}).formula] || "ΔE00")} 순</small></h3>
+    S.res.recommend = `<div class="cl-card"><h3>추천 후보${r.space === "spec" ? "" : " (출발점)"} <small>${esc(S.mode.toUpperCase())} · ${esc(((S.info && S.info.formulas) || {})[(r.tolerance || {}).formula] || "ΔE00")} 순</small></h3>
       <div class="cl-cands">${r.candidates.map((c, i) => `<div class="cl-cand">
         <div class="cl-pair">${sw(r.target_hex, 1)}${sw(c.hex, 1)}</div>
         <div class="cl-cand-b"><b>${i + 1}. ${esc(inkText(c.inks))}</b>
-          ${judgeTag(c.judge, c.dE)} <small>${esc(c.diff)} · ${labStr(c.lab)}</small>
+          ${judgeTag(c.judge, c.dE)} <small>${esc(c.diff)} · ${labStr(c.lab)}</small><br>${weighLine(c.weigh)}
           <div class="cl-actions">
             <button class="cl-btn ghost sm" data-topredict="${esc(JSON.stringify({ layer, inks: c.inks, pct, target: target.join(" "), under: under ? val("u.inks") : "", tone: body.tone }))}">예측으로</button>
             <button class="cl-btn ghost sm" data-copy="${esc(batchYaml(layer, c.inks, pct))}">일지용 복사</button></div></div></div>`).join("")}</div>
       ${r.truncated ? `<p class="cl-empty">시간 제한으로 조합 ${r.truncated.total}개 중 ${r.truncated.done}개만 계산했어요 (적은 잉크 조합부터) — 쓸 잉크를 줄여 고르면 전부 계산합니다.</p>` : ""}
+      ${accuracyBox(r)}
       ${r.candidates.length && r.candidates[0].dE > 2 ? `<p class="cl-empty">가장 가까운 후보도 ΔE ${r.candidates[0].dE.toFixed(1)} — 이 막두께로는 바탕이 비쳐서 목표에 닿기 어렵습니다. 신나를 줄여 막을 두껍게 하거나(동판 막두께 계수도 확인), 흰색 1도를 먼저 깔고 2도로 맞추는 방법(위 "2도 배합 고르기")을 검토해 보세요.</p>` : ""}
       ${noteBox(r)}</div>`;
     out.innerHTML = S.res.recommend;
@@ -428,6 +492,12 @@
       <div class="cl-grid">${subField("sub")}${plateField("plate")}</div>
       <label class="cl-check"><input type="checkbox" data-k="under" data-re="1"${under ? " checked" : ""}> 2도 보정 (1도 위에 찍은 색)</label>
       ${under ? recipeField("u", "아래 1도 배합") : ""}
+      <label class="cl-check"><input type="checkbox" data-k="use_prev" data-re="1"${val("use_prev", false) ? " checked" : ""}> 이전 시도도 있어요 <em>배합을 바꿨을 때 색이 실제로 얼마나 움직였는지 다음 보정에 반영</em></label>
+      ${val("use_prev", false) ? `${recipeField("prev", "이전 시도 배합")}<div class="cl-grid">${labField("prev_m", "이전 시도에서 잰 LAB")}</div>` : ""}
+      <div class="cl-grid">
+        <label class="cl-check"><input type="checkbox" data-k="add_only" data-re="1"${val("add_only", false) ? " checked" : ""}> 이미 섞은 통에 <b>더 넣기만</b> (뺄 수 없음)</label>
+        ${val("add_only", false) ? `<label class="cl-f sm"><span>통에 남은 잉크 g <em>선택 — 넣을 양을 환산</em></span><input data-k="remain" type="number" step="1" min="0" value="${esc(val("remain"))}"></label>` : ""}
+      </div>
       <h4>더 넣어도 되는 잉크 <em>지금 배합에 있는 잉크는 자동 포함</em></h4>${inkChecks("add", () => false)}
       <label class="cl-f"><span>변경을 아끼는 정도 <em>클수록 조금만 바꾸는 쪽</em></span>
         <input data-k="w" type="range" min="0" max="2" step="0.1" value="${esc(val("w", 0.5))}" oninput="this.nextElementSibling.textContent=this.value"><b class="cl-range">${esc(val("w", 0.5))}</b></label>
@@ -440,7 +510,9 @@
     const cur = getRecipe("cur");
     const body = { mode: S.mode, current: cur, measured: getLab("measured", true, "측정"), target: getLab("target", true, "목표"),
       substrate: getSub("sub"), plate: val("plate") || null, under: under ? getRecipe("u") : null,
-      adjustable: checkedInks("add", () => false), change_weight: +val("w", 0.5), tone: getTone() };
+      adjustable: checkedInks("add", () => false), change_weight: +val("w", 0.5), tone: getTone(),
+      add_only: !!val("add_only", false), remaining: val("add_only", false) && val("remain") !== "" ? +val("remain") : null };
+    if (val("use_prev", false)) body.previous = [{ recipe: getRecipe("prev"), measured: getLab("prev_m", true, "이전 시도 측정") }];
     const r = await api("POST", "/api/lab/correct", body);
     const pct = pctOf("cur");
     const layer = under ? "2도" : "1도";
@@ -451,10 +523,11 @@
         <div class="cl-tile avg">${sw(r.expected.hex, 1)}<b>보정 후 (예상)</b><span>${labStr(r.expected.lab)}</span>${judgeTag(r.expected.judge, r.expected.dE)}<small>${esc(r.expected.diff)}</small></div>
       </div>
       <div class="cl-change">${esc(r.change_text)}</div>
-      <p>새 배합: <b>${esc(inkText(r.inks))}</b></p>
+      <p>${r.add ? "넣은 뒤 배합" : "새 배합"}: <b>${esc(inkText(r.inks))}</b><br>${weighLine(r.weigh)}</p>
       <p class="cl-note">모델이 지금 배합에서 틀린 만큼(측정 − 예측: ΔL ${r.model_bias[0]}, Δa ${r.model_bias[1]}, Δb ${r.model_bias[2]})을 그대로 옮겨 보정했습니다. 차이가 크면 라이브러리 측정값이나 동판 막두께 계수를 확인해 보세요.</p>
       ${noteBox(r)}
-      <div class="cl-actions"><button class="cl-btn ghost" data-copy="${esc(batchYaml(layer, r.inks, pct))}">일지용 복사 (새 배치)</button></div></div>`;
+      <div class="cl-actions"><button class="cl-btn ghost" data-copy="${esc(batchYaml(layer, r.inks, pct))}">일지용 복사 (새 배치)</button>
+        <button class="cl-btn ghost" data-nexttrial="${esc(JSON.stringify(r.inks))}" title="지금 배합·잰 값을 '이전 시도'로 옮기고 이 배합을 '지금 배합'으로">이 배합으로 찍어 봤어요 → 다음 보정</button></div></div>`;
     out.innerHTML = S.res.correct;
     bindResult(out);
   }
@@ -462,42 +535,52 @@
   // ------------------------------------------------------------------ 탭: 과거 사례
   function viewSimilar() {
     return `<div class="cl-card"><h2>과거 사례 <small>시편 아카이브 배합 LAB · 작업일지 시료 lab 중 목표에 가까운 것</small></h2>
-      <div class="cl-grid">${labField("target", "목표 LAB")}</div>
-      <div class="cl-actions"><button class="cl-btn" id="go">찾기</button><span class="cl-note">${esc(S.mode.toUpperCase())} 값끼리 비교합니다</span></div></div>
+      <div class="cl-grid">${labField("target", "목표 LAB")}
+        <label class="cl-f sm"><span>바탕 <em>같은 도장 코드만</em></span><select data-k="fsub"><option value="">전체</option>
+          ${[...new Set(((S.info && S.info.substrates) || []).filter((s) => !s.card).map((s) => s.ref.split("@")[0]))].map((c) => `<option${val("fsub") === c ? " selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+        <label class="cl-f sm"><span>동판</span><select data-k="fplate"><option value="">전체</option>
+          ${((S.lib && S.lib.plates) || []).map((p) => `<option${val("fplate") === p.lot ? " selected" : ""}>${esc(p.lot)}</option>`).join("")}</select></label></div>
+      <div class="cl-actions"><button class="cl-btn" id="go">찾기</button><span class="cl-note">${esc(S.mode.toUpperCase())} 값끼리 비교합니다 · 배합이 있는 기록은 [보정 추천으로] 바로 이어 갈 수 있어요</span></div></div>
       <div id="out">${S.res.similar || ""}</div>`;
   }
 
   async function goSimilar(out) {
     const t = getLab("target", true, "목표");
-    const r = await api("GET", `/api/lab/similar?mode=${S.mode}&L=${t[0]}&a=${t[1]}&b=${t[2]}`);
+    const q = new URLSearchParams({ mode: S.mode, L: t[0], a: t[1], b: t[2], substrate: val("fsub"), plate: val("fplate") });
+    const r = await api("GET", `/api/lab/similar?${q}`);
     S.res.similar = `<div class="cl-card">${r.items.length ? `<table class="cl-table"><thead><tr><th></th><th>ΔE</th><th>출처</th><th>내용</th><th>LAB</th></tr></thead><tbody>
       ${r.items.map((x) => `<tr><td><span class="cl-pair">${sw(labToHex(t))}${sw(x.hex)}</span></td>
         <td class="${x.dE <= 1 ? "ok" : x.dE <= 2.5 ? "mid" : "ng"}">${x.dE.toFixed(2)}</td>
         <td><span class="cl-tag">${esc(x.source)}</span>${x.eval ? ` <span class="cl-tag">${esc(x.eval)}</span>` : ""}</td>
-        <td><a href="${esc(x.link)}"><b>${esc(x.title)}</b></a><br><small>${esc(x.detail)}${Object.keys(x.inks || {}).length ? " · " + esc(inkText(x.inks)) : ""}</small></td>
+        <td><a href="${esc(x.link)}"><b>${esc(x.title)}</b></a><br><small>${esc(x.detail)}${Object.keys(x.inks || {}).length ? " · " + esc(inkText(x.inks)) : ""}</small>
+          ${x.recipe ? `<br><button class="cl-btn ghost sm" data-tocorrect="${esc(JSON.stringify({ recipe: x.recipe, lab: x.lab, substrate: x.substrate, plate: x.plate, target: t }))}">보정 추천으로</button>` : ""}</td>
         <td class="mono">${labStr(x.lab)}</td></tr>`).join("")}</tbody></table>`
       : `<p class="cl-note">${esc(S.mode.toUpperCase())} LAB가 적힌 과거 기록이 없습니다. 시편 아카이브 배합의 LAB 칸이나 작업일지 시료의 <code>lab:</code>을 채우면 여기서 찾을 수 있어요.</p>`}</div>`;
     out.innerHTML = S.res.similar;
+    bindResult(out);
   }
 
   // ------------------------------------------------------------------ 탭: ΔE 계산기
   function viewDe() {
     return `<div class="cl-card"><h2>ΔE 계산기</h2>
       <div class="cl-grid">${labField("a", "기준 (목표)")}${labField("b", "비교 (시료)")}</div>
+      <details${val("spa") || val("spb") ? " open" : ""}><summary>분광으로 메타메리즘 보기 (선택)</summary>
+        ${specField("spa", "기준 분광")}${specField("spb", "비교 분광")}</details>
       <div class="cl-actions"><button class="cl-btn" id="go">계산</button></div></div>
       <div id="out">${S.res.de || ""}</div>`;
   }
 
   async function goDe(out) {
     const a = getLab("a", true, "기준"), b = getLab("b", true, "비교");
-    const r = await api("POST", "/api/lab/deltae", { a, b });
+    const r = await api("POST", "/api/lab/deltae", { a, b, spec_a: getSpec("spa", a), spec_b: getSpec("spb", b) });
     const p = r.parts;
     S.res.de = `<div class="cl-card"><div class="cl-pair xl">${sw(r.hex[0], 1)}${sw(r.hex[1], 1)}</div>
       <div class="cl-de"><b class="${deClass(r.dE2000)}">ΔE2000 ${r.dE2000.toFixed(2)}</b> <span>ΔE*ab ${r.dE76.toFixed(2)}</span> <span>CMC(2:1) ${r.dEcmc.toFixed(2)}</span></div>
       ${r.judge ? `<p>고객 기준: ${judgeTag(r.judge)}</p>` : ""}
       <p class="cl-change">${esc(r.text)}</p>
       <table class="cl-table narrow"><tr><th>ΔL 밝기</th><th>Δa 빨강+/녹색−</th><th>Δb 노랑+/파랑−</th><th>ΔC 채도</th><th>ΔH 색상</th></tr>
-      <tr class="mono">${["dL", "da", "db", "dC", "dH"].map((k) => `<td>${p[k] > 0 ? "+" : ""}${p[k].toFixed(2)}</td>`).join("")}</tr></table></div>`;
+      <tr class="mono">${["dL", "da", "db", "dC", "dH"].map((k) => `<td>${p[k] > 0 ? "+" : ""}${p[k].toFixed(2)}</td>`).join("")}</tr></table>
+      ${r.metamerism ? `<h4>조명별 차이 <small>분광 · ${esc(r.observer)}° 관찰자</small></h4>${metaTable(r.metamerism)}` : ""}</div>`;
     out.innerHTML = S.res.de;
   }
 
@@ -583,7 +666,8 @@
           ${ink.clear ? "" : `<label class="cl-f xs"><span>경화제 %</span><input type="number" data-p="inks.${i}.cal.hardener_pct" data-type="num" value="${esc(ink.cal?.hardener_pct ?? 20)}"></label>
           <label class="cl-f xs"><span>신나 %</span><input type="number" data-p="inks.${i}.cal.thinner_pct" data-type="num" value="${esc(ink.cal?.thinner_pct ?? 30)}"></label>
           <label class="cl-f xs"><span>찍은 동판</span><select data-p="inks.${i}.cal.plate"><option value=""></option>${lots.map((l) => `<option${ink.cal?.plate === l ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-          <label class="cl-f date"><span>측정일</span><input type="date" data-p="inks.${i}.cal.measured_on" value="${esc(ink.cal?.measured_on || "")}"></label>`}
+          <label class="cl-f date"><span>측정일</span><input type="date" data-p="inks.${i}.cal.measured_on" value="${esc(ink.cal?.measured_on || "")}"></label>
+          <label class="cl-f sm"><span>잉크 로트</span><input data-p="inks.${i}.lot" value="${esc(ink.lot || "")}" placeholder="제조 로트"></label>`}
           <input class="cl-memo" data-p="inks.${i}.note" value="${esc(ink.note || "")}" placeholder="메모">
           <div class="grow"></div><span class="cl-status-tags">${inkStatus(ink.name)}</span>
           <button class="cl-x" data-del="inks.${i}" title="삭제">×</button></div>
@@ -599,11 +683,13 @@
       <p class="cl-note">저장하면 아카이브와 컬러연구소가 같은 별칭을 사용합니다. 대소문자·앞뒤 공백은 무시하며, 같은 제품의 정식명과 별칭 중량은 합산합니다. 다른 제품과 이름·별칭·DB 연결은 중복할 수 없습니다. 기존 정식명 변경 대신 약칭을 지정하세요. DB 연결은 제품을 확인한 뒤 지정하며 과거 DB 행은 자동 변경하지 않습니다.</p></div>
 
     <div class="cl-card"><h3>도장 시편 (바탕) <small>${(L.substrates || []).length}개</small></h3>
-      <div class="cl-scroll"><table class="cl-table lib"><thead><tr><th>컬러코드</th><th>도장처</th><th>표면</th><th>설명</th><th>도장일</th><th>측정일</th><th>SCI · SCE · 분광</th><th></th></tr></thead><tbody>
+      <div class="cl-scroll"><table class="cl-table lib"><thead><tr><th>컬러코드</th><th>도장처</th><th>표면</th><th>종류</th><th>광택 GU</th><th>설명</th><th>도장일</th><th>측정일</th><th>SCI · SCE · 분광</th><th></th></tr></thead><tbody>
       ${(L.substrates || []).map((s, i) => `<tr>
         <td><input data-p="substrates.${i}.code" value="${esc(s.code)}" placeholder="C 1000"></td>
         <td><input data-p="substrates.${i}.maker" value="${esc(s.maker || "")}"></td>
         <td><select data-p="substrates.${i}.surface"><option value=""></option>${SURFACES.map((x) => `<option${s.surface === x ? " selected" : ""}>${x}</option>`).join("")}</select></td>
+        <td><select data-p="substrates.${i}.finish" title="메탈릭·펄이면 각도별 색을 못 담는다고 알려 줘요"><option value=""></option>${["솔리드", "메탈릭", "펄"].map((x) => `<option${s.finish === x ? " selected" : ""}>${x}</option>`).join("")}</select></td>
+        <td><input class="num" type="number" step="0.1" min="0" data-p="substrates.${i}.gloss" data-type="num" value="${esc(s.gloss ?? "")}" placeholder="60°"></td>
         <td><input data-p="substrates.${i}.desc" value="${esc(s.desc || "")}"></td>
         <td><input type="date" data-p="substrates.${i}.painted" value="${esc(s.painted || "")}"></td>
         <td><input type="date" data-p="substrates.${i}.measured_on" value="${esc(s.measured_on || "")}"></td>
@@ -645,6 +731,8 @@
       <label class="cl-f sm"><span>3채널 기저 <em>분광이 없을 때</em></span><select data-p="settings.basis">
         ${[["xyz", "XYZ (권장)"], ["srgb", "sRGB (예전 방식)"]].map(([v, t]) => `<option value="${v}"${((L.settings && L.settings.basis) || "xyz") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
       <p class="cl-note">XYZ는 진한 노랑·파랑도 잘리지 않습니다. sRGB는 화면 색역 밖 색이 잘려 오차가 커집니다. 바꾸면 보정 프로필을 다시 계산해야 해요.</p>
+      <div class="cl-grid"><label class="cl-f sm"><span>측색기 <em>기록용</em></span><input data-p="settings.instrument" value="${esc((L.settings && L.settings.instrument) || "")}" placeholder="기종"></label>
+        <label class="cl-f sm"><span>측정 구경</span><input data-p="settings.aperture" value="${esc((L.settings && L.settings.aperture) || "")}" placeholder="예: 8 mm"></label></div>
       <label class="cl-f sm"><span>측색기 관찰자 <em>분광 → LAB</em></span><select data-p="settings.observer">
         ${[["2", "2° (CIE 1931)"], ["10", "10° (CIE 1964) — 자동차 업계 보통"]].map(([v, t]) => `<option value="${v}"${String((L.settings && L.settings.observer) || "2") === v ? " selected" : ""}>${t}</option>`).join("")}</select></label>
       <p class="cl-note">측색기 화면의 LAB가 D65/10°이면 10°로 맞추세요. 분광으로 계산한 LAB를 측색기 LAB와 같은 조건으로 비교합니다 (채도 높은 색은 2°/10° 차이가 수 ΔE). LAB만 쓰는 계산에는 영향이 없어요.</p>
@@ -715,11 +803,19 @@
             <label class="cl-f"><span>${n + 1}도 배합 g${n ? " <em>없으면 비움</em>" : ""}</span><input data-recipe="transfers.${i}.${ly}" value="${esc(recipeText(t[ly]?.inks))}" placeholder="${n ? "(없으면 비움)" : "WH 20, YE 6"}"></label>
             <label class="cl-f xs"><span>망점 %</span><input type="number" step="1" min="1" max="100" data-p="transfers.${i}.${ly}.tone" data-type="num" value="${esc(t[ly]?.tone ?? (n ? "" : 100))}"></label></div>`).join("")}
           ${measCell(`transfers.${i}.measured`, "잰 값")}
+          <details class="cl-tr-meta"${["machine", "pad", "cure", "instrument", "temp", "humidity"].some((k) => t[k] != null && t[k] !== "") ? " open" : ""}><summary>공정·측정 조건</summary>
+            <label class="cl-f sm"><span>설비</span><input data-p="transfers.${i}.machine" value="${esc(t.machine || "")}"></label>
+            <label class="cl-f sm"><span>패드</span><input data-p="transfers.${i}.pad" value="${esc(t.pad || "")}" placeholder="경도·모양"></label>
+            <label class="cl-f xs"><span>온도 °C</span><input type="number" data-p="transfers.${i}.temp" data-type="num" value="${esc(t.temp ?? "")}"></label>
+            <label class="cl-f xs"><span>습도 %</span><input type="number" data-p="transfers.${i}.humidity" data-type="num" value="${esc(t.humidity ?? "")}"></label>
+            <label class="cl-f sm"><span>측정 시점</span><input data-p="transfers.${i}.cure" value="${esc(t.cure || "")}" list="cl-cure" placeholder="인쇄 직후 / 24시간 / 완전 경화"></label>
+            <label class="cl-f sm"><span>측색기</span><input data-p="transfers.${i}.instrument" value="${esc(t.instrument || "")}"></label></details>
           <div class="cl-tr-pred">${inf ? (inf.error ? `<span class="cl-tag ng" title="${esc(inf.error)}">계산 안 됨</span><small>${esc(inf.error)}</small>`
             : `<div class="cl-pair">${sw(labToHex(t.measured?.[S.mode]) || inf.hex)}${sw(inf.hex)}</div><span class="cl-tag ${deClass(inf.dE)}">예측 ΔE ${inf.dE.toFixed(2)}</span><small>예측이 ${esc(inf.diff)}</small>`)
             : `<small class="cl-note">${S.dirty ? "저장 후 예측 오차 표시" : ""}</small>`}</div>
         </div></div>`;
       }).join("")}
+      <datalist id="cl-cure"><option>인쇄 직후</option><option>1시간</option><option>24시간</option><option>완전 경화</option></datalist>
       <button class="cl-btn ghost" id="add-tr">+ 전사 시료</button> <span class="cl-note">마지막 줄의 날짜 · 동판 · 바탕 · 배합을 복사해서 새 줄을 만듭니다 (망점 단계 입력용)</span></div>`;
   }
 
@@ -798,7 +894,8 @@
       ${(r.sensitivity || []).map((x) => `<p class="cl-note">가정 민감도 — ${esc(x.ink)}: 가장 진한 패치의 실효 덮임을 ${pc(x.c_top_range[0])}~100% 중 어디로 보느냐에 따라 ${pc(x.target)} 패치 예측이 ΔE <b>${x.dE_range.toFixed(2)}</b>만큼 달라집니다 (통계적 신뢰구간이 아니라 가정에 따른 범위).</p>`).join("")}
       <details><summary>가정 · 적용 범위</summary><ul>${r.assumptions.map((a) => `<li>${esc(a)}</li>`).join("")}
         <li>검증된 바탕: ${esc(r.applicability.substrates.join(", "))} · 망점 ${pc(r.applicability.tones[0])}~${pc(r.applicability.tones[1])}
-          · 신나/경화제/소광제 % ${esc(r.applicability.conditions.map((c) => JSON.parse(c).join("/")).join(", "))}</li></ul></details>
+          · 신나/경화제/소광제 % ${esc(r.applicability.conditions.map((c) => JSON.parse(c).join("/")).join(", "))}
+          ${["machine", "pad", "cure", "instrument"].map((k) => (r.applicability[k] || []).length ? ` · ${{ machine: "설비", pad: "패드", cure: "측정 시점", instrument: "측색기" }[k]} ${esc(r.applicability[k].join(", "))}` : "").join("")}</li></ul></details>
       <div class="cl-actions">
         ${lv === "부족" ? `<button class="cl-btn" disabled>적용할 수 없음</button><span class="cl-note bad">위 문제를 먼저 해결해야 합니다</span>`
           : `${lv === "낮음" ? `<label class="cl-check"><input type="checkbox" id="prof-ack"${S.prof.ack ? " checked" : ""}> 신뢰도가 낮은 것을 알고 적용합니다</label>` : ""}

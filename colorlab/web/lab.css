@@ -198,3 +198,11 @@ code{font-family:var(--mono);font-size:12px;background:#f1efe9;padding:1px 5px;b
 /* 공통 잉크 이름과 회사 DB의 명시적 연결 */
 .cl-identity{display:flex;flex-wrap:wrap;gap:12px;padding:12px 0;border-top:1px solid var(--line);margin-top:10px}
 .cl-identity .cl-f{min-width:180px;flex:1}
+/* P2: 공정·측정 조건 · 경고 줄 */
+.cl-tr-meta{flex-basis:100%;margin-top:6px;font-size:12.5px}
+.cl-tr-meta summary{cursor:pointer;color:var(--ink-2, #555)}
+.cl-tr-meta[open]{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.cl-tr-meta[open] summary{flex-basis:100%}
+small.bad{color:#a72c23}
+.cl-table tr.off td{color:#8d9198}
+.cl-ink.off{opacity:.55}

@@ -944,3 +944,118 @@ class P1Tests(unittest.TestCase):
         self.assertAlmostEqual(cm.delta_e_cmc((50, 2.6772, -79.7751), (50, 0, -82.7485)), 1.7387, places=3)
         with self.assertRaises(model.ModelError):
             api._check_tolerance({"formula": "xx"})
+
+
+class P2Tests(unittest.TestCase):
+    """심층 리뷰 P2: 추가만 보정 · 이전 시도 반영 · 계량 민감도 · 메타메리즘 · 과거 사례 필터 · 공정 정보 · 정확도."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lib = model.Library(synth.library())
+
+    def test_add_only_never_removes_and_scales_to_remaining(self):
+        cur = recipe({"WH": 20, "YE": 6, "RD": 3})
+        target = synth.true_color(synth.SUBSTRATES[1]["lab"], recipe({"WH": 20, "YE": 4, "RD": 3}))   # YE를 줄여야 맞는 방향
+        measured = synth.true_color(synth.SUBSTRATES[1]["lab"], cur)
+        free = model.correct(self.lib, cur, measured, target, "D 2000@경면", adjustable=["WH", "YE", "RD", "BK", "BL"])
+        self.assertTrue(any(v < 0 for v in free["deltas"].values()))
+        add = model.correct(self.lib, cur, measured, target, "D 2000@경면", adjustable=["WH", "YE", "RD", "BK", "BL"],
+                            add_only=True, remaining=14.5)
+        self.assertTrue(all(v >= 0 for v in add["deltas"].values()))
+        self.assertTrue(all(add["inks"][n] >= cur["inks"][n] for n in cur["inks"]))
+        self.assertAlmostEqual(add["add"]["scale"], 0.5)            # 29 g 배합 중 14.5 g 남음
+        self.assertIn("통에", add["change_text"])
+        self.assertTrue(add["weigh"])
+
+    def test_previous_trial_gain_corrects_model_response(self):
+        cur = recipe({"WH": 20, "YE": 6, "RD": 3})
+        prev = recipe({"WH": 20, "YE": 4, "RD": 3})
+        sub = synth.SUBSTRATES[1]["lab"]
+        # 실제 공정은 모델보다 막이 두껍다(×1.4) → 같은 배합 변화에 색이 더 크게 움직임
+        m_cur, m_prev = synth.true_color(sub, cur, thick=1.4), synth.true_color(sub, prev, thick=1.4)
+        target = synth.true_color(sub, recipe({"WH": 20, "YE": 7, "RD": 3.5}), thick=1.4)
+        one = model.correct(self.lib, cur, m_cur, target, "D 2000@경면", change_weight=0.05)
+        two = model.correct(self.lib, cur, m_cur, target, "D 2000@경면", change_weight=0.05,
+                            previous=[{"recipe": prev, "measured": m_prev}])
+        self.assertNotEqual(two["gain"], [1.0, 1.0, 1.0])
+        self.assertIn("이전 시도 반영", two["note"])
+        real_one = synth.true_color(sub, recipe(one["inks"]), thick=1.4)
+        real_two = synth.true_color(sub, recipe(two["inks"]), thick=1.4)
+        self.assertLessEqual(cm.delta_e2000(real_two, target), cm.delta_e2000(real_one, target) + 0.05)
+
+    def test_recommend_has_weigh_sensitivity(self):
+        target = synth.true_color(synth.SUBSTRATES[1]["lab"], recipe({"WH": 20, "BK": 1}))
+        r = model.recommend(self.lib, target, "D 2000@경면", ["WH", "BK"], ink_total=20)
+        c = r["candidates"][0]
+        self.assertEqual(set(c["weigh"]), set(c["inks"]))
+        self.assertGreater(c["weigh"]["BK"], c["weigh"]["WH"])     # 적게 넣는 진한 잉크가 더 민감
+
+    def test_metamerism_in_deltae_and_spectral_predict(self):
+        wl = cm.WAVELENGTHS
+        a = [0.2 + 0.5 / (1 + math.exp((560 - w) / 20)) for w in wl]
+        b = [x + (0.04 if 590 <= w <= 640 else -0.03 if 520 <= w <= 560 else 0) for x, w in zip(a, wl)]
+        st, j = api.handle("POST", "/api/lab/deltae", {}, {"a": list(cm.spectrum_to_lab(a)), "b": list(cm.spectrum_to_lab(b)),
+                                                           "spec_a": a, "spec_b": b}, {"data": tempfile.mkdtemp()})
+        self.assertEqual(st, 200, j)
+        self.assertEqual([m["illum"] for m in j["metamerism"]], ["D65", "A", "F11", "F2"])
+        # 분광 라이브러리 예측: 다른 조명 LAB + 목표 분광 메타메리즘
+        sp = SpectralTests()
+        sp.setUp()
+        r = model.predict(sp.lib, "S", recipe({"YE": 10, "BL": 3}), target_spec=[0.3] * 31)
+        self.assertEqual(set(r["regions"]["layer1"]["alt"]), {"A", "F11"})
+        self.assertEqual(set(r["metamerism"]), {"D65", "A", "F11", "F2"})
+
+    def test_surface_notes(self):
+        doc = synth.library()
+        doc["substrates"][1]["finish"] = "메탈릭"
+        lib = model.Library(doc)
+        r = model.predict(lib, "D 2000@경면", recipe({"YE": 5}))
+        self.assertIn("메탈릭 바탕", r["note"])
+        r = model.predict(lib, "C 1000", {"inks": {"YE": 5}, "matting": {"g": 1}}, mode="sce")
+        self.assertIn("소광제", r["note"])
+
+    def test_similar_filters_and_recipe(self):
+        doc = synth.library()
+        target = doc["transfers"][3]["measured"]["sci"]
+        items = api.similar(target, "sci", [], None, transfers=doc["transfers"], substrate="C 1000")
+        self.assertTrue(items and all(str(x["substrate"]).startswith("C 1000") for x in items))
+        self.assertEqual(items[0]["recipe"]["inks"], doc["transfers"][3]["layer1"]["inks"])
+        self.assertEqual(api.similar(target, "sci", [], None, transfers=doc["transfers"], plate="없는동판"), [])
+        pats = [{"id": "P", "pattern": {"code": "W01"}, "variations": [{"id": "v01", "coating": [{"code": "C 1000"}],
+                 "mixes": [{"layer": "1도", "inks": {"WH": 20, "BL": 8}, "thinnerPct": 30, "hardenerG": 5.6, "labSci": {"L": 40, "a": -1, "b": -10}}]}]}]
+        arch = [x for x in api.similar(target, "sci", pats, None, substrate="C 1000") if x["source"] == "아카이브"]
+        self.assertEqual(arch[0]["recipe"]["hardener"], 20.0)       # g만 적힌 경화제 → 잉크 합 대비 %
+
+    def test_metadata_validated_and_in_applicability(self):
+        doc = synth.library()
+        doc["transfers"][-1].update(machine="1호기", cure="24시간", temp=23, humidity=45)
+        doc["substrates"][0].update(finish="펄", gloss=85)
+        doc["inks"][0]["lot"] = "L-2026-01"
+        doc["settings"]["instrument"] = "측색기 A"
+        clean = api.validate(doc)
+        self.assertEqual((clean["transfers"][-1]["machine"], clean["transfers"][-1]["temp"]), ("1호기", 23.0))
+        self.assertEqual((clean["substrates"][0]["finish"], clean["inks"][0]["lot"], clean["settings"]["instrument"]),
+                         ("펄", "L-2026-01", "측색기 A"))
+        with self.assertRaises(model.ModelError):
+            api.validate(dict(doc, substrates=[dict(doc["substrates"][0], finish="반짝이")]))
+        with self.assertRaises(model.ModelError):
+            api.validate(dict(doc, transfers=[dict(doc["transfers"][-1], humidity=150)]))
+        run = fit.run_profile(clean, "sci", "DEMO_002")
+        self.assertEqual(run["applicability"]["machine"], ["1호기"])
+
+    def test_library_accuracy_for_three_channel(self):
+        doc = synth.library()
+        acc = api.library_accuracy(doc, model.Library(doc), "sci")
+        self.assertGreater(acc["n"], 0)
+        self.assertIsNotNone(acc["mix"])
+
+
+class SimilarWorklogShadowTests(unittest.TestCase):
+    def test_worklog_loop_does_not_overwrite_plate_filter(self):
+        class W:
+            kind, name, date = "v3", "w1", "2026-01-01"
+            jobs = [{"plate": {"lot": "X"}, "samples": [{"lab": {"sci": {"L": 50, "a": 0, "b": 0}}, "substrate": "C 1000"}]}]
+        idx = type("I", (), {"logs": [W()]})()
+        doc = synth.library()
+        items = api.similar([45, -8, -20], "sci", [], idx, transfers=doc["transfers"])
+        self.assertTrue(any(x["source"] == "전사 시료" for x in items))
