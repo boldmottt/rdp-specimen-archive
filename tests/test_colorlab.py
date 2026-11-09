@@ -793,3 +793,62 @@ class HttpTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class P0FixTests(unittest.TestCase):
+    """심층 리뷰 P0: 어두운 % 분광 · 바탕 이름 모호성 · 줄 번호 밀림 재맞추기 경보 · DB 코드 목록."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="lab-p0-")
+        self.backup = os.path.join(self.dir, "_backup")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_dark_percent_spectrum_uses_paired_lab(self):
+        pct = [1.2 - 0.01 * i for i in range(31)]          # SCE 진한 검정, % 단위 (모두 1.5 이하)
+        true = cm.spectrum_to_lab([x / 100 for x in pct])
+        self.assertLess(cm.delta_e76(model.meas_lab({"sce_spec": pct, "sce": list(true)}, "sce"), true), 1e-9)
+        sp = model._spec({"sce_spec": pct, "sce": list(true)}, "sce")
+        self.assertLess(cm.delta_e76(cm.spectrum_to_lab(sp), true), 0.01)    # 계산 채널도 %로 읽음
+        frac = [0.30 + 0.002 * i for i in range(31)]          # 보통 0~1 값은 그대로
+        self.assertEqual(model.normalize_spectrum(frac, cm.spectrum_to_lab(frac)), frac)
+        clean = api.validate({"substrates": [{"code": "K", "sce": list(true), "sce_spec": pct}]})
+        self.assertLess(max(clean["substrates"][0]["sce_spec"]), 0.02)   # 저장할 때 0~1로 정리
+
+    def test_ambiguous_substrate_is_not_picked_silently(self):
+        doc = synth.library()
+        api.save_library(self.dir, self.backup, doc, "")
+        doc = api.load_library(self.dir)
+        doc["substrates"].append({"code": "C 1000", "maker": "도장처 B", "surface": "패브릭엠보",
+                                  "measured_on": "2026-03-01", "sci": [41.0, -0.4, -1.9]})
+        with self.assertRaises(model.AmbiguousSubstrate):
+            model.Library(doc).find_substrate("C 1000")
+        code, r = api.save_library(self.dir, self.backup, doc, doc["updatedAt"])
+        self.assertEqual(code, 200)
+        self.assertEqual(len(r["requalified"]), 3)              # 'C 1000'을 쓰던 시료 3줄
+        saved = api.load_library(self.dir)
+        lib = model.Library(saved)
+        for t in saved["transfers"]:
+            if str(t["substrate"]).startswith("C 1000"):
+                self.assertEqual(lib.find_substrate(t["substrate"])["sci"], [38.0, -0.6, -2.5])   # 원래 바탕 그대로
+        # 같은 도장처·표면을 다시 잰 줄은 가장 최근 값 (모호하지 않음)
+        doc = synth.library()
+        doc["substrates"].append(dict(doc["substrates"][0], measured_on="2026-05-01", sci=[38.5, -0.6, -2.4]))
+        self.assertEqual(model.Library(doc).find_substrate("C 1000")["sci"], [38.5, -0.6, -2.4])
+
+    def test_deleting_other_plate_row_is_not_stale(self):
+        doc = synth.library()
+        run = {"mode": "sci", "plate": "DEMO_002", "snapshot": fit.snapshot(doc, "sci", "DEMO_002")}
+        other = dict(doc, transfers=doc["transfers"][1:])        # DEMO_001 줄 하나 지움 → DEMO_002 줄 번호가 밀림
+        self.assertEqual(fit.stale_reasons(run, other), [])
+        changed = json.loads(json.dumps(doc))
+        changed["transfers"][-1]["measured"]["sci"][0] += 1
+        self.assertEqual(fit.stale_reasons(run, changed), ["전사 시료 수정"])
+        old = dict(run, snapshot=dict(run["snapshot"], transfers={str(i): f for i, f in enumerate(run["snapshot"]["transfers"])}))
+        self.assertEqual(fit.stale_reasons(old, doc), [])         # 예전 형식 스냅샷도 읽음
+
+    def test_db_codes_listed_for_screen(self):
+        info = api.describe_library(synth.library())
+        self.assertIn("BL", info["db_codes"])
+        self.assertIn("VL", info["db_codes"])

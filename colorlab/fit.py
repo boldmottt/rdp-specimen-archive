@@ -18,6 +18,7 @@
 """
 import hashlib
 import json
+from collections import Counter
 import math
 import time
 
@@ -489,7 +490,7 @@ def _confidence(samples, groups, issues, validation, sens):
 def snapshot(doc, mode, plate):
     """이 프로필 계산에 영향을 주는 입력의 지문."""
     registry = model.InkRegistry(doc.get("inks") or [])
-    rows = {str(i + 1): fingerprint(t) for i, t in enumerate(doc.get("transfers") or []) if t.get("plate") == plate}
+    rows = sorted(fingerprint(t) for t in doc.get("transfers") or [] if t.get("plate") == plate)
     names = {registry.resolve(n) for t in doc.get("transfers") or [] if t.get("plate") == plate
              for n in ((t.get("layer1") or {}).get("inks") or {})}
     inks = {i["name"]: fingerprint([i.get("clear"), i.get("cal")]) for i in doc.get("inks") or [] if i["name"] in names}
@@ -508,13 +509,17 @@ def stale_reasons(run, doc):
     now = snapshot(doc, run.get("mode"), run.get("plate"))
     old = run.get("snapshot") or {}
     out = []
-    a, b = old.get("transfers") or {}, now["transfers"]
-    if set(b) - set(a):
-        out.append(f"전사 시료 추가 {len(set(b) - set(a))}개")
-    if set(a) - set(b):
-        out.append(f"전사 시료 삭제 {len(set(a) - set(b))}개")
-    if any(a[k] != b[k] for k in set(a) & set(b)):
+    a, b = old.get("transfers") or [], now["transfers"]
+    if isinstance(a, dict):                 # 예전 형식 {줄 번호: 지문}
+        a = list(a.values())
+    gone, new = Counter(a) - Counter(b), Counter(b) - Counter(a)
+    changed = min(sum(gone.values()), sum(new.values()))   # 하나 빠지고 하나 생김 = 고친 것
+    if changed:
         out.append("전사 시료 수정")
+    if sum(new.values()) > changed:
+        out.append(f"전사 시료 추가 {sum(new.values()) - changed}개")
+    if sum(gone.values()) > changed:
+        out.append(f"전사 시료 삭제 {sum(gone.values()) - changed}개")
     if (old.get("inks") or {}) != now["inks"]:
         out.append("잉크(은폐 도막·측정) 변경")
     if (old.get("substrates") or {}) != now["substrates"]:

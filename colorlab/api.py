@@ -82,7 +82,7 @@ def _check_meas(m, what):
         if sp not in (None, "", []):
             if not isinstance(sp, (list, tuple)) or len(sp) != len(cm.WAVELENGTHS):
                 raise model.ModelError(f"{what} {mode.upper()} 분광: {len(cm.WAVELENGTHS)}개(400~700 nm, 10 nm)가 필요합니다")
-            out[f"{mode}_spec"] = [_num(v, f"{what} 분광") for v in sp]
+            out[f"{mode}_spec"] = model.normalize_spectrum([_num(v, f"{what} 분광") for v in sp], out.get(mode))
     return out
 
 
@@ -296,6 +296,7 @@ def save_library(data_root, backup_dir, doc, base_rev):
         if (cur.get("updatedAt") or "") != (base_rev or ""):
             return 409, {"ok": False, "conflict": True, "message": "다른 곳에서 먼저 저장되었습니다", "current": cur}
         clean = validate(doc)
+        fixed = _requalify(clean, cur)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
         p = lib_path(data_root)
         if os.path.exists(p):
@@ -303,7 +304,40 @@ def save_library(data_root, backup_dir, doc, base_rev):
                 _atomic_write(os.path.join(backup_dir, f"lab-library.{stamp}.json"), f.read())
         clean["updatedAt"] = datetime.now().isoformat(timespec="microseconds")
         _atomic_write(p, json.dumps(clean, ensure_ascii=False, indent=2).encode("utf-8"))
-        return 200, {"ok": True, "savedAt": clean["updatedAt"]}
+        return 200, {"ok": True, "savedAt": clean["updatedAt"], "requalified": fixed}
+
+
+def _requalify(clean, prev):
+    """새 도장 시편 줄 때문에 전사 시료의 바탕 이름이 여러 줄에 걸리게 되면, 저장 전 판에서 가리키던 줄의
+    구체적인 이름(코드@도장처 / 코드@표면)으로 바꿔 둔다 — 시료의 바탕이 몰래 다른 값으로 바뀌지 않게."""
+    try:
+        old = model.Library({"substrates": prev.get("substrates") or [], "settings": prev.get("settings") or {}})
+    except model.ModelError:
+        return []
+    new = model.Library({"substrates": clean["substrates"], "settings": clean["settings"]})
+    fixed = []
+    for no, t in enumerate(clean.get("transfers") or [], 1):
+        ref = t.get("substrate")
+        if not isinstance(ref, str) or ref in model.CARDS:
+            continue
+        try:
+            new.find_substrate(ref)
+            continue
+        except model.AmbiguousSubstrate:
+            pass
+        except model.ModelError:
+            continue
+        try:
+            was = old.find_substrate(ref)
+        except model.ModelError:
+            continue
+        same = [s for s in clean["substrates"] if (s.get("code"), s.get("maker"), s.get("surface"))
+                == (was.get("code"), was.get("maker"), was.get("surface"))]
+        if not same:
+            continue
+        t["substrate"] = _sub_ref(clean, same[0])
+        fixed.append(f"{no}번: {ref} → {t['substrate']}")
+    return fixed
 
 
 def _cached_library(data_root):
@@ -450,7 +484,8 @@ def describe_library(doc, lib=None):
     fits = doc.get("fits") or {}
     profile = {"active": _run_summary(fits.get("active"), doc), "previous": _run_summary(fits.get("previous"), None),
                "basis": lib.basis}
-    return {"inks": inks, "substrates": subs, "plates": plates, "transfers": trs, "profile": profile}
+    return {"inks": inks, "substrates": subs, "plates": plates, "transfers": trs, "profile": profile,
+            "db_codes": list(model.DB_INK_CODES)}
 
 
 def _run_summary(run, doc):

@@ -27,6 +27,10 @@ class ModelError(ValueError):
     pass
 
 
+class AmbiguousSubstrate(ModelError):
+    """바탕 이름 하나가 도장처·표면이 다른 여러 줄에 걸린다 (조용히 하나를 고르지 않는다)."""
+
+
 # 아카이브와 컬러연구소가 함께 사용하는 이름/DB 연결 규칙. 별칭은 제품을 추측하지 않는다.
 DB_INK_CODES = ("MT", "BK", "WH", "YE", "RD", "CL", "YE-D", "BL", "VL")
 
@@ -135,16 +139,28 @@ def n_channels(space):
     return len(cm.WAVELENGTHS) if space == "spec" else 3
 
 
+def normalize_spectrum(s, lab=None):
+    """분광 반사율을 0~1로. 1.5보다 큰 값이 있으면 % 단위.
+    값이 모두 1.5 이하면 0~1인지 %(아주 어두운 색 — SCE 검정 등)인지 모양만으로는 모른다 →
+    같은 칸에 측색기 LAB가 있으면 두 해석 중 그 LAB에 가까운 쪽을 고른다."""
+    s = [float(x) for x in s]
+    if max(s) > 1.5:
+        return [x / 100.0 for x in s]
+    if lab and len(s) == len(cm.WAVELENGTHS) and max(s) > 0:
+        lab = tuple(float(x) for x in lab)
+        pct = [x / 100.0 for x in s]
+        if cm.delta_e76(cm.spectrum_to_lab(pct), lab) < cm.delta_e76(cm.spectrum_to_lab(s), lab):
+            return pct
+    return s
+
+
 def _spec(m, mode):
     s = (m or {}).get(f"{mode}_spec")
     if not s:
         return None
-    s = [float(x) for x in s]
     if len(s) != len(cm.WAVELENGTHS):
         raise ModelError(f"분광값은 {len(cm.WAVELENGTHS)}개(400~700 nm, 10 nm)여야 합니다")
-    if max(s) > 1.5:            # % 단위로 들어온 값
-        s = [x / 100.0 for x in s]
-    return s
+    return normalize_spectrum(s, (m or {}).get(mode))
 
 
 def meas_lab(m, mode):
@@ -298,8 +314,12 @@ class Library:
             c = [s for s in c if q in (s.get("maker"), s.get("surface"))]
         if not c:
             raise ModelError(f"라이브러리에 없는 도장 시편: {ref}")
-        if len(c) > 1:
-            c.sort(key=lambda s: str(s.get("measured_on") or ""), reverse=True)   # 가장 최근 측정
+        kinds = {(s.get("maker") or "", s.get("surface") or "") for s in c}
+        if len(kinds) > 1:      # 도장처·표면이 다른 줄이 섞임 → 어느 바탕인지 모른다
+            opts = " / ".join(sorted(f"{code}@{m}@{sf}".rstrip("@") for m, sf in kinds))
+            raise AmbiguousSubstrate(f"바탕 '{ref}'이(가) 여러 도장 시편에 걸립니다 — {opts} 중 하나로 골라 주세요")
+        if len(c) > 1:          # 같은 도장처·표면을 다시 잰 줄 → 가장 최근 측정
+            c.sort(key=lambda s: str(s.get("measured_on") or ""), reverse=True)
         return c[0]
 
     # --- 동판

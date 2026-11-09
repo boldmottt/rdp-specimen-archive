@@ -83,8 +83,28 @@
   }
   const labStr = (lab) => (lab ? lab.map((x) => (+x).toFixed(2)).join("  ") : "");
 
+  // 분광 → LAB (D65 · 2°, 400~700 nm 10 nm — 서버 colormath와 같은 표). 단위 판단·미리보기용
+  const CMF = [[0.01431, 0.000396, 0.06785], [0.04351, 0.00121, 0.2074], [0.13438, 0.004, 0.6456], [0.2839, 0.0116, 1.3856],
+    [0.34828, 0.023, 1.74706], [0.3362, 0.038, 1.77211], [0.2908, 0.06, 1.6692], [0.19536, 0.09098, 1.28764], [0.09564, 0.13902, 0.81295],
+    [0.03201, 0.20802, 0.46518], [0.0049, 0.323, 0.272], [0.0093, 0.503, 0.1582], [0.06327, 0.71, 0.07825], [0.1655, 0.862, 0.04216],
+    [0.2904, 0.954, 0.0203], [0.43345, 0.99495, 0.00875], [0.5945, 0.995, 0.0039], [0.7621, 0.952, 0.0021], [0.9163, 0.87, 0.00165],
+    [1.0263, 0.757, 0.0011], [1.0622, 0.631, 0.0008], [1.0026, 0.503, 0.00034], [0.85445, 0.381, 0.00019], [0.6424, 0.265, 0.00005],
+    [0.4479, 0.175, 0.00002], [0.2835, 0.107, 0], [0.1649, 0.061, 0], [0.0874, 0.032, 0], [0.04677, 0.017, 0], [0.0227, 0.00821, 0], [0.011359, 0.004102, 0]];
+  const D65 = [82.7549, 91.486, 93.4318, 86.6823, 104.865, 117.008, 117.812, 114.861, 115.923, 108.811, 109.354, 107.802, 104.79, 107.689,
+    104.405, 104.046, 100, 96.3342, 95.788, 88.6856, 90.0062, 89.5991, 87.6987, 83.2886, 83.6992, 80.0268, 80.2146, 82.2778, 78.2842, 69.7213, 71.6091];
+  function specLab(r) {
+    const xyz = [0, 1, 2].map((c) => r.reduce((a, v, i) => a + v * D65[i] * CMF[i][c], 0));
+    const wp = [0, 1, 2].map((c) => D65.reduce((a, v, i) => a + v * CMF[i][c], 0));
+    const f = (t) => (t > (6 / 29) ** 3 ? Math.cbrt(t) : t / (3 * (6 / 29) ** 2) + 4 / 29);
+    const [fx, fy, fz] = xyz.map((v, c) => f(v / wp[c]));
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+  }
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
   // 분광 붙여넣기: 31개(400~700 nm) · 39개(360~740) · 41개(380~780) · 36개(380~730) · 파장+값 두 열
-  function parseSpec(text) {
+  //   unit: "auto" | "pct" | "frac". 자동이면 1.5보다 큰 값이 있을 때 %, 아니면 같은 칸의 LAB에 가까운 쪽
+  //   (아주 어두운 색을 %로 내보내면 값이 모두 1.5 이하라 모양만으로는 0~1과 구별이 안 된다)
+  function parseSpec(text, unit = "auto", lab = null) {
     const t = String(text ?? "").trim();
     if (!t) return null;
     const nums = t.split(/[\s,;]+/).filter(Boolean).map(Number);
@@ -104,8 +124,16 @@
       if (cut === undefined) return { error: `값 ${nums.length}개 — 400~700 nm 10 nm 간격 31개가 필요합니다 (360~740·380~780도 받음)` };
       vals = nums.slice(cut, cut + 31);
     }
-    if (Math.max(...vals) > 1.5) vals = vals.map((x) => x / 100);   // % → 0~1
-    return vals.map((x) => Math.round(x * 1e5) / 1e5);
+    let pct = unit === "pct" || (unit === "auto" && Math.max(...vals) > 1.5);
+    let how = unit === "auto" ? (pct ? "%로 읽음 (1.5보다 큰 값)" : "0~1로 읽음") : unit === "pct" ? "%" : "0~1";
+    if (unit === "auto" && !pct && Array.isArray(lab) && Math.max(...vals) > 0) {
+      const asPct = vals.map((x) => x / 100);
+      if (dist(specLab(asPct), lab) < dist(specLab(vals), lab)) { pct = true; how = "%로 읽음 (같은 칸의 LAB와 맞는 쪽)"; }
+      else how = "0~1로 읽음 (같은 칸의 LAB와 맞는 쪽)";
+    }
+    if (pct) vals = vals.map((x) => x / 100);
+    vals = vals.map((x) => Math.round(x * 1e5) / 1e5);
+    return { vals, how, lab: specLab(vals) };
   }
 
   // ------------------------------------------------------------------ 입력 도우미 (값은 S.f[탭][키]에 보관)
@@ -135,7 +163,11 @@
     const v = val(k);
     return `<label class="cl-f"><span>동판 <em>막두께 계수</em></span><select data-k="${esc(k)}" data-plate="1">
       <option value="">기본 (×1.00)</option>
-      ${plates.map((p) => `<option value="${esc(p.lot)}"${p.lot === v ? " selected" : ""}>${esc(p.lot)} (×${(+p.thickness).toFixed(2)})</option>`).join("")}
+      ${plates.map((p) => {
+        const inf = S.info && S.info.plates && S.info.plates[p.lot];
+        const th = inf ? +inf.thickness : (p.thickness != null && p.thickness !== "" ? +p.thickness : NaN);
+        return `<option value="${esc(p.lot)}"${p.lot === v ? " selected" : ""}>${esc(p.lot)} (${Number.isFinite(th) ? `×${th.toFixed(2)}` : "막두께 저장 후 확인"})</option>`;
+      }).join("")}
     </select></label>`;
   }
 
@@ -558,7 +590,7 @@
           <label class="cl-f"><span>표시 약칭 <em>입력 별칭으로도 인식</em></span><input data-p="inks.${i}.short_name" value="${esc(ink.short_name || "")}" placeholder="YE-D" maxlength="80"></label>
           <label class="cl-f wide"><span>입력 별칭 <em>쉼표로 구분</em></span><input data-p="inks.${i}.aliases" data-type="aliases" value="${esc((ink.aliases || []).join(", "))}" placeholder="현장에서 사용하는 다른 이름"></label>
           <label class="cl-f"><span>회사 DB 연결 <em>별칭과 별도 지정</em></span><select data-p="inks.${i}.db_ink" aria-label="회사 DB 연결">
-            <option value="">연결 안 함 (DB 전송 차단)</option>${["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"].map((code) => `<option value="${code}"${(ink.db_ink ?? (["MT", "BK", "WH", "YE", "RD", "CL", "YE-D"].includes(ink.name) ? ink.name : "")) === code ? " selected" : ""}>${code}</option>`).join("")}</select></label>
+            <option value="">연결 안 함 (DB 전송 차단)</option>${DB_CODES().map((code) => `<option value="${code}"${(ink.db_ink ?? (DB_CODES().includes(ink.name) ? ink.name : "")) === code ? " selected" : ""}>${code}</option>`).join("")}</select></label>
         </div>
         ${ink.clear ? "" : `<div class="cl-measrow">${MEAS.map(([k, t]) => measCell(`inks.${i}.cal.${k}`, t)).join("")}</div>`}
       </div>`).join("")}
@@ -616,6 +648,8 @@
   }
 
   const deClass = (d) => (d <= 1 ? "ok" : d <= 2.5 ? "mid" : "ng");
+  // 회사 DB 잉크 칸 — 서버(model.DB_INK_CODES)가 정한 목록. 못 받았을 때만 기본 9종
+  const DB_CODES = () => (S.info && S.info.db_codes) || ["MT", "BK", "WH", "YE", "RD", "CL", "YE-D", "BL", "VL"];
   const recipeText = (inks) => Object.entries(inks || {}).map(([k, v]) => `${k} ${v}`).join(", ");
 
   // 바탕으로 고를 수 있는 이름 (서버 _sub_ref와 같은 규칙) + 기본 카드
@@ -884,25 +918,34 @@
     panel.className = "cl-modal on";
     panel.innerHTML = `<div class="cl-modal-in"><h3>분광 반사율 붙여넣기</h3>
       <p class="cl-note">측색기에서 내보낸 반사율(% 또는 0~1). 엑셀 한 줄·한 열, 파장+값 두 열 모두 됩니다. 비우면 지웁니다.</p>
+      <label class="cl-f sm"><span>단위</span><select id="spec-unit"><option value="auto">자동</option><option value="pct">% (0~100)</option><option value="frac">0~1</option></select></label>
       ${["sci", "sce"].map((md) => `<label class="cl-f wide"><span>${md.toUpperCase()} <em data-specmsg="${md}"></em></span>
         <textarea rows="4" data-spec-in="${md}">${esc((m[`${md}_spec`] || []).join(" "))}</textarea></label>`).join("")}
       <div class="cl-actions"><button class="cl-btn" id="spec-ok">확인</button><button class="cl-btn ghost" id="spec-no">취소</button></div></div>`;
     const check = () => {
       let ok = true;
       $$("[data-spec-in]", panel).forEach((t) => {
-        const r = parseSpec(t.value);
+        const r = parseSpec(t.value, $("#spec-unit", panel).value, m[t.dataset.specIn]);
         const msg = $(`[data-specmsg="${t.dataset.specIn}"]`, panel);
         if (r && r.error) { msg.textContent = r.error; msg.className = "bad"; ok = false; }
-        else { msg.textContent = r ? `31개 ✓ (400~700 nm)` : "없음"; msg.className = ""; }
+        else {
+          const far = r && Array.isArray(m[t.dataset.specIn]) && dist(r.lab, m[t.dataset.specIn]) > 3;
+          msg.textContent = r ? `31개 ✓ · ${r.how} → L ${r.lab.map((x) => x.toFixed(1)).join(" ")}${far ? " · 같은 칸의 LAB와 많이 다릅니다 — 단위를 확인하세요" : ""}` : "없음";
+          msg.className = far ? "bad" : "";
+        }
       });
       return ok;
     };
     $$("[data-spec-in]", panel).forEach((t) => (t.oninput = check));
+    $("#spec-unit", panel).onchange = check;
     check();
     $("#spec-no").onclick = () => { panel.className = ""; panel.innerHTML = ""; };
     $("#spec-ok").onclick = () => {
       if (!check()) return;
-      $$("[data-spec-in]", panel).forEach((t) => setPath(E(), `${path}.${t.dataset.specIn}_spec`, parseSpec(t.value) || undefined));
+      $$("[data-spec-in]", panel).forEach((t) => {
+        const r = parseSpec(t.value, $("#spec-unit", panel).value, m[t.dataset.specIn]);
+        setPath(E(), `${path}.${t.dataset.specIn}_spec`, r ? r.vals : undefined);
+      });
       panel.className = ""; panel.innerHTML = "";
       markDirty(); render();
     };
@@ -912,8 +955,9 @@
     const doc = clone(E());
     delete doc.updatedAt;
     try {
-      await api("PUT", "/api/lab/library", doc, { "X-Base-Rev": S.rev });
+      const r = await api("PUT", "/api/lab/library", doc, { "X-Base-Rev": S.rev });
       await loadLibrary();
+      if ((r.requalified || []).length) alert(`같은 컬러코드의 도장 시편이 늘어서, 전사 시료의 바탕 이름을 원래 가리키던 줄로 구체화했어요:\n${r.requalified.join("\n")}`);
       toast("저장했습니다 (｡•̀ᴗ-)✧");
       render();
     } catch (e) {
