@@ -584,6 +584,85 @@
     out.innerHTML = S.res.de;
   }
 
+  // ------------------------------------------------------------------ 탭: 실측 검증
+  // 보정에 안 쓴 시료(검증용)로 예측이 실제로 얼마나 맞는지 — 엔진 테스트는 합성 데이터라 이것만이 진짜 정확도
+  function viewValidate() {
+    return `<div class="cl-card"><h2>실측 검증 <small>보정에 쓰지 않은 '검증용' 전사 시료로 예측이 실제로 얼마나 맞는지</small></h2>
+      <ol class="cl-note"><li>아래 <b>검증 세트</b>를 만들어 그 동판·바탕으로 찍고 잽니다.</li>
+        <li>[전사 시료에 검증용으로 추가] → 측색 라이브러리에서 잰 값을 넣고 저장 (검증용 시료는 보정 프로필 계산에 쓰지 않아요).</li>
+        <li>[검증 보고서] — 종류(단독·혼합·2도)·동판·바탕별 오차와 고객 기준 합격률.</li></ol>
+      <h3>1. 검증 세트 만들기</h3>
+      <div class="cl-grid">${subField("sub")}${plateField("plate")}
+        <label class="cl-f sm"><span>잉크 합계 g</span><input data-k="total" type="number" step="1" min="1" value="${esc(val("total", 20))}"></label>
+        ${toneField()}</div>
+      <div class="cl-actions"><button class="cl-btn" id="plan">검증 세트 만들기</button></div>
+      <div id="plan-out">${S.res.plan || ""}</div>
+      <h3>2. 검증 보고서 <small>${esc(S.mode.toUpperCase())}</small></h3>
+      <div class="cl-actions"><button class="cl-btn" id="go">검증 보고서</button></div></div>
+      <div id="out">${S.res.validate || ""}</div>`;
+  }
+
+  const statCells = (st) => (st ? `<td>${st.n}</td><td class="${deClass(st.mean)}">${st.mean.toFixed(2)}</td><td>${st.median.toFixed(2)}</td><td>${st.p90.toFixed(2)}</td><td>${st.max.toFixed(2)}</td><td class="${st.pass >= 80 ? "ok" : st.pass >= 50 ? "mid" : "ng"}">${st.pass}%</td>` : `<td colspan="6" class="cl-note">없음</td>`);
+  const statHead = `<tr><th></th><th>시료</th><th>평균 ΔE00</th><th>중앙값</th><th>90%</th><th>최대</th><th>고객 기준 합격</th></tr>`;
+
+  async function goValidate(out) {
+    const r = await api("POST", "/api/lab/validation", { mode: S.mode });
+    const v = r.validation, tol = r.tolerance;
+    const grp = (title, g) => Object.entries(g || {}).map(([k, st]) => `<tr><td>${esc(title)} ${esc(k || "-")}</td>${statCells(st)}</tr>`).join("");
+    S.res.validate = `<div class="cl-card"><h3>검증 보고서 <small>고객 기준 ${esc(((S.info && S.info.formulas) || {})[tol.formula] || tol.formula)} ≤ ${tol.limit}</small></h3>
+      ${r.advice.length ? `<ul class="cl-reasons">${r.advice.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : ""}
+      <table class="cl-table narrow">${statHead}
+        <tr><td><b>검증용 전체</b> <small>(정직한 오차)</small></td>${statCells(v.all)}</tr>
+        ${grp("종류", v.kind)}${grp("동판", v.plate)}${grp("바탕", v.substrate)}
+        <tr class="off"><td>보정에 쓴 시료 <small>(낙관적 참고)</small></td>${statCells(r.fitted.all)}</tr></table>
+      <details${(v.all || {}).n ? "" : " open"}><summary>시료별 (${r.rows.length}개)</summary>
+      <div class="cl-scroll"><table class="cl-table"><thead><tr><th>번호</th><th></th><th>종류</th><th>동판 · 바탕</th><th>배합</th><th>잰 · 예측</th><th>ΔE00</th><th>판정</th></tr></thead><tbody>
+      ${r.rows.map((x) => `<tr${x.validation ? "" : ' class="off"'}><td>${x.no}</td><td>${x.validation ? `<span class="cl-tag ok">검증용</span>` : ""}</td><td>${esc(x.kind)}</td>
+        <td>${esc(x.plate || "-")} · ${esc(x.substrate)}</td><td><small>${esc(inkText(x.inks))} · 망점 ${x.tone}%</small></td>
+        <td>${x.error ? `<small class="bad">${esc(x.error)}</small>` : `<span class="cl-pair">${sw(labToHex(x.measured))}${sw(labToHex(x.pred))}</span>`}</td>
+        <td>${x.dE != null ? `<span class="${deClass(x.dE)}">${x.dE.toFixed(2)}</span>` : "—"}</td><td>${x.judge ? judgeTag(x.judge) : ""}</td></tr>`).join("")}
+      </tbody></table></div></details></div>`;
+    out.innerHTML = S.res.validate;
+  }
+
+  async function goPlan() {
+    const out = $("#plan-out");
+    try {
+      const body = { mode: S.mode, substrate: getSub("sub"), plate: val("plate") || null, ink_total: +val("total", 20), tone: getTone() };
+      const r = await api("POST", "/api/lab/validation/plan", body);
+      S.plan = { ...r, body };
+      const yaml = r.rows.map((p) => batchYaml("1도", p.inks, { mat: 0, thin: 30, hard: 20 })).join("\n");
+      S.res.plan = `<p class="cl-note">${r.rows.length}개 — 경화제 20% · 신나 30%, 망점 ${r.tone}%. 예측색은 지금 라이브러리 기준(검증 전).</p>
+        <div class="cl-scroll"><table class="cl-table"><thead><tr><th>#</th><th>목적</th><th>배합 g</th><th>예측</th></tr></thead><tbody>
+        ${r.rows.map((p, i) => `<tr><td>${i + 1}</td><td>${esc(p.why)}</td><td class="mono">${esc(inkText(p.inks))}</td>
+          <td>${p.error ? `<small class="bad">${esc(p.error)}</small>` : `${sw(p.hex)} <span class="mono">${labStr(p.pred)}</span>`}</td></tr>`).join("")}</tbody></table></div>
+        <div class="cl-actions"><button class="cl-btn ghost" data-copy="${esc(yaml)}">일지용 복사 (batches)</button>
+          <button class="cl-btn ghost" id="plan-add">전사 시료에 검증용으로 추가</button></div>`;
+      out.innerHTML = S.res.plan;
+      bindPlan(out);
+    } catch (e) { out.innerHTML = `<div class="cl-err">${esc(e.message)}</div>`; }
+  }
+
+  function bindPlan(out) {
+    $$("[data-copy]", out).forEach((b) => (b.onclick = () => copy(b.dataset.copy)));
+    const add = $("#plan-add", out);
+    if (add) add.onclick = () => {
+      const p = S.plan;
+      if (!p) return;
+      const T = (S.edit.transfers = S.edit.transfers || []);
+      const sub = typeof p.body.substrate === "string" ? p.body.substrate : "";
+      if (!sub) { toast("검증 시료는 라이브러리의 바탕을 골라야 추가할 수 있어요", true); return; }
+      const today = new Date().toISOString().slice(0, 10);
+      p.rows.forEach((r) => T.push({ date: today, plate: p.plate || "", substrate: sub, layer1: { inks: r.inks, tone: p.tone },
+        thinner_pct: 30, hardener_pct: 20, matting_pct: 0, measured: {}, note: `검증 세트 · ${r.why}`, validation: true }));
+      markDirty();
+      S.trFilter = p.plate || "";
+      location.hash = "#/library";
+      setTimeout(() => { const el = $("#transfers"); if (el) el.scrollIntoView({ behavior: "smooth" }); }, 50);
+      toast(`검증용 시료 ${p.rows.length}줄을 추가했어요 — 찍어서 잰 값을 넣고 저장하세요`);
+    };
+  }
+
   // ------------------------------------------------------------------ 탭: 측색 라이브러리
   const E = () => S.edit;
   function getPath(o, path) { return path.split(".").reduce((x, k) => (x == null ? x : x[k]), o); }
@@ -796,6 +875,7 @@
           <label class="cl-f xs"><span>경화제 %</span><input type="number" data-p="transfers.${i}.hardener_pct" data-type="num" value="${esc(t.hardener_pct ?? 20)}"></label>
           <label class="cl-f xs"><span>소광제 %</span><input type="number" data-p="transfers.${i}.matting_pct" data-type="num" value="${esc(t.matting_pct ?? 0)}"></label>
           <input class="cl-memo" data-p="transfers.${i}.note" value="${esc(t.note || "")}" placeholder="메모">
+          <label class="cl-check" title="보정 프로필 계산에 쓰지 않고 실측 검증에만 씁니다"><input type="checkbox" data-p="transfers.${i}.validation" data-type="bool"${t.validation ? " checked" : ""}> 검증용</label>
           <div class="grow"></div>
           <button class="cl-x" data-del="transfers.${i}" title="삭제">×</button></div>
         <div class="cl-tr-row">
@@ -1094,7 +1174,7 @@
   // ------------------------------------------------------------------ 라우팅
   const VIEWS = {
     predict: [viewPredict, goPredict], recommend: [viewRecommend, goRecommend], correct: [viewCorrect, goCorrect],
-    similar: [viewSimilar, goSimilar], library: [viewLibrary, null], de: [viewDe, goDe],
+    similar: [viewSimilar, goSimilar], library: [viewLibrary, null], de: [viewDe, goDe], validate: [viewValidate, goValidate],
   };
 
   function render() {
@@ -1113,6 +1193,8 @@
       const out = $("#out");
       if (out) bindResult(out);
       if (go && S.autoRun === S.tab) { S.autoRun = null; go.click(); }
+      const plan = $("#plan");
+      if (plan) { plan.onclick = () => goPlan(); const po = $("#plan-out"); if (po) bindPlan(po); }
     }
     window.scrollTo(0, y);
   }

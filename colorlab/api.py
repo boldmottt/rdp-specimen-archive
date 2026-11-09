@@ -338,8 +338,10 @@ def _check_transfer(t, no):
             raise model.ModelError(f"{what}: {label}는 0 이상")
         d[k] = v
     d["measured"] = _check_meas(t.get("measured"), f"{what} 측정")
-    if not d["measured"]:
-        raise model.ModelError(f"{what}: 잰 값(SCI 또는 SCE)이 필요합니다")
+    if t.get("validation"):
+        d["validation"] = True       # 검증용: 보정에 쓰지 않음 · 아직 안 쟀으면 빈 채로 둘 수 있음 ('잴 예정')
+    elif not d["measured"]:
+        raise model.ModelError(f"{what}: 잰 값(SCI 또는 SCE)이 필요합니다 (검증용으로 표시하면 나중에 재도 됩니다)")
     d["note"] = str(t.get("note") or "")
     for k in TRANSFER_META:              # 공정·측정 조건 (같은 배합인데 색이 다른 이유를 남긴다)
         v = str(t.get(k) or "").strip()
@@ -764,6 +766,125 @@ def _metamerism(body):
     return {"metamerism": rows, "observer": cm.current_observer()}
 
 
+# ---------------------------------------------------------------- 실측 검증
+def _kind(lib, t):
+    if t.get("layer2"):
+        return "2도"
+    colored = [n for n in (t.get("layer1") or {}).get("inks") or {}
+               if not (lib.inks.get(lib.registry.resolve(n)) or {}).get("clear")]
+    return "혼합" if len(colored) > 1 else "단독"
+
+
+def _stats(rows):
+    v = sorted(r["dE"] for r in rows)
+    if not v:
+        return None
+    return {"n": len(v), "mean": round(sum(v) / len(v), 2), "median": round(v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2, 2),
+            "p90": round(v[min(len(v) - 1, int(round(0.9 * (len(v) - 1))))], 2), "max": round(v[-1], 2),
+            "pass": round(sum(1 for r in rows if r["judge"]["ok"]) / len(rows) * 100)}
+
+
+def validation_report(doc, lib, mode):
+    """실측 검증: 지금 라이브러리(적용한 프로필 포함)로 전사 시료를 예측해 잰 값과 비교한다.
+    '검증용' 시료는 보정에 쓰이지 않았으므로 정직한 오차, 나머지는 보정에 쓴 시료라 낙관적인 참고값."""
+    tol = tolerance(doc)
+    rows = []
+    for i, t in enumerate(doc.get("transfers") or []):
+        smp = transfer_sample(t, mode)
+        if smp is None:
+            continue
+        row = {"no": i + 1, "validation": bool(t.get("validation")), "plate": t.get("plate") or "",
+               "substrate": t["substrate"] if isinstance(t.get("substrate"), str) else "(직접 입력)",
+               "kind": _kind(lib, t), "inks": (t.get("layer1") or {}).get("inks") or {},
+               "tone": float((t.get("layer1") or {}).get("tone", 100)), "measured": [round(x, 2) for x in smp["measured_lab"]]}
+        try:
+            r = model.predict(lib, smp["substrate"], smp["layer1"], smp.get("layer2"), mode=mode, plate=t.get("plate") or None,
+                              coverage=smp["coverage"])
+            lab = r["average"]["lab"]
+            row.update(pred=[round(x, 2) for x in lab], space=r["space"], dE=round(cm.delta_e2000(lab, smp["measured_lab"]), 2),
+                       judge=judge(tol, smp["measured_lab"], lab), diff=cm.describe(cm.lab_parts(smp["measured_lab"], lab)))
+        except model.ModelError as e:
+            row["error"] = str(e)
+        rows.append(row)
+    ok = [r for r in rows if "dE" in r]
+
+    def groups(sel, key):
+        out = {}
+        for r in sel:
+            out.setdefault(r[key], []).append(r)
+        return {k: _stats(v) for k, v in sorted(out.items())}
+
+    val = [r for r in ok if r["validation"]]
+    advice = []
+    base = val or ok
+    by = groups(base, "kind")
+    if not val:
+        advice.append("검증용 시료가 없습니다 — 아래 '검증 세트'로 보정에 안 쓴 시료를 찍어 재야 정직한 오차를 알 수 있어요")
+    for kind, st in by.items():
+        if st and st["mean"] > 2.0:
+            advice.append(f"{kind} 예측 평균 ΔE {st['mean']:.1f} — 이 경우 예측·추천은 출발점으로만 쓰고 보정 추천으로 맞추세요")
+        elif st and st["mean"] <= 1.0:
+            advice.append(f"{kind} 예측 평균 ΔE {st['mean']:.1f} — 이 범위에서는 예측을 믿고 시험 횟수를 줄일 수 있어요")
+    if any(r.get("space") != "spec" for r in base):
+        advice.append("3채널(LAB만) 계산이 섞여 있어요 — 잉크·바탕 분광을 넣으면 혼합 예측이 크게 좋아질 수 있습니다")
+    return {"mode": mode, "tolerance": tol, "rows": rows, "errors": [r for r in rows if "error" in r],
+            "validation": {"all": _stats(val), "kind": groups(val, "kind"), "plate": groups(val, "plate"), "substrate": groups(val, "substrate")},
+            "fitted": {"all": _stats([r for r in ok if not r["validation"]]), "kind": groups([r for r in ok if not r["validation"]], "kind")},
+            "advice": advice}
+
+
+def validation_plan(lib, mode, substrate, plate, inks=None, ink_total=20.0, tone=100):
+    """검증 세트: 이 바탕·동판으로 찍어 잴 배합 15~20개 — 단독 · 투명 희석 · 2색 · 흰색 섞기 · 3색.
+    잰 값을 '검증용' 전사 시료로 넣으면 실측 검증 보고서가 진짜 오차를 알려 준다."""
+    names = [n for n in (inks or lib.inks) if n in lib.inks and n != model.MATTING]
+    clear = [n for n in names if lib.inks[n].get("clear")]
+    space = lib.basis
+    colored = [n for n in names if not lib.inks[n].get("clear") and (lib.ink_ready(n, mode, space) or lib.ink_ready(n, mode, "spec"))]
+    if not colored:
+        raise model.ModelError("계산할 수 있는 유색 잉크가 없습니다 (측정 보정 또는 보정 프로필 필요)")
+    white = [n for n in colored if n.upper().startswith("WH") or "흰" in n]
+    black = [n for n in colored if n.upper().startswith("BK") or "검" in n]
+    chroma = [n for n in colored if n not in white + black]
+    plan = []
+
+    def add(why, parts):
+        tot = sum(parts.values())
+        g = {k: round(ink_total * v / tot, 1) for k, v in parts.items()}
+        if g not in [p["inks"] for p in plan]:
+            plan.append({"why": why, "inks": g})
+
+    # 종류가 고루 들어가게: 단독 → 흰색 섞기 → 3색·검정 조금 → 2색 1:1 → 투명 희석 → 2색 3:1 (최대 20개)
+    for n in colored:
+        add("단독", {n: 1})
+    for w in white[:1]:
+        for n in chroma[:3] + black[:1]:
+            add("흰색 섞기 3:1", {w: 3, n: 1})
+    if len(chroma) >= 3:
+        add("3색", {chroma[0]: 2, chroma[1]: 1, chroma[2]: 1})
+    if black and chroma:
+        add("검정 조금", {chroma[0]: 9, black[0]: 1})
+    pairs = [(a, b) for i, a in enumerate(chroma) for b in chroma[i + 1:]][:6]
+    for a, b in pairs:
+        add("2색 1:1", {a: 1, b: 1})
+    if clear:
+        for n in chroma[:3]:
+            add("투명 희석 1:1", {n: 1, clear[0]: 1})
+    for a, b in pairs:
+        add("2색 3:1", {a: 3, b: 1})
+    plan = plan[:20]
+    rows = []
+    for p in plan:
+        rec = {"inks": p["inks"], "hardener": {"g": ink_total * 0.2}, "thinner": {"g": ink_total * 0.3}}
+        try:
+            r = model.predict(lib, substrate, rec, mode=mode, plate=plate or None, coverage={"1도": tone / 100})
+            p["pred"] = [round(x, 2) for x in r["average"]["lab"]]
+            p["hex"] = r["average"]["hex"]
+        except model.ModelError as e:
+            p["error"] = str(e)
+        rows.append(p)
+    return {"substrate": substrate, "plate": plate, "tone": tone, "ink_total": ink_total, "rows": rows}
+
+
 def apply_profile(data_root, backup_dir, body, base_rev):
     """보정 프로필 적용: 지금 저장된 라이브러리로 다시 계산해서, 미리보기 때와 입력이 같을 때만 저장한다."""
     with _guard:
@@ -906,6 +1027,15 @@ def _handle(method, path, query, body, ctx):
             r["now"]["judge"] = judge(tol, tgt, _lab3(body.get("measured"), "측정"))
             r["expected"]["judge"] = judge(tol, tgt, r["expected"]["lab"])
             return 200, {"ok": True, **r, "tolerance": tol}
+        if path == "/api/lab/validation":
+            doc = load_library(ctx["data"])
+            return 200, {"ok": True, **validation_report(doc, lib, mode)}
+        if path == "/api/lab/validation/plan":
+            sub = _substrate(body)
+            if not sub:
+                raise model.ModelError("바탕을 고르세요")
+            return 200, {"ok": True, **validation_plan(lib, mode, sub, body.get("plate") or None, body.get("inks") or None,
+                                                       _num(body.get("ink_total") or 20, "잉크 합계"), _tone(body) * 100)}
         if path == "/api/lab/profile/preview":
             run = fitmod.run_profile(load_library(ctx["data"]), mode=mode, plate=body.get("plate"), space=body.get("space"))
             return 200, {"ok": True, "run": run, "snapshot": fitmod.fingerprint(run["snapshot"])}

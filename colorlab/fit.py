@@ -119,6 +119,9 @@ def collect(doc, mode, plate, space):
         def skip(reason):
             excluded.append({"no": no, "reason": reason})
 
+        if t.get("validation"):
+            skip("검증용 시료 (보정에 쓰지 않고 실측 검증에만)")
+            continue
         meas = t.get("measured") or {}
         if not model.has(meas, mode, space):
             skip(f"{mode.upper()} {'분광' if space == 'spec' else '값'} 없음")
@@ -499,7 +502,7 @@ def _confidence(samples, groups, issues, validation, sens):
 def snapshot(doc, mode, plate):
     """이 프로필 계산에 영향을 주는 입력의 지문."""
     registry = model.InkRegistry(doc.get("inks") or [])
-    rows = sorted(fingerprint(t) for t in doc.get("transfers") or [] if t.get("plate") == plate)
+    rows = sorted(fingerprint(t) for t in doc.get("transfers") or [] if t.get("plate") == plate and not t.get("validation"))
     names = {registry.resolve(n) for t in doc.get("transfers") or [] if t.get("plate") == plate
              for n in ((t.get("layer1") or {}).get("inks") or {})}
     inks = {i["name"]: fingerprint([i.get("clear"), i.get("cal")]) for i in doc.get("inks") or [] if i["name"] in names}

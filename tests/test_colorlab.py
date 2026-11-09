@@ -1059,3 +1059,44 @@ class SimilarWorklogShadowTests(unittest.TestCase):
         doc = synth.library()
         items = api.similar([45, -8, -20], "sci", [], idx, transfers=doc["transfers"])
         self.assertTrue(any(x["source"] == "전사 시료" for x in items))
+
+
+class P3Tests(unittest.TestCase):
+    """심층 리뷰 P3: 검증용 시료(보정 제외) · 검증 보고서 · 검증 세트."""
+
+    def test_validation_rows_are_excluded_from_profile_and_may_be_unmeasured(self):
+        doc = synth.library()
+        y2 = [i for i, t in enumerate(doc["transfers"]) if t["plate"] == "DEMO_002"]
+        doc["transfers"][y2[-1]]["validation"] = True
+        doc["transfers"].append({"date": "2026-03-01", "plate": "DEMO_002", "substrate": "흰 카드",
+                                 "layer1": {"inks": {"Y2": 20}, "tone": 50}, "validation": True, "measured": {}})
+        clean = api.validate(doc)                                   # 아직 안 잰 검증용 줄도 저장 가능
+        self.assertTrue(clean["transfers"][-1]["validation"])
+        with self.assertRaises(model.ModelError):
+            api.validate(dict(doc, transfers=[dict(doc["transfers"][-1], validation=False)]))
+        run = fit.run_profile(clean, "sci", "DEMO_002")
+        self.assertIn(y2[-1] + 1, [x["no"] for x in run["excluded"] if "검증용" in x["reason"]])
+        self.assertNotIn(y2[-1] + 1, [s["no"] for s in run["samples"]])
+
+    def test_report_separates_validation_from_fitted(self):
+        doc = synth.library()
+        for t in doc["transfers"][:3]:
+            t["validation"] = True
+        doc = api.validate(doc)
+        r = api.validation_report(doc, model.Library(doc), "sci")
+        self.assertEqual(r["validation"]["all"]["n"], 3)
+        self.assertEqual(set(r["validation"]["kind"]), {"혼합"})
+        self.assertIn("pass", r["validation"]["all"])
+        self.assertTrue(r["advice"])
+        empty = api.validation_report(synth.library(), model.Library(synth.library()), "sci")
+        self.assertIsNone(empty["validation"]["all"])
+        self.assertTrue(any("검증용 시료가 없습니다" in a for a in empty["advice"]))
+
+    def test_plan_covers_singles_mixtures_and_predicts(self):
+        lib = model.Library(synth.library())
+        p = api.validation_plan(lib, "sci", "C 1000", "DEMO_001")
+        whys = {r["why"] for r in p["rows"]}
+        self.assertTrue({"단독", "2색 1:1"} <= whys)
+        self.assertLessEqual(len(p["rows"]), 20)
+        self.assertTrue(all("pred" in r or "error" in r for r in p["rows"]))
+        self.assertTrue(all(abs(sum(r["inks"].values()) - 20) < 0.3 for r in p["rows"]))
