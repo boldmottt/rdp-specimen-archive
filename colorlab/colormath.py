@@ -4,7 +4,9 @@
 분광 → XYZ는 CIE 1931 2° 관찰자 + D65로 계산한다 (측색기가 10° 관찰자로 LAB를 보여 주면
 값이 조금 다를 수 있으므로, 측색기가 준 LAB가 있으면 그 값을 우선한다).
 """
+import contextlib
 import math
+import threading
 
 # D65 / 2° 백색점 (XYZ, Y=100)
 WHITE = (95.047, 100.0, 108.883)
@@ -113,24 +115,78 @@ def tri_to_lab(t, basis="xyz"):
 
 
 # ---------------------------------------------------------------- 분광
-def spectrum_to_xyz(refl):
-    """반사율 31개(400~700 nm) → XYZ (D65, 2°)."""
+# CIE 1964 10° 등색 함수 (400~700 nm, 10 nm) — 자동차 업계 측색기는 보통 D65/10°
+_CMF10 = (
+    (0.0191097, 0.0020044, 0.0860109), (0.084736, 0.008756, 0.389366), (0.204492, 0.021391, 0.972542),
+    (0.314679, 0.038676, 1.55348), (0.383734, 0.062077, 1.96728), (0.370702, 0.089456, 1.9948),
+    (0.302273, 0.128201, 1.74537), (0.195618, 0.18519, 1.31756), (0.080507, 0.253589, 0.772125),
+    (0.016172, 0.339133, 0.415254), (0.003816, 0.460777, 0.218502), (0.037465, 0.606741, 0.112044),
+    (0.117749, 0.761757, 0.060709), (0.236491, 0.875211, 0.030451), (0.376772, 0.961988, 0.013676),
+    (0.529826, 0.991761, 0.003988), (0.705224, 0.99734, 0.0), (0.878655, 0.955552, 0.0),
+    (1.01416, 0.868934, 0.0), (1.11852, 0.777405, 0.0), (1.12399, 0.658341, 0.0),
+    (1.03048, 0.527963, 0.0), (0.856297, 0.398057, 0.0), (0.647467, 0.283493, 0.0),
+    (0.431567, 0.179828, 0.0), (0.268329, 0.107633, 0.0), (0.152568, 0.060281, 0.0),
+    (0.0812606, 0.0318004, 0.0), (0.0408508, 0.0159051, 0.0), (0.0199413, 0.0077488, 0.0),
+    (0.00957688, 0.00371774, 0.0),
+)
+OBSERVERS = {"2": _CMF, "10": _CMF10}
+# 광원 (400~700 nm, 10 nm). 형광등(F11 ≈ TL84, F2 ≈ CWF)은 휘선이 있어 5 nm 표를 10 nm 띠로 평균한 값
+ILLUMINANTS = {
+    "D65": _D65,
+    "A": (14.708, 17.6753, 20.995, 24.6709, 28.7027, 33.0859, 37.8121, 42.8693, 48.2423, 53.9132, 59.8611, 66.0635,
+          72.4959, 79.1326, 85.947, 92.912, 100.0, 107.184, 114.436, 121.731, 129.043, 136.346, 143.618, 150.836,
+          157.979, 165.028, 171.963, 178.769, 185.429, 191.931, 198.261),
+    "F11": (3.907, 4.412, 2.51, 11.56, 16.29, 7.113, 6.672, 5.46, 7.6, 13.29, 5.185, 1.592, 0.9275, 2.022, 39.23, 36.4,
+            3.785, 2.433, 10.44, 12.49, 8.53, 40.71, 20.52, 10.7, 2.897, 3.127, 2.527, 1.638, 1.547, 1.785, 2.0),
+    "F2": (6.18, 6.783, 4.185, 12.43, 16.22, 6.615, 7.178, 7.525, 7.635, 7.577, 7.29, 7.072, 7.207, 8.107, 13.45, 18.19,
+           16.12, 19.07, 21.59, 18.59, 16.51, 13.79, 10.98, 8.443, 6.342, 4.702, 3.47, 2.562, 1.902, 1.493, 1.115),
+}
+ILLUM_LABEL = {"D65": "D65 (주광)", "A": "A (백열등)", "F11": "F11 (TL84 매장 조명)", "F2": "F2 (CWF 사무실 형광등)"}
+
+
+def spectrum_to_xyz(refl, observer=None, illum="D65"):
+    """반사율 31개(400~700 nm) → XYZ (완전 반사면 Y=100)."""
     if len(refl) != len(WAVELENGTHS):
         raise ValueError(f"분광값은 {len(WAVELENGTHS)}개(400~700 nm, 10 nm 간격)여야 합니다")
-    return tuple(_K * sum(r * s * c[i] for r, s, c in zip(refl, _D65, _CMF)) for i in range(3))
+    cmf, sd = OBSERVERS[str(observer or current_observer())], ILLUMINANTS[illum]
+    k = 100.0 / sum(s * c[1] for s, c in zip(sd, cmf))
+    return tuple(k * sum(r * s * c[i] for r, s, c in zip(refl, sd, cmf)) for i in range(3))
 
 
-def spectrum_to_lab(refl):
+_WHITES = {}
+_ctx = threading.local()
+
+
+def current_observer():
+    """이 요청(스레드)에서 쓰는 관찰자 — 라이브러리 설정(settings.observer)을 api가 정한다. 기본 2°."""
+    return getattr(_ctx, "observer", "2")
+
+
+@contextlib.contextmanager
+def use_observer(observer):
+    prev = current_observer()
+    _ctx.observer = str(observer) if str(observer) in OBSERVERS else "2"
+    try:
+        yield
+    finally:
+        _ctx.observer = prev
+
+
+def white_point(observer=None, illum="D65"):
+    key = (str(observer or current_observer()), illum)
+    if key not in _WHITES:
+        _WHITES[key] = spectrum_to_xyz([1.0] * len(WAVELENGTHS), observer, illum)
+    return _WHITES[key]
+
+
+def spectrum_to_lab(refl, observer=None, illum="D65"):
     # 400~700 nm·10 nm 표로 계산한 백색점을 기준으로 해야 무채색이 a=b=0이 된다
-    return xyz_to_lab(spectrum_to_xyz(refl), _SPECTRAL_WHITE)
-
-
-_SPECTRAL_WHITE = None
+    return xyz_to_lab(spectrum_to_xyz(refl, observer, illum), white_point(observer, illum))
 
 
 def white_point_check():
     """등색 함수·광원 표가 맞는지 확인용 (완전 반사 → 백색점)."""
-    return spectrum_to_xyz([1.0] * len(WAVELENGTHS))
+    return spectrum_to_xyz([1.0] * len(WAVELENGTHS), "2")
 
 
 # ---------------------------------------------------------------- 색차
@@ -183,6 +239,30 @@ def delta_e2000(lab1, lab2, kL=1.0, kC=1.0, kH=1.0):
                      + Rt * (dCp / (kC * Sc)) * (dHp / (kH * Sh)))
 
 
+def delta_e_cmc(lab1, lab2, l=2.0, c=1.0):
+    """CMC(l:c) — 기준 lab1. 섬유·자동차 내장재에서 2:1을 많이 쓴다."""
+    L1, a1, b1 = lab1
+    L2, a2, b2 = lab2
+    C1, C2 = math.hypot(a1, b1), math.hypot(a2, b2)
+    dL, dC = L1 - L2, C1 - C2
+    dH2 = max(0.0, (a1 - a2) ** 2 + (b1 - b2) ** 2 - dC * dC)
+    h1 = math.degrees(math.atan2(b1, a1)) % 360
+    SL = 0.511 if L1 < 16 else 0.040975 * L1 / (1 + 0.01765 * L1)
+    SC = 0.0638 * C1 / (1 + 0.0131 * C1) + 0.638
+    F = math.sqrt(C1 ** 4 / (C1 ** 4 + 1900))
+    T = 0.56 + abs(0.2 * math.cos(math.radians(h1 + 168))) if 164 <= h1 <= 345 else 0.36 + abs(0.4 * math.cos(math.radians(h1 + 35)))
+    SH = SC * (F * T + 1 - F)
+    return math.sqrt((dL / (l * SL)) ** 2 + (dC / (c * SC)) ** 2 + dH2 / SH ** 2)
+
+
+# 허용 공식 — 고객 규격이 쓰는 공식으로 판정·최적화한다
+FORMULAS = {"de00": ("ΔE00", delta_e2000), "de76": ("ΔE*ab", delta_e76), "cmc": ("ΔE CMC(2:1)", delta_e_cmc)}
+
+
+def delta_fn(formula="de00"):
+    return FORMULAS.get(formula, FORMULAS["de00"])[1]
+
+
 def lab_parts(ref, sample):
     """사람이 읽는 차이: dL(밝기) · dC(채도) · dH(색상) · da · db."""
     L1, a1, b1 = ref
@@ -204,5 +284,3 @@ def describe(parts, tol=0.3):
             out.append(f"{pos if v > 0 else neg} {abs(v):.1f}")
     return " · ".join(out) or "거의 같음"
 
-
-_SPECTRAL_WHITE = white_point_check()

@@ -27,6 +27,10 @@ class ModelError(ValueError):
     pass
 
 
+class AmbiguousSubstrate(ModelError):
+    """바탕 이름 하나가 도장처·표면이 다른 여러 줄에 걸린다 (조용히 하나를 고르지 않는다)."""
+
+
 # 아카이브와 컬러연구소가 함께 사용하는 이름/DB 연결 규칙. 별칭은 제품을 추측하지 않는다.
 DB_INK_CODES = ("MT", "BK", "WH", "YE", "RD", "CL", "YE-D", "BL", "VL")
 
@@ -135,26 +139,38 @@ def n_channels(space):
     return len(cm.WAVELENGTHS) if space == "spec" else 3
 
 
+def normalize_spectrum(s, lab=None):
+    """분광 반사율을 0~1로. 1.5보다 큰 값이 있으면 % 단위.
+    값이 모두 1.5 이하면 0~1인지 %(아주 어두운 색 — SCE 검정 등)인지 모양만으로는 모른다 →
+    같은 칸에 측색기 LAB가 있으면 두 해석 중 그 LAB에 가까운 쪽을 고른다."""
+    s = [float(x) for x in s]
+    if max(s) > 1.5:
+        return [x / 100.0 for x in s]
+    if lab and len(s) == len(cm.WAVELENGTHS) and max(s) > 0:
+        lab = tuple(float(x) for x in lab)
+        pct = [x / 100.0 for x in s]
+        if cm.delta_e76(cm.spectrum_to_lab(pct), lab) < cm.delta_e76(cm.spectrum_to_lab(s), lab):
+            return pct
+    return s
+
+
 def _spec(m, mode):
     s = (m or {}).get(f"{mode}_spec")
     if not s:
         return None
-    s = [float(x) for x in s]
     if len(s) != len(cm.WAVELENGTHS):
         raise ModelError(f"분광값은 {len(cm.WAVELENGTHS)}개(400~700 nm, 10 nm)여야 합니다")
-    if max(s) > 1.5:            # % 단위로 들어온 값
-        s = [x / 100.0 for x in s]
-    return s
+    return normalize_spectrum(s, (m or {}).get(mode))
 
 
-def meas_lab(m, mode):
-    """측정값의 LAB (측색기 LAB 우선, 없으면 분광으로 계산)."""
+def meas_lab(m, mode, obs=None):
+    """측정값의 LAB (측색기 LAB 우선, 없으면 분광을 라이브러리 관찰자(obs)로 계산)."""
     lab = (m or {}).get(mode)
     if lab:
         return tuple(float(x) for x in lab)
     s = _spec(m, mode)
     if s:
-        return cm.spectrum_to_lab(s)
+        return cm.spectrum_to_lab(s, obs)
     return None
 
 
@@ -176,10 +192,22 @@ def channels(m, mode, space):
     return [km.clamp(x) for x in raw_channels(m, mode, space)]
 
 
-def channels_to_lab(rs, space):
+def channels_to_lab(rs, space, obs=None):
     if space == "spec":
-        return cm.spectrum_to_lab(rs)
+        return cm.spectrum_to_lab(rs, obs)
     return cm.tri_to_lab(rs, space)
+
+
+def run_key(run):
+    return f"{run.get('plate')}|{run.get('mode')}|{run.get('space')}"
+
+
+def fits_runs(fits):
+    """저장된 보정 프로필 목록. 예전 형식 {'active': 프로필}도 읽는다."""
+    fits = fits or {}
+    if isinstance(fits.get("runs"), list):
+        return [r for r in fits["runs"] if isinstance(r, dict)]
+    return [fits["active"]] if isinstance(fits.get("active"), dict) else []
 
 
 def has(m, mode, space):
@@ -211,17 +239,34 @@ class Library:
         self.plates = {str(p["lot"]): p for p in data.get("plates") or [] if p.get("lot")}
         self.settings = dict(data.get("settings") or {})
         self.basis = self.settings.get("basis") if self.settings.get("basis") in cm.BASES else "xyz"
-        self.profile = (data.get("fits") or {}).get("active") or None
+        self.observer = str(self.settings.get("observer") or "2") if str(self.settings.get("observer") or "2") in cm.OBSERVERS else "2"
+        # 적용한 보정 프로필들 — 동판 × 모드(SCI/SCE) × 계산 공간마다 하나씩
+        self.runs = sorted(fits_runs(data.get("fits")), key=lambda r: str(r.get("created") or ""))
         self._cal = {}
+
+    @property
+    def profile(self):
+        """가장 최근에 적용한 프로필 (예전 코드 호환용)."""
+        return self.runs[-1] if self.runs else None
+
+    def ink_run(self, name, mode, space):
+        """이 잉크의 산란을 맞춘 프로필 (같은 모드·공간, 여러 개면 가장 최근)."""
+        hits = [r for r in self.runs if r.get("mode") == mode and r.get("space") == space and name in (r.get("inks") or {})]
+        return hits[-1] if hits else None
+
+    def plate_run(self, lot, mode=None, space=None):
+        """이 동판의 프로필 (모드·공간을 주면 그것만, 안 주면 SCI 먼저)."""
+        hits = [r for r in self.runs if str(r.get("plate")) == str(lot) and str(lot) in (r.get("plates") or {})
+                and (mode is None or (r.get("mode") == mode and r.get("space") == space))]
+        if not hits:
+            return None
+        hits.sort(key=lambda r: (r.get("mode") != "sci", str(r.get("created") or "")))
+        return hits[0] if mode is None else hits[-1]
 
     def recipe(self, recipe):
         out = normalize_recipe(recipe)
         out["inks"] = self.registry.normalize(out["inks"], strict=True)
         return out
-
-    def _profile_for(self, mode, space):
-        p = self.profile
-        return p if p and p.get("mode") == mode and p.get("space") == space else None
 
     # --- 잉크 역산
     def ink_params(self, name, mode, space):
@@ -239,11 +284,12 @@ class Library:
             out = {"k": [0.0] * n, "s": [0.0] * n, "residual": 0.0, "source": "clear", "used": []}
             self._cal[key] = out
             return out
-        prof = self._profile_for(mode, space)
-        if prof and name in (prof.get("inks") or {}):
+        prof = self.ink_run(name, mode, space)
+        if prof:
             p = prof["inks"][name]
             out = {"k": [float(x) for x in p["k"]], "s": [float(x) for x in p["s"]], "residual": 0.0,
-                   "source": "profile", "used": ["solid", f"전사 시료 {p.get('samples', 0)}개"]}
+                   "source": "profile", "plate": prof.get("plate"),
+                   "used": ["solid", f"전사 시료 {p.get('samples', 0)}개 (동판 {prof.get('plate')})"]}
             self._cal[key] = out
             return out
         cal = ink.get("cal") or {}
@@ -251,9 +297,15 @@ class Library:
                   if has(cal.get(b), mode, space) and has(cal.get(q), mode, space)]
         solid = has(cal.get("solid"), mode, space)
         if not prints:
-            raise ModelError(f"잉크 {name}: {mode.upper()} 얇게 찍은 측정(바탕 + 그 위 잉크)이 없습니다"
-                             + (" — 은폐 도막만으로는 막 두께를 알 수 없어요. 이 잉크의 전사 시료(망점 패치)를 넣고"
-                                " '보정 프로필'을 계산·적용하면 계산됩니다" if solid else ""))
+            other = [r for r in self.runs if name in (r.get("inks") or {})]
+            hint = ""
+            if other:
+                hint = (f" — {', '.join(sorted({r['mode'].upper() + ('·분광' if r.get('space') == 'spec' else '') for r in other}))}"
+                        f" 보정 프로필은 있어요. 지금 모드({mode.upper()}{'·분광' if space == 'spec' else ''})로도 프로필을 계산·적용하세요")
+            elif solid:
+                hint = (" — 은폐 도막만으로는 막 두께를 알 수 없어요. 이 잉크의 전사 시료(망점 패치)를 넣고"
+                        " '보정 프로필'을 계산·적용하면 계산됩니다")
+            raise ModelError(f"잉크 {name}: {mode.upper()} 얇게 찍은 측정(바탕 + 그 위 잉크)이 없습니다" + hint)
         if len(prints) == 1 and not solid:
             raise ModelError(f"잉크 {name}: {mode.upper()} 측정이 하나 더 필요합니다 (은폐 도막 또는 다른 바탕 위 전사)")
 
@@ -298,8 +350,12 @@ class Library:
             c = [s for s in c if q in (s.get("maker"), s.get("surface"))]
         if not c:
             raise ModelError(f"라이브러리에 없는 도장 시편: {ref}")
-        if len(c) > 1:
-            c.sort(key=lambda s: str(s.get("measured_on") or ""), reverse=True)   # 가장 최근 측정
+        kinds = {(s.get("maker") or "", s.get("surface") or "") for s in c}
+        if len(kinds) > 1:      # 도장처·표면이 다른 줄이 섞임 → 어느 바탕인지 모른다
+            opts = " / ".join(sorted(f"{code}@{m}@{sf}".rstrip("@") for m, sf in kinds))
+            raise AmbiguousSubstrate(f"바탕 '{ref}'이(가) 여러 도장 시편에 걸립니다 — {opts} 중 하나로 골라 주세요")
+        if len(c) > 1:          # 같은 도장처·표면을 다시 잰 줄 → 가장 최근 측정
+            c.sort(key=lambda s: str(s.get("measured_on") or ""), reverse=True)
         return c[0]
 
     # --- 동판
@@ -311,27 +367,45 @@ class Library:
         p = self.plates.get(str(lot)) if lot else None
         if not p:
             return out
-        prof = self.profile
+        prof = self.plate_run(lot, mode, space)
         pp = ((prof or {}).get("plates") or {}).get(str(lot))
-        if pp and (mode is None or (prof.get("mode") == mode and prof.get("space") == space)):
+        if pp:
             out.update(thickness=float(pp["thickness"]), thickness_src="보정 프로필 (기준 동판 대비 상대값)",
                        tone_curve=[list(x) for x in pp.get("tone_curve") or []], gain_src="보정 프로필 망점 곡선")
             out["dot50"] = interp_tone(out["tone_curve"], 0.5)
             return out
         others = [q for q in self.plates.values() if q is not p]
+
+        def known(q):
+            """다른 동판이 아는 값: (막두께, 망점 곡선 또는 None, 출처) — 프로필이 입력값보다 먼저."""
+            r = self.plate_run(q["lot"], mode, space) if mode else self.plate_run(q["lot"])
+            qp = ((r or {}).get("plates") or {}).get(str(q["lot"]))
+            if qp:
+                return float(qp["thickness"]), [list(x) for x in qp.get("tone_curve") or []], "프로필"
+            th = float(q["thickness"]) if _given(q.get("thickness")) else None
+            return th, None, "입력값"
+
         if _given(p.get("thickness")):
             out.update(thickness=float(p["thickness"]), thickness_src="입력값")
         elif _given(p.get("depth_um")):
-            ref = [float(q["thickness"]) / float(q["depth_um"]) for q in others
-                   if _given(q.get("thickness")) and _given(q.get("depth_um")) and float(q["depth_um"]) > 0]
+            ref = [(known(q)[0] / float(q["depth_um"]), known(q)[2]) for q in others
+                   if known(q)[0] is not None and _given(q.get("depth_um")) and float(q["depth_um"]) > 0]
             if ref:
-                out.update(thickness=sum(ref) / len(ref) * float(p["depth_um"]),
-                           thickness_src=f"부식 깊이로 추정 · 동판 {len(ref)}개 기준")
+                out.update(thickness=sum(x for x, _ in ref) / len(ref) * float(p["depth_um"]),
+                           thickness_src=f"부식 깊이로 추정 · 동판 {len(ref)}개 기준"
+                                         + (" (프로필 값 포함)" if any(src == "프로필" for _, src in ref) else ""))
         if _given(p.get("dot50")):
             out.update(gamma=km.dot_gamma(float(p["dot50"])), gain_src="입력값")
         elif _given(p.get("lpi")):
-            ref = [km.dot_gamma(float(q["dot50"])) for q in others
-                   if _given(q.get("dot50")) and _given(q.get("lpi")) and float(q["lpi"]) == float(p["lpi"])]
+            same = [q for q in others if _given(q.get("lpi")) and float(q["lpi"]) == float(p["lpi"])]
+            curves = [(q["lot"], known(q)[1]) for q in same if known(q)[1]]
+            if curves:      # 같은 LPI 프로필 동판의 망점 곡선 (여러 개면 점마다 평균)
+                xs = sorted({d for _, c in curves for d, _ in c})
+                out.update(tone_curve=[[d, sum(interp_tone(c, d) for _, c in curves) / len(curves)] for d in xs],
+                           gain_src=f"같은 LPI {float(p['lpi']):g} 프로필 동판 {', '.join(l for l, _ in curves)}의 망점 곡선")
+                out["dot50"] = interp_tone(out["tone_curve"], 0.5)
+                return out
+            ref = [km.dot_gamma(float(q["dot50"])) for q in same if _given(q.get("dot50"))]
             if ref:
                 out.update(gamma=sum(ref) / len(ref), gain_src=f"같은 LPI {float(p['lpi']):g} 동판 {len(ref)}개 평균")
         out["dot50"] = km.effective_tone(0.5, out["gamma"])
@@ -431,7 +505,8 @@ def _space_note(space):
             else "3채널 근사 (sRGB 기저) — 진한 노랑·파랑은 잘려서 오차가 커집니다")
 
 
-def predict(lib, substrate, layer1, layer2=None, mode="sci", plate=None, coverage=None, yn=None, gamma=None):
+def predict(lib, substrate, layer1, layer2=None, mode="sci", plate=None, coverage=None, yn=None, gamma=None,
+            target_spec=None):
     """도장 시편 위 1도(·2도) 인쇄의 색.
     substrate: 라이브러리 코드 문자열 또는 측정값 dict (LAB 직접 입력).
     coverage: 설계 망점 비율 {"1도": 0.6, "2도": 0.4} — 동판의 망점 곡선을 적용해 측색기에 잡히는 평균색도 계산.
@@ -466,7 +541,7 @@ def predict(lib, substrate, layer1, layer2=None, mode="sci", plate=None, coverag
     if info:
         out["plate_info"] = {k: info[k] for k in ("thickness_src", "dot50", "gain_src")}
     for k, v in meas.items():
-        lab = channels_to_lab(v, space)
+        lab = channels_to_lab(v, space, lib.observer)
         out["regions"][k] = {"lab": list(lab), "hex": cm.lab_to_hex(lab)}
     if coverage:
         d1 = float(coverage.get("1도") or 0)
@@ -476,15 +551,51 @@ def predict(lib, substrate, layer1, layer2=None, mode="sci", plate=None, coverag
         if layer2:
             w.update({"layer2": (1 - c1) * c2, "overlap": c1 * c2})
         avg = _mix([(w[k], meas[k]) for k in w], yn)
-        lab = channels_to_lab(avg, space)
+        lab = channels_to_lab(avg, space, lib.observer)
         out["average"] = {"lab": list(lab), "hex": cm.lab_to_hex(lab), "weights": w,
                           "tone": {"1도": [d1, round(c1, 4)], **({"2도": [d2, round(c2, 4)]} if layer2 else {})}}
+        meas["average"] = avg
+    if space == "spec":     # 분광 계산이면 다른 조명에서의 색도 (메타메리즘 확인)
+        for k, v in meas.items():
+            (out["average"] if k == "average" else out["regions"][k])["alt"] = {
+                il: [round(x, 2) for x in cm.spectrum_to_lab(v, None, il)] for il in ALT_ILLUMS}
     notes = [x for x in (_space_note(space),) if x]
+    if target_spec:
+        if space != "spec":
+            notes.append("목표 분광이 있어도 이 계산은 3채널이라 메타메리즘을 볼 수 없어요 (잉크·바탕 분광 필요)")
+        else:
+            main = meas.get("average") or meas.get("overlap") or meas["layer1"]
+            out["metamerism"] = {il: round(cm.delta_e2000(cm.spectrum_to_lab(target_spec, None, il),
+                                                          cm.spectrum_to_lab(main, None, il)), 2) for il in cm.ILLUMINANTS}
+    notes += surface_notes(sub_meas, mode, [layer1, layer2])
     if len({v for v in out["sources"].values() if v != "clear"}) > 1:
         notes.append("잉크마다 보정 출처가 다릅니다(프로필/측정) — 기준 동판이 같다고 보고 계산했습니다")
     if notes:
         out["note"] = " · ".join(notes)
     return out
+
+
+# ---------------------------------------------------------------- 현장 경고 · 계량 민감도
+FINISHES = ("솔리드", "메탈릭", "펄")
+ALT_ILLUMS = ("A", "F11")       # 메타메리즘 확인용 광원 (백열등 · TL84 매장 조명)
+
+
+def surface_notes(sub, mode, recipes):
+    """모델이 못 담는 바탕·광택 조건을 알린다."""
+    out = []
+    fin = str((sub or {}).get("finish") or "")
+    if fin in ("메탈릭", "펄"):
+        out.append(f"{fin} 바탕: d/8 한 값(고른 확산면)으로 계산했어요 — 보는 각도에 따라 달라지는 색(플롭)은 못 담으니"
+                   " 다각도 측색·육안으로 확인하세요")
+    if mode == "sce" and any((r or {}).get("matting") for r in recipes if r):
+        out.append("소광제: 광택이 바뀌면 SCE·육안 색이 달라지는데, 모델은 소광제를 투명(또는 등록한 '소광제' 잉크)으로만 봅니다")
+    return out
+
+
+def weigh_sensitivity(color, inks, extras, step=0.1):
+    """잉크마다 +step g를 잘못 달았을 때 색이 얼마나 바뀌나 (ΔE00). color(배합) → LAB."""
+    base = color({"inks": inks, **extras})
+    return {n: round(cm.delta_e2000(base, color({"inks": {**inks, n: inks[n] + step}, **extras})), 2) for n in inks}
 
 
 # ---------------------------------------------------------------- 추천 · 보정
@@ -494,7 +605,7 @@ def _layer_lab(lib, bg_internal, recipe, mode, space, t, cov=1.0, yn=1.0):
     r = [km.to_measured(km.layer(bg_internal[i], k[i], s[i]), mode) for i in range(len(bg_internal))]
     if cov < 1.0:
         r = _mix([(1 - cov, [km.to_measured(x, mode) for x in bg_internal]), (cov, r)], yn)
-    return channels_to_lab(r, space)
+    return channels_to_lab(r, space, lib.observer)
 
 
 def _background(lib, substrate, under, mode, space, t):
@@ -518,7 +629,8 @@ def _tone_note(tone, cov):
 
 
 def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60.0, under=None,
-              plate=None, hardener_pct=20.0, thinner_pct=30.0, matting_pct=0.0, top=5, tone=1.0, time_limit=20.0):
+              plate=None, hardener_pct=20.0, thinner_pct=30.0, matting_pct=0.0, top=5, tone=1.0, time_limit=20.0,
+              formula="de00"):
     """목표색(LAB)에 가장 가까운 배합 후보. inks: 써도 되는 잉크 이름들.
     tone: 목표를 잰 자리의 설계 망점 비율 (1 = 솔리드).
     time_limit: 잉크를 많이 고르면 조합 수가 크게 늘어난다 → 이 초가 지나면 그때까지 계산한 후보로 마친다
@@ -542,6 +654,7 @@ def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60
         return _layer_lab(lib, bg, rec, mode, space, t, cov, yn)
 
     results = []
+    de = cm.delta_fn(formula)                      # 고객 규격의 허용 공식으로 맞춘다 (기본 ΔE00)
     max_inks = max(1, min(int(max_inks), 4, len(inks)))
     total = sum(math.comb(len(inks), k) for k in range(1, max_inks + 1))
     start, done = time.monotonic(), 0
@@ -554,20 +667,20 @@ def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60
             return {n: ink_total * x / tot for n, x in zip(combo, e)}
 
         def f(p):
-            return cm.delta_e2000(color(_with_extras(grams(p), base)), target)
+            return de(target, color(_with_extras(grams(p), base)))
 
         p, _ = km.nelder_mead(f, [0.0] * size, step=1.0, iters=250, tol=1e-9) if size > 1 else ([0.0], None)
         g = {k: round(v, 1) for k, v in grams(p).items() if round(v, 1) > 0}
         rec = _with_extras(g, base)
         lab = color(rec)
-        results.append({"inks": g, "dE": round(cm.delta_e2000(lab, target), 2),
+        results.append({"inks": g, "dE": round(cm.delta_e2000(lab, target), 2), "score": de(target, lab),
                         "lab": [round(x, 2) for x in lab], "hex": cm.lab_to_hex(lab),
                         "diff": cm.describe(cm.lab_parts(target, lab)),
                         "extras": {k: round(rec[k]["g"], 1) for k in ("hardener", "thinner", "matting") if rec[k]["g"]}})
         done += 1
         if done < total and time.monotonic() - start > time_limit:
             break
-    results.sort(key=lambda r: (r["dE"], len(r["inks"])))
+    results.sort(key=lambda r: (round(r["score"], 2), len(r["inks"])))
     out, seen = [], []
     for r in results:          # 같은 잉크 구성은 하나만
         sig = tuple(sorted(r["inks"]))
@@ -577,8 +690,11 @@ def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60
         out.append(r)
         if len(out) >= top:
             break
+    for c in out:           # 0.1 g를 잘못 달았을 때 (이 잉크 합계 기준)
+        c["weigh"] = weigh_sensitivity(color, c["inks"], {k: v for k, v in _with_extras(c["inks"], base).items() if k != "inks"})
     res = {"mode": mode, "space": space, "plate": t, "target_hex": cm.lab_to_hex(target), "candidates": out}
     notes = [_tone_note(tone, cov)] if _tone_note(tone, cov) else []
+    notes += surface_notes(sub, mode, [{"matting": matting_pct}])
     if done < total:
         res["truncated"] = {"done": done, "total": total}
         notes.append(f"시간 제한으로 조합 {total}개 중 {done}개만 계산 (잉크를 줄여 고르면 전부 계산)")
@@ -588,11 +704,14 @@ def recommend(lib, target, substrate, inks, mode="sci", max_inks=3, ink_total=60
 
 
 def correct(lib, current, measured, target, substrate, mode="sci", adjustable=None, under=None,
-            plate=None, change_weight=0.5, tone=1.0):
+            plate=None, change_weight=0.5, tone=1.0, formula="de00", previous=None, add_only=False, remaining=None):
     """보정 추천: 지금 배합(current)을 찍어 잰 색(measured)을 목표(target)에 맞추려면 잉크를 얼마나 바꿀까.
     모델이 지금 배합에서 틀린 만큼(measured - 예측)을 그대로 옮겨 쓴다 (편차 보정).
     change_weight: 바꾸는 양에 주는 벌점 (ΔE 1당 잉크합의 몇 %를 바꿀 가치가 있나).
-    tone: 잰 자리의 설계 망점 비율 (1 = 솔리드)."""
+    tone: 잰 자리의 설계 망점 비율 (1 = 솔리드).
+    previous: 이전 시도 [{"recipe", "measured"}] — 배합을 바꿨을 때 색이 실제로 모델 예상의 몇 배 움직였는지(축별 반응)를
+              다음 보정에 반영한다.
+    add_only: 이미 섞은 통에 더 넣기만 (뺄 수 없음). remaining: 통에 남은 잉크 g — 넣을 양을 그만큼으로 환산."""
     current = lib.recipe(current)
     cur = current
     under = lib.recipe(under) if under else None
@@ -618,21 +737,34 @@ def correct(lib, current, measured, target, substrate, mode="sci", adjustable=No
 
     pred0 = color(current)
     bias = tuple(m - p for m, p in zip(measured, pred0))
+    # 이전 시도가 있으면: 두 시도 사이에서 실제로 움직인 양 ÷ 모델이 예상한 양 = 축별 반응 (0.4~2.5배로 제한)
+    gain, gain_note = [1.0, 1.0, 1.0], None
+    for prev in (previous or [])[-1:]:
+        pr, pm = lib.recipe(prev["recipe"]), tuple(float(x) for x in prev["measured"])
+        dp = [a - b for a, b in zip(pred0, color(pr))]
+        dm = [a - b for a, b in zip(measured, pm)]
+        gain = [min(2.5, max(0.4, m / p)) if abs(p) > 0.3 else 1.0 for p, m in zip(dp, dm)]
+        gain_note = "이전 시도 반영 — 실제 반응 " + " · ".join(f"{a} ×{g:.2f}" for a, g in zip(("L", "a", "b"), gain))
+
+    def expect(g):
+        return tuple(m + k * (x - p) for m, k, x, p in zip(measured, gain, color(build(g)), pred0))
 
     def grams(p):
+        if add_only:        # 이미 섞은 통에서는 뺄 수 없다
+            return {n: cur["inks"].get(n, 0.0) + max(0.0, x) for n, x in zip(names, p)}
         return {n: max(0.0, cur["inks"].get(n, 0.0) + x) for n, x in zip(names, p)}
 
     def f(p):
         g = grams(p)
         if sum(g.values()) <= 0:
             return 1e9
-        lab = tuple(x + b for x, b in zip(color(build(g)), bias))
+        lab = expect(g)
         change = sum(abs(g[n] - cur["inks"].get(n, 0.0)) for n in names) / ink_g * 100
-        return cm.delta_e2000(lab, target) + change_weight * change / 10.0
+        return cm.delta_fn(formula)(target, lab) + change_weight * change / 10.0
 
     p, _ = km.nelder_mead(f, [0.0] * len(names), step=max(0.5, ink_g * 0.05), iters=600, tol=1e-10)
     g = {n: round(v, 1) for n, v in grams(p).items() if round(v, 1) > 0}
-    lab = tuple(x + b for x, b in zip(color(build(g)), bias))
+    lab = expect(g)
     deltas = {n: round(g.get(n, 0.0) - cur["inks"].get(n, 0.0), 1) for n in names}
     res = {
         "mode": mode, "space": space, "plate": t,
@@ -643,9 +775,20 @@ def correct(lib, current, measured, target, substrate, mode="sci", adjustable=No
         "expected": {"lab": [round(x, 2) for x in lab], "hex": cm.lab_to_hex(lab),
                      "dE": round(cm.delta_e2000(lab, target), 2), "diff": cm.describe(cm.lab_parts(target, lab))},
         "change_text": " · ".join(f"{k} {'+' if v > 0 else ''}{v}g" for k, v in deltas.items() if v) or "변경 없음",
+        "gain": [round(x, 2) for x in gain],
+        "weigh": weigh_sensitivity(color, g, {k: v for k, v in build(g).items() if k != "inks"}) if g else {},
     }
-    if _tone_note(tone, cov):
-        res["note"] = _tone_note(tone, cov)
+    if add_only:            # 통에 넣을 양 (남은 양으로 환산) + 같은 비율의 경화제·신나·소광제
+        scale = float(remaining) / ink_g if remaining else 1.0
+        add = {n: round(v * scale, 1) for n, v in deltas.items() if v > 0}
+        extra = {k: round(sum(add.values()) * ratio[k], 1) for k in ratio if ratio[k] and sum(add.values())}
+        label = {"hardener": "경화제", "thinner": "신나", "matting": "소광제"}
+        res["add"] = {"inks": add, "extras": extra, "scale": round(scale, 3)}
+        res["change_text"] = ("통에 " + " · ".join([f"{k} +{v}g" for k, v in add.items()] + [f"{label[k]} +{v}g" for k, v in extra.items()])
+                              if add else "더 넣을 것 없음 (빼야 맞는 방향이에요 — 새로 만들기를 검토하세요)")
+    notes = [x for x in (_tone_note(tone, cov), gain_note) if x] + surface_notes(sub, mode, [cur])
+    if notes:
+        res["note"] = " · ".join(notes)
     return res
 
 
