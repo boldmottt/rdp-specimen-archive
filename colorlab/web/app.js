@@ -12,8 +12,11 @@
   const S = {
     lib: null, info: null, rev: "", edit: null, dirty: false, prof: {},
     mode: load("cl.mode") === "sce" ? "sce" : "sci",
-    f: {}, res: {},
+    f: loadForms(), res: {},
   };
+  // 계산 탭에 적은 값은 이 브라우저 탭에 기억한다 (새로고침·실수로 닫았다 열어도 남게)
+  function loadForms() { try { return JSON.parse(sessionStorage.getItem("cl.forms") || "{}") || {}; } catch (e) { return {}; } }
+  function keepForms() { try { sessionStorage.setItem("cl.forms", JSON.stringify(S.f)); } catch (e) { /* 못 써도 동작 */ } }
 
   function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function keep(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 저장 못 해도 화면은 동작 */ } }
@@ -52,7 +55,7 @@
   function toast(msg, bad) {
     const t = $("#toast");
     t.textContent = msg; t.className = "cl-toast on" + (bad ? " bad" : "");
-    clearTimeout(toast._t); toast._t = setTimeout(() => (t.className = "cl-toast"), 2600);
+    clearTimeout(toast._t); toast._t = setTimeout(() => (t.className = "cl-toast"), Math.max(2600, String(msg).length * 90));
   }
 
   const clone = (o) => JSON.parse(JSON.stringify(o ?? null));
@@ -74,9 +77,12 @@
 
   // "52.1 -0.8 3.4" / "52.1, -0.8, 3.4" / 엑셀 한 줄 → [L,a,b]
   function parseLab(text) {
-    const t = String(text ?? "").trim();
+    const t = String(text ?? "").trim().replace(/[−–—]/g, "-");   // 유니코드 빼기 부호
     if (!t) return null;
-    const n = t.split(/[\s,;/]+/).filter(Boolean).map(Number);
+    // "L* 52.1 a* -0.8 b* 3.4" · "L=52.1, a=-0.8" · "52,1 -0,8 3,4"(소수점 쉼표) 도 받는다 — 숫자만 골라낸다
+    const pick = (s, re) => (s.match(re) || []).map((x) => Number(x.replace(",", ".")));
+    let n = pick(t, /-?\d+(?:[.,]\d+)?(?:e-?\d+)?/gi);
+    if (n.length !== 3) n = pick(t, /-?\d+(?:\.\d+)?/g);          // "52,1,3" 같은 건 쉼표를 구분자로
     if (n.length !== 3 || n.some((x) => !Number.isFinite(x))) return { error: "L a b 세 숫자를 적어 주세요" };
     if (n[0] < 0 || n[0] > 100) return { error: "L은 0~100" };
     return n;
@@ -173,7 +179,9 @@
 
   function recipeField(k, label, d = {}) {
     return `<div class="cl-recipe"><label class="cl-f wide"><span>${esc(label)} <em>잉크 g — 예: WH 20, YE 6, RD 3</em></span>
-      <input data-k="${esc(k)}.inks" value="${esc(val(`${k}.inks`, d.inks || ""))}" placeholder="잉크 g (쉼표로 구분)" autocomplete="off"></label>
+      <input data-k="${esc(k)}.inks" data-recipe-k="${esc(k)}" value="${esc(val(`${k}.inks`, d.inks || ""))}" placeholder="잉크 g (쉼표로 구분)" autocomplete="off">
+      <small class="cl-rhint" data-rhint="${esc(k)}">${recipeHint(val(`${k}.inks`, d.inks || ""))}</small>
+      <span class="cl-inkpick">${((S.lib && S.lib.inks) || []).filter((i) => i.name !== MATTING).map((i) => `<button type="button" class="cl-chip${inkReady(i.name) ? "" : " off"}" data-addink="${esc(k)}" data-ink="${esc(i.short_name || i.name)}" title="${inkReady(i.name) ? "눌러서 배합에 넣기" : "지금 모드로 계산할 수 없는 잉크"}">${esc(i.short_name || i.name)}</button>`).join("")}</span></label>
       <div class="cl-pcts">
         <label class="cl-f sm"><span>소광제 %</span><input data-k="${esc(k)}.mat" type="number" step="0.1" min="0" value="${esc(val(`${k}.mat`, d.mat ?? 0))}"></label>
         <label class="cl-f sm"><span>신나 %</span><input data-k="${esc(k)}.thin" type="number" step="1" min="0" value="${esc(val(`${k}.thin`, d.thin ?? 30))}"></label>
@@ -181,32 +189,58 @@
       </div></div>`;
   }
 
+  // 라이브러리가 아는 잉크 이름 (정식명 · 약칭 · 별칭, 소문자) → 정식명
+  function inkLookup() {
+    const m = new Map();
+    ((S.lib && S.lib.inks) || []).forEach((i) => [i.name, i.short_name, ...(i.aliases || [])].filter(Boolean)
+      .forEach((x) => m.set(String(x).trim().toLowerCase(), i.name)));
+    return m;
+  }
   // "WH 20, 9:1실버(2000) 50 + BK 10" → {WH:20, "9:1실버(2000)":50, BK:10} (마지막 숫자가 g)
+  //   "WH20" · "WH:20" · "WH=20g" 처럼 붙여 쓴 것도, 앞부분이 아는 잉크 이름이면 받는다
   function parseInks(text) {
-    const out = {}, bad = [];
+    const out = {}, bad = [], known = inkLookup();
     String(text || "").split(/[,\n+]+/).map((x) => x.trim()).filter(Boolean).forEach((chunk) => {
-      const m = chunk.match(/^(.*\S)\s+(-?\d+(?:\.\d+)?)\s*g?$/i);
+      let m = chunk.match(/^(.*\S)\s*[:=]\s*(-?\d+(?:\.\d+)?)\s*g?$/i) || chunk.match(/^(.*\S)\s+(-?\d+(?:\.\d+)?)\s*g?$/i);
+      if (!m && !known.has(chunk.toLowerCase())) {
+        const t = chunk.match(/^(.*?\D)(\d+(?:\.\d+)?)\s*g?$/i);
+        if (t && known.has(t[1].trim().toLowerCase())) m = [chunk, t[1].trim(), t[2]];
+      }
       if (!m || !(+m[2] > 0)) { bad.push(chunk); return; }
       out[m[1]] = (out[m[1]] || 0) + +m[2];
     });
     return { inks: out, bad };
   }
+  // 배합 칸 아래 한 줄: 어떻게 읽었는지 · 무엇이 틀렸는지 (계산을 누르기 전에)
+  function recipeHint(text) {
+    if (!String(text || "").trim()) return "";
+    const { inks, bad } = parseInks(text);
+    const known = inkLookup();
+    if (bad.length) return `<span class="bad">읽지 못함: ${esc(bad.join(" / "))} — "이름 숫자"로 적어 주세요 (예: WH 20)</span>`;
+    const unknown = Object.keys(inks).filter((n) => !known.has(n.toLowerCase()));
+    if (unknown.length) return `<span class="bad">라이브러리에 없는 잉크: ${esc(unknown.join(", "))} — 아래 칩에서 고르거나 측색 라이브러리에 등록하세요</span>`;
+    const notReady = Object.keys(inks).filter((n) => !inkReady(known.get(n.toLowerCase())));
+    if (notReady.length) return `<span class="bad">${esc(S.mode.toUpperCase())}로 계산할 수 없는 잉크: ${esc(notReady.join(", "))} — 측정값이나 보정 프로필이 필요해요</span>`;
+    const tot = Object.values(inks).reduce((a, b) => a + b, 0);
+    return `${esc(Object.entries(inks).map(([n, g]) => `${known.get(n.toLowerCase())} ${g} g`).join(" · "))} = 잉크 ${Math.round(tot * 10) / 10} g`;
+  }
 
   function getRecipe(k, need = true) {
     const { inks, bad } = parseInks(val(`${k}.inks`));
-    if (bad.length) throw new Error(`배합을 읽지 못함: ${bad.join(" / ")} — "이름 숫자" 형식으로`);
+    if (bad.length) throw fieldError(`${k}.inks`, `배합을 읽지 못함: ${bad.join(" / ")} — "이름 숫자" 형식으로 (예: WH 20, YE 6)`);
     const tot = Object.values(inks).reduce((a, b) => a + b, 0);
-    if (!tot) { if (need) throw new Error("배합(잉크 g)을 적어 주세요"); return null; }
+    if (!tot) { if (need) throw fieldError(`${k}.inks`, "배합(잉크 g)을 적어 주세요 — 예: WH 20, YE 6"); return null; }
     const pct = (x) => Math.max(0, +val(`${k}.${x}`, { mat: 0, thin: 30, hard: 20 }[x]) || 0);
     return { inks, matting: { g: tot * pct("mat") / 100 }, thinner: { g: tot * pct("thin") / 100 }, hardener: { g: tot * pct("hard") / 100 } };
   }
 
   function getLab(k, need, label) {
     const p = parseLab(val(k));
-    if (!p) { if (need) throw new Error(`${label}: LAB를 적어 주세요`); return null; }
-    if (p.error) throw new Error(`${label}: ${p.error}`);
+    if (!p) { if (need) throw fieldError(k, `${label}: LAB를 적어 주세요 (예: 52.1 -0.8 3.4)`); return null; }
+    if (p.error) throw fieldError(k, `${label}: ${p.error}`);
     return p;
   }
+  function fieldError(k, msg) { const e = new Error(msg); e.field = k; return e; }
 
   // 분광 입력 칸 (선택) — 붙여 넣은 글자를 그대로 두고, 계산할 때 31개로 읽는다
   const specField = (k, label, hint) => `<label class="cl-f wide"><span>${esc(label)}${hint ? ` <em>${esc(hint)}</em>` : ""}</span>
@@ -258,6 +292,9 @@
       const k = el.dataset.k;
       const save = () => {
         F()[k] = el.type === "checkbox" ? el.checked : el.value;
+        keepForms();
+        el.classList.remove("bad");
+        if (el.dataset.recipeK) { const h = $(`[data-rhint="${CSS.escape(el.dataset.recipeK)}"]`, root); if (h) h.innerHTML = recipeHint(el.value); }
         if (el.dataset.lab) {
           const p = parseLab(el.value);
           const sw = $(`[data-sw="${CSS.escape(k)}"]`, root);
@@ -271,8 +308,26 @@
         if (el.dataset.plate) onPlate(el.value);
         if (el.dataset.re) rerender();
       });
+      // Enter = 계산 (여러 줄 칸은 빼고)
+      if (el.tagName === "INPUT" && el.type !== "checkbox" && el.type !== "range") el.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" || e.isComposing) return;
+        e.preventDefault(); save();
+        const go = $("#go"); if (go && !go.disabled) go.click();
+      });
     });
+    // 잉크 칩: 눌러서 배합 칸에 이름을 넣고, 바로 g을 치게 한다
+    $$("[data-addink]", root).forEach((b) => (b.onclick = () => {
+      const inp = $(`[data-recipe-k="${CSS.escape(b.dataset.addink)}"]`, root);
+      if (!inp) return;
+      const cur = inp.value.replace(/[\s,]+$/, "");
+      inp.value = `${cur ? cur + ", " : ""}${b.dataset.ink} `;
+      inp.dispatchEvent(new Event("input"));
+      inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
+    }));
+    const clear = $("#clear-form", root);
+    if (clear) clear.onclick = () => { S.f[S.tab] = {}; S.res[S.tab] = ""; if (S.tab === "validate") S.res.plan = ""; keepForms(); rerender(); };
   }
+  const clearBtn = () => `<button type="button" class="cl-link" id="clear-form" title="이 탭에 적은 값과 결과를 지웁니다">입력 지우기</button>`;
 
   // 동판을 고르면 그 동판의 면적률로 채운다
   function onPlate(lot) {
@@ -323,16 +378,28 @@
   }
 
   function needInks() {
-    return (S.lib && (S.lib.inks || []).some((i) => !i.clear)) ? "" :
-      `<div class="cl-empty">라이브러리에 잉크 측정값이 아직 없습니다. <a href="#/library">측색 라이브러리</a>에 잉크(흰·검정 카드 위 측색값)를 먼저 넣어 주세요.</div>`;
+    const dirty = S.dirty ? `<div class="cl-empty">측색 라이브러리에 <b>저장 안 한 변경</b>이 있어요 — 여기 계산은 저장된 값으로 합니다. <a href="#/library">라이브러리로 가서 저장</a></div>` : "";
+    if (!(S.lib && (S.lib.inks || []).some((i) => !i.clear)))
+      return `<div class="cl-empty"><b>처음이신가요?</b> <a href="#/library">측색 라이브러리</a>에서 ① 잉크의 은폐 도막 ② 도장 시편(바탕) ③ 동판과 전사 시료(망점 패치)를 넣고 ④ 보정 프로필을 적용하면 여기서 계산할 수 있어요.</div>`;
+    if (!((S.info && S.info.inks) || []).some((i) => !i.clear && inkReady(i.name)))
+      return `${dirty}<div class="cl-empty"><b>${S.mode.toUpperCase()}</b>로 계산할 수 있는 잉크가 아직 없어요 — <a href="#/library">측색 라이브러리</a>에서 전사 시료를 넣고 <b>보정 프로필</b>을 적용하거나, 오른쪽 위에서 모드를 바꿔 보세요.</div>`;
+    return dirty;
   }
 
   async function run(btn, fn) {
     const out = $("#out");
+    const tab = S.tab, mode = S.mode;
     btn.disabled = true; const t = btn.textContent; btn.textContent = "계산 중…";
-    try { await fn(out); }
-    catch (e) { out.innerHTML = `<div class="cl-err">${esc(e.message)}</div>`; }
-    finally { btn.disabled = false; btn.textContent = t; }
+    try {
+      await fn(out);
+      if (S.mode !== mode && S.tab === tab) { S.res[tab] = ""; S.autoRun = tab; render(); return; }   // 계산 중에 SCI/SCE를 바꿨다 → 새 모드로 다시
+      if (out.isConnected && out.getBoundingClientRect().top > window.innerHeight - 140) out.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {
+      out.innerHTML = `<div class="cl-err">${esc(e.message)}</div>`;
+      const el = e.field && $(`[data-k="${CSS.escape(e.field)}"]`);
+      if (el) { el.classList.add("bad"); el.focus(); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+      else if (out.isConnected && out.getBoundingClientRect().top > window.innerHeight - 80) out.scrollIntoView({ behavior: "smooth", block: "center" });
+    } finally { btn.disabled = false; btn.textContent = t; }
   }
 
   // ------------------------------------------------------------------ 탭: 색 예측
@@ -344,12 +411,12 @@
       <label class="cl-check"><input type="checkbox" data-k="use2" data-re="1"${two ? " checked" : ""}> 2도도 찍기 (1도 위에 겹침)</label>
       ${two ? recipeField("l2", "2도 배합") : ""}
       <div class="cl-grid">
-        <label class="cl-f sm"><span>1도 망점 % <em>빈칸=솔리드</em></span><input data-k="cov1" type="number" step="1" min="0" max="100" value="${esc(val("cov1"))}"></label>
-        ${two ? `<label class="cl-f sm"><span>2도 망점 % <em>빈칸=솔리드</em></span><input data-k="cov2" type="number" step="1" min="0" max="100" value="${esc(val("cov2"))}"></label>` : ""}
+        <label class="cl-f sm"><span>1도 망점 % <em>빈칸=100</em></span><input data-k="cov1" type="number" step="1" min="0" max="100" value="${esc(val("cov1"))}"></label>
+        ${two ? `<label class="cl-f sm"><span>2도 망점 % <em>빈칸=100</em></span><input data-k="cov2" type="number" step="1" min="0" max="100" value="${esc(val("cov2"))}"></label>` : ""}
         ${labField("target", "목표 LAB", "선택 — 있으면 ΔE 표시")}
       </div>
       ${specField("tspec", "목표 분광", "선택 — 분광 계산이면 조명별 차이(메타메리즘)")}
-      <div class="cl-actions"><button class="cl-btn" id="go">예측</button></div></div>
+      <div class="cl-actions"><button class="cl-btn" id="go">예측</button>${clearBtn()}</div></div>
       <div id="out">${S.res.predict || ""}</div>`;
   }
 
@@ -454,7 +521,7 @@
         <label class="cl-f sm"><span>신나 %</span><input data-k="r.thin" type="number" step="1" min="0" value="${esc(val("r.thin", 30))}"></label>
         <label class="cl-f sm"><span>경화제 %</span><input data-k="r.hard" type="number" step="1" min="0" value="${esc(val("r.hard", 20))}"></label>
       </div>
-      <div class="cl-actions"><button class="cl-btn" id="go">추천</button><span class="cl-note">잉크를 많이 고를수록 오래 걸립니다 (조합 수만큼 계산)</span></div></div>
+      <div class="cl-actions"><button class="cl-btn" id="go">추천</button>${clearBtn()}<span class="cl-note">잉크를 많이 고를수록 오래 걸립니다 (조합 수만큼 계산)</span></div></div>
       <div id="out">${S.res.recommend || ""}</div>`;
   }
 
@@ -490,18 +557,18 @@
       ${recipeField("cur", "지금 배합")}
       <div class="cl-grid">${labField("measured", "찍어서 잰 LAB")}${labField("target", "목표 LAB")}${toneField()}</div>
       <div class="cl-grid">${subField("sub")}${plateField("plate")}</div>
-      <label class="cl-check"><input type="checkbox" data-k="under" data-re="1"${under ? " checked" : ""}> 2도 보정 (1도 위에 찍은 색)</label>
+      <h4>상황에 맞게 고르세요 <em>해당하는 것만</em></h4>
+      <div class="cl-opts"><label class="cl-check"><input type="checkbox" data-k="under" data-re="1"${under ? " checked" : ""}> 2도 보정 (1도 위에 찍은 색)</label>
       ${under ? recipeField("u", "아래 1도 배합") : ""}
       <label class="cl-check"><input type="checkbox" data-k="use_prev" data-re="1"${val("use_prev", false) ? " checked" : ""}> 이전 시도도 있어요 <em>배합을 바꿨을 때 색이 실제로 얼마나 움직였는지 다음 보정에 반영</em></label>
       ${val("use_prev", false) ? `${recipeField("prev", "이전 시도 배합")}<div class="cl-grid">${labField("prev_m", "이전 시도에서 잰 LAB")}</div>` : ""}
-      <div class="cl-grid">
-        <label class="cl-check"><input type="checkbox" data-k="add_only" data-re="1"${val("add_only", false) ? " checked" : ""}> 이미 섞은 통에 <b>더 넣기만</b> (뺄 수 없음)</label>
+      <label class="cl-check"><input type="checkbox" data-k="add_only" data-re="1"${val("add_only", false) ? " checked" : ""}> 이미 섞은 통에 <b>더 넣기만</b> (뺄 수 없음)</label>
         ${val("add_only", false) ? `<label class="cl-f sm"><span>통에 남은 잉크 g <em>선택 — 넣을 양을 환산</em></span><input data-k="remain" type="number" step="1" min="0" value="${esc(val("remain"))}"></label>` : ""}
       </div>
       <h4>더 넣어도 되는 잉크 <em>지금 배합에 있는 잉크는 자동 포함</em></h4>${inkChecks("add", () => false)}
       <label class="cl-f"><span>변경을 아끼는 정도 <em>클수록 조금만 바꾸는 쪽</em></span>
         <input data-k="w" type="range" min="0" max="2" step="0.1" value="${esc(val("w", 0.5))}" oninput="this.nextElementSibling.textContent=this.value"><b class="cl-range">${esc(val("w", 0.5))}</b></label>
-      <div class="cl-actions"><button class="cl-btn" id="go">보정 추천</button></div></div>
+      <div class="cl-actions"><button class="cl-btn" id="go">보정 추천</button>${clearBtn()}</div></div>
       <div id="out">${S.res.correct || ""}</div>`;
   }
 
@@ -566,7 +633,7 @@
       <div class="cl-grid">${labField("a", "기준 (목표)")}${labField("b", "비교 (시료)")}</div>
       <details${val("spa") || val("spb") ? " open" : ""}><summary>분광으로 메타메리즘 보기 (선택)</summary>
         ${specField("spa", "기준 분광")}${specField("spb", "비교 분광")}</details>
-      <div class="cl-actions"><button class="cl-btn" id="go">계산</button></div></div>
+      <div class="cl-actions"><button class="cl-btn" id="go">계산</button>${clearBtn()}</div></div>
       <div id="out">${S.res.de || ""}</div>`;
   }
 
@@ -720,7 +787,11 @@
         <button class="cl-btn ghost" id="revert"${S.dirty ? "" : " disabled"}>되돌리기</button>
         <button class="cl-btn ghost" id="export">JSON 내보내기</button>
         <label class="cl-btn ghost">JSON 가져오기<input type="file" id="import" accept=".json,application/json" hidden></label>
-      </div></div>
+      </div>
+      <nav class="cl-subnav" aria-label="라이브러리 구역">${[["lib-inks", `잉크 ${(L.inks || []).length}`], ["lib-subs", `도장 시편 ${(L.substrates || []).length}`], ["lib-plates", `동판 ${(L.plates || []).length}`],
+        ["profile", `보정 프로필 ${(((S.info || {}).profile || {}).runs || []).length}`], ["transfers", `전사 시료 ${(L.transfers || []).length}`], ["lib-settings", "계산 설정 · 허용 기준"]]
+        .map(([id, t]) => `<button type="button" class="cl-chip" data-goto="${id}">${esc(t)}</button>`).join("")}
+        <span class="cl-note">Ctrl+S 저장</span></nav></div>
 
     <details class="cl-card cl-help"${(L.inks || []).length ? "" : " open"}><summary>측정 방법 (처음이면 읽어 주세요)</summary>
       <ol>
@@ -734,7 +805,7 @@
         <li><b>분광</b>(선택): 측색기가 400~700 nm 반사율을 내보내면 각 칸의 "분광 붙여넣기"에. 31개(10 nm) · 파장+값 두 열 · 360~740 · 380~780 모두 받습니다.</li>
       </ol></details>
 
-    <div class="cl-card"><h3>잉크 <small>${(L.inks || []).length}개</small></h3>
+    <div class="cl-card" id="lib-inks"><h3>잉크 <small>${(L.inks || []).length}개</small></h3>
       <div class="cl-cardrow"><span class="cl-note">기본 카드값 (새 잉크에 자동으로 들어가고, 바탕으로도 고를 수 있음)</span>
         ${measCell("settings.cards.white", "흰 카드")}${measCell("settings.cards.black", "검정 카드")}
         <button class="cl-btn ghost sm" id="cards-all"${cards.white || cards.black ? "" : " disabled"}>모든 잉크에 적용</button></div>
@@ -761,7 +832,7 @@
       <button class="cl-btn ghost" id="add-ink">+ 잉크</button>
       <p class="cl-note">저장하면 아카이브와 컬러연구소가 같은 별칭을 사용합니다. 대소문자·앞뒤 공백은 무시하며, 같은 제품의 정식명과 별칭 중량은 합산합니다. 다른 제품과 이름·별칭·DB 연결은 중복할 수 없습니다. 기존 정식명 변경 대신 약칭을 지정하세요. DB 연결은 제품을 확인한 뒤 지정하며 과거 DB 행은 자동 변경하지 않습니다.</p></div>
 
-    <div class="cl-card"><h3>도장 시편 (바탕) <small>${(L.substrates || []).length}개</small></h3>
+    <div class="cl-card" id="lib-subs"><h3>도장 시편 (바탕) <small>${(L.substrates || []).length}개</small></h3>
       <div class="cl-scroll"><table class="cl-table lib"><thead><tr><th>컬러코드</th><th>도장처</th><th>표면</th><th>종류</th><th>광택 GU</th><th>설명</th><th>도장일</th><th>측정일</th><th>SCI · SCE · 분광</th><th></th></tr></thead><tbody>
       ${(L.substrates || []).map((s, i) => `<tr>
         <td><input data-p="substrates.${i}.code" value="${esc(s.code)}" placeholder="C 1000"></td>
@@ -777,7 +848,7 @@
       </tbody></table></div>
       <button class="cl-btn ghost" id="add-sub">+ 도장 시편</button></div>
 
-    <div class="cl-card"><h3>동판 <small>${(L.plates || []).length}개</small></h3>
+    <div class="cl-card" id="lib-plates"><h3>동판 <small>${(L.plates || []).length}개</small></h3>
       <div class="cl-scroll"><table class="cl-table lib"><thead><tr><th>동판 lot</th><th>LPI</th><th>부식 깊이 µm</th><th>막두께 계수</th><th>50% 망점 → 실제 %</th><th>1도 망점 %</th><th>2도 망점 %</th><th>예측 오차</th><th>메모</th><th></th></tr></thead><tbody>
       ${(L.plates || []).map((p, i) => {
         const inf = !S.dirty && S.info && S.info.plates ? S.info.plates[p.lot] : null;
@@ -804,7 +875,7 @@
 
     ${viewTransfers()}
 
-    <div class="cl-card"><h3>계산 설정</h3>
+    <div class="cl-card" id="lib-settings"><h3>계산 설정</h3>
       <label class="cl-f xs"><span>Yule–Nielsen n</span><input type="number" step="0.1" min="1" max="10" data-p="settings.yn" data-type="num" value="${esc((L.settings && L.settings.yn) ?? 1)}"></label>
       <p class="cl-note">망점 패치의 평균색을 낼 때 빛이 잉크 가장자리에서 번지는 정도. 1이면 단순 면적 평균. 동판의 망점 곡선이 이 효과까지 함께 담으므로 보통 1로 두세요.</p>
       <label class="cl-f sm"><span>3채널 기저 <em>분광이 없을 때</em></span><select data-p="settings.basis">
@@ -1065,6 +1136,7 @@
       markDirty(); render();
     };
     $("#save").onclick = saveLibrary;
+    $$("[data-goto]", root).forEach((b) => (b.onclick = () => { const el = document.getElementById(b.dataset.goto); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }));
     $("#revert").onclick = () => { if (confirm("저장 안 한 변경을 버릴까요?")) { S.edit = clone(S.lib); S.dirty = false; status(); render(); } };
     $("#export").onclick = () => {
       const blob = new Blob([JSON.stringify(E(), null, 2)], { type: "application/json" });
@@ -1200,10 +1272,19 @@
   }
 
   $$("#mode button").forEach((b) => (b.onclick = () => {
+    if (S.mode === b.dataset.mode) return;
     S.mode = b.dataset.mode; keep("cl.mode", S.mode);
+    const had = !!S.res[S.tab] && !!(VIEWS[S.tab] || [])[1];
     S.res = {};   // 결과는 모드마다 다르다
+    if (had) S.autoRun = S.tab;      // 보고 있던 결과는 새 모드로 바로 다시 계산
     render();
+    toast(`${S.mode.toUpperCase()} 값으로 계산합니다${had ? " — 다시 계산했어요" : ""}`);
   }));
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s" || S.tab !== "library") return;
+    e.preventDefault();
+    if (S.dirty) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); saveLibrary(); } else toast("저장할 변경이 없어요");
+  });
   window.addEventListener("hashchange", () => { window.scrollTo(0, 0); render(); });
   window.addEventListener("beforeunload", (e) => { if (S.dirty) { e.preventDefault(); e.returnValue = ""; } });
 
