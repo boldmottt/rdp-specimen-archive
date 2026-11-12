@@ -137,9 +137,13 @@ class Handler(BaseHTTPRequestHandler):
             item = STATE.get(body.get("id"))
             if not item:
                 return self._json({"ok": False, "error": "사진을 먼저 올려 주세요"}, 400)
+            mode = body.get("mode") or "specimen"
             im = Image.open(item["path"])
-            quad, why = core.suggest_quad(im)
-            return self._json({"ok": True, "quad": [list(p) for p in quad], "why": why})
+            if mode == "manual":
+                quad, why = core.suggest_quad(im)
+                return self._json({"ok": True, "quad": [list(p) for p in quad], "why": why, "conf": None})
+            quad, conf, why = core.auto_quad(im, mode)
+            return self._json({"ok": True, "quad": [list(p) for p in quad], "why": why, "conf": conf})
 
         if u.path == "/api/process":
             try:
@@ -149,9 +153,14 @@ class Handler(BaseHTTPRequestHandler):
             item = STATE.get(body.get("id"))
             if not item:
                 return self._json({"ok": False, "error": "사진을 먼저 올려 주세요"}, 400)
+            im = Image.open(item["path"])
             quad = body.get("quad") or []
+            auto = body.get("auto") or ""
+            conf = None
+            if len(quad) != 4 and auto:
+                quad, conf, _why = core.auto_quad(im, auto)     # 사진마다 자동 인식
             if len(quad) != 4:
-                return self._json({"ok": False, "error": "귀퉁이 네 점이 필요합니다"}, 400)
+                return self._json({"ok": False, "error": "귀퉁이 네 점이 필요합니다(자동 인식도 실패)"}, 400)
             try:
                 ref = (float(body["refMm"]["w"]), float(body["refMm"]["h"]))
                 tgt = (float(body["targetMm"]["w"]), float(body["targetMm"]["h"]))
@@ -160,7 +169,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": "실물 크기(mm)를 숫자로 넣어 주세요"}, 400)
             fmt = (body.get("format") or "PNG").upper()
             try:
-                im = Image.open(item["path"])
                 out, plan = core.process(im, quad, ref, tgt, off, bool(body.get("allowUpscale")))
             except ValueError as e:
                 return self._json({"ok": False, "error": str(e)}, 400)
@@ -177,6 +185,8 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True, "outId": oid, "name": name,
                 "px": list(out.size), "mm": list(tgt), "dpi": list(plan["dpi"]),
                 "warp": plan.get("warp"), "upscale": plan["upscale"], "warn": plan["warn"],
+                "quad": [[round(float(a), 1), round(float(b), 1)] for a, b in quad],
+                "conf": conf,
                 "size" : os.path.getsize(safe),
             })
 

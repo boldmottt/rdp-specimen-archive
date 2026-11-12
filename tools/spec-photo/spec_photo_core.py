@@ -191,6 +191,129 @@ def quad_from_frame(w: int, h: int) -> list[Point]:
     return [(0.0, 0.0), (float(w - 1), 0.0), (float(w - 1), float(h - 1)), (0.0, float(h - 1))]
 
 
+def _largest_blob_quad(mask, scale: float) -> tuple[list[Point], float]:
+    """이진 마스크에서 가장 큰 덩어리의 네 극점(좌상·우상·우하·좌하)을 뽑는다.
+
+    OpenCV 없이 하려고 (1) 라벨링은 BFS, (2) 귀퉁이는 x+y·x−y 극값으로 잡는다.
+    반환: (quad, 채움비) — 채움비 = 덩어리 넓이 / 사각형 넓이 (1에 가까울수록 사각형에 가깝다)
+    """
+    import numpy as np
+    from collections import deque
+
+    h, w = mask.shape
+    seen = np.zeros_like(mask, dtype=bool)
+    best, best_area = None, 0
+    blobs = []
+    for sy in range(h):
+        for sx in range(w):
+            if not mask[sy, sx] or seen[sy, sx]:
+                continue
+            q = deque([(sy, sx)])
+            seen[sy, sx] = True
+            pts = []
+            while q:
+                y, x = q.popleft()
+                pts.append((x, y))
+                for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = True
+                        q.append((ny, nx))
+            touches_edge = any(x == 0 or y == 0 or x == w - 1 or y == h - 1 for x, y in pts)
+            blobs.append((pts, touches_edge))
+            if len(pts) > best_area:
+                best, best_area = pts, len(pts)
+
+    # 테두리에 닿은 덩어리는 배경 — 그것을 뺀 '안쪽 덩어리' 중 가장 큰 것을 쓴다
+    inner = [pts for pts, edge in blobs if not edge and len(pts) >= 50]
+    if inner:
+        best = max(inner, key=len)
+        best_area = len(best)
+
+    if not best or best_area < 50:
+        return [], 0.0
+
+    arr = np.array(best, dtype=np.float32)
+    s_ = arr[:, 0] + arr[:, 1]
+    d_ = arr[:, 0] - arr[:, 1]
+    corners = [arr[int(np.argmin(s_))], arr[int(np.argmax(d_))],
+               arr[int(np.argmax(s_))], arr[int(np.argmin(d_))]]
+    quad = [(float(x) / scale, float(y) / scale) for x, y in corners]
+
+    # 채움비 — 회전 사각형이면 1 에 가깝다
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = quad
+    area = abs((x0 * y1 - x1 * y0) + (x1 * y2 - x2 * y1) +
+               (x2 * y3 - x3 * y2) + (x3 * y0 - x0 * y3)) / 2
+    fill = best_area / (area * scale * scale) if area > 0 else 0.0
+    return quad, max(0.0, min(1.0, fill))
+
+
+def _otsu(arr) -> int:
+    import numpy as np
+    hist, _ = np.histogram(arr, bins=256, range=(0, 255))
+    total = arr.size
+    sum_all = float((np.arange(256) * hist).sum())
+    sum_b = 0.0
+    w_b = 0.0
+    best = (-1.0, 128)
+    for t in range(256):
+        w_b += hist[t]
+        if w_b == 0:
+            continue
+        w_f = total - w_b
+        if w_f == 0:
+            break
+        sum_b += t * hist[t]
+        m_b = sum_b / w_b
+        m_f = (sum_all - sum_b) / w_f
+        between = w_b * w_f * (m_b - m_f) ** 2
+        if between > best[0]:
+            best = (between, t)
+    return int(best[1])
+
+
+def auto_quad(image: Image.Image, mode: str = "specimen") -> tuple[list[Point], float, str]:
+    """사진에서 기준 사각형을 자동으로 찾는다.
+
+    mode
+      "frame"    사진 전체(이미 170:70 으로 찍은 사진)
+      "paper"    밝은 쪽 = 기준 용지(A4). 피사체가 어두울 때
+      "specimen" 어두운/색이 있는 쪽 = 시편. 용지 위에 시편을 올려 찍었을 때(기본)
+
+    반환: (quad, 확신도 0~1, 설명)
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return quad_from_frame(*image.size), 0.0, "자동 인식 없음(numpy 미설치) — 직접 찍어 주세요"
+
+    if mode == "frame":
+        return quad_from_frame(*image.size), 1.0, "사진 전체 사용"
+
+    im = image.convert("L")
+    scale = 420 / max(im.size)
+    small = im.resize((max(8, int(im.width * scale)), max(8, int(im.height * scale))), Image.BILINEAR)
+    a = np.asarray(small, dtype=np.float32)
+    thr = _otsu(a)
+
+    if mode == "paper":
+        mask = a > thr                      # 밝은 쪽이 용지
+        label = "밝은 영역(용지)"
+    else:
+        mask = a <= thr                     # 어두운/색 있는 쪽이 시편
+        label = "어두운 영역(시편)"
+
+    quad, fill = _largest_blob_quad(mask, scale)
+    if not quad:
+        return quad_from_frame(*image.size), 0.0, "자동 인식 실패 — 직접 찍어 주세요"
+
+    conf = fill
+    why = f"{label} 자동 인식 · 확신 {conf * 100:.0f}%"
+    if conf < 0.72:
+        why += " — 확인 필요(귀퉁이를 봐 주세요)"
+    return quad, conf, why
+
+
 def suggest_quad(image: Image.Image) -> tuple[list[Point], str]:
     """사진에서 가장 큰 사각형(시편/용지) 귀퉁이를 대충 제안한다.
 

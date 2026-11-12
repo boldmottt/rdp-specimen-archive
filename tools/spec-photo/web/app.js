@@ -6,10 +6,11 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
 const S = {
-  items: [],        // {id, name, w, h, quad:[[x,y]x4]}
+  items: [],        // {id, name, w, h, quad, conf, why}
   cur: -1,
   view: { scale: 1, ox: 0, oy: 0 },
   drag: -1,
+  mode: "specimen", // specimen | paper | frame | manual
 };
 
 /* ---------------------------------------------------------------- 업로드 */
@@ -21,11 +22,24 @@ async function addFiles(files) {
     const j = await r.json();
     if (!j.ok) { alert(j.error || "업로드 실패"); continue; }
     const quad = [[0, 0], [j.w - 1, 0], [j.w - 1, j.h - 1], [0, j.h - 1]];
-    S.items.push({ id: j.id, name: j.name, w: j.w, h: j.h, quad });
+    S.items.push({ id: j.id, name: j.name, w: j.w, h: j.h, quad, conf: null, why: "" });
   }
+  if (S.mode !== "manual") { for (const it of S.items) if (it.conf == null) await detect(it); }
   if (S.cur < 0 && S.items.length) select(0);
   renderFiles();
   $("#runAll").disabled = !S.items.length;
+}
+
+async function detect(item) {
+  const r = await fetch("/api/suggest", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: item.id, mode: S.mode }),
+  });
+  const j = await r.json();
+  if (!j.ok) return;
+  item.quad = j.quad;
+  item.conf = j.conf;
+  item.why = j.why || "";
 }
 
 function renderFiles() {
@@ -44,7 +58,7 @@ async function select(i) {
   S.cur = i;
   const it = S.items[i];
   $("#curName").textContent = it.name;
-  $("#curSize").textContent = `${it.w}×${it.h}px`;
+  $("#curSize").textContent = `${it.w}×${it.h}px${it.why ? " · " + it.why : ""}`;
   IMG = new Image();
   await new Promise((res) => { IMG.onload = res; IMG.src = `/api/raw/${it.id}`; });
   renderFiles();
@@ -83,7 +97,7 @@ function draw() {
   ctx.closePath();
   ctx.fillStyle = "rgba(0,0,0,.28)";
   ctx.fill();
-  ctx.strokeStyle = "#fc4c02";
+  ctx.strokeStyle = (it.conf != null && it.conf < 0.72) ? "#e8a33d" : "#fc4c02";
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.restore();
@@ -200,7 +214,8 @@ function showLoupe(x, y, p) {
 async function runOne(item, index) {
   const body = {
     id: item.id,
-    quad: item.quad,
+    quad: S.mode === "manual" ? item.quad : item.quad,
+    auto: S.mode === "manual" ? "" : S.mode,
     refMm: refSize(),
     targetMm: targetMm(),
     offsetMm: { x: Number($("#offX").value) || 0, y: Number($("#offY").value) || 0 },
@@ -223,7 +238,7 @@ function resultRow(j, name) {
     <img src="/api/preview/${j.outId}" alt="">
     <div class="meta">
       <b>${esc(j.name)}</b>
-      <span>${j.px[0]}×${j.px[1]}px · ${j.mm[0]}×${j.mm[1]}mm · ${Math.round(j.dpi[0])}dpi${j.upscale ? " · 확대됨" : ""}</span>
+      <span>${j.px[0]}×${j.px[1]}px · ${j.mm[0]}×${j.mm[1]}mm · ${Math.round(j.dpi[0])}dpi${j.upscale ? " · 확대됨" : ""}${j.conf != null ? ` · 자동 ${Math.round(j.conf * 100)}%` : ""}</span>
       ${warn}
     </div>
     <a class="dl" href="/api/file/${j.outId}"><button class="mini">내려받기</button></a>
@@ -251,6 +266,30 @@ async function runAll() {
   $("#runAll").disabled = false;
 }
 
+/* 모드마다 '기준 사각형'의 뜻이 다르다 —
+   용지 모드면 A4 실물 크기, 시편 모드면 시편 실물 크기, 전체 모드면 기준 없이 결과 크기만. */
+function syncRefForMode() {
+  const tgt = targetMm();
+  const lbl = $("#refLabel"), hint = $("#refHint"), preset = $("#refPreset");
+  if (S.mode === "paper") {
+    lbl.childNodes[0].nodeValue = "기준 용지 실물 크기";
+    hint.textContent = "사진에서 잡은 용지가 실제로 몇 mm 인가 (A4 = 210×297)";
+    $("#refW").value = 210; $("#refH").value = 297; preset.value = "210,297";
+  } else if (S.mode === "specimen") {
+    lbl.childNodes[0].nodeValue = "시편 실물 크기";
+    hint.textContent = "잡은 시편이 실제로 몇 mm 인가 — 이 값이 곧 1:1 기준이 됩니다";
+    $("#refW").value = tgt.w || 170; $("#refH").value = tgt.h || 70; preset.value = "custom";
+  } else if (S.mode === "frame") {
+    lbl.childNodes[0].nodeValue = "기준 (사진 전체)";
+    hint.textContent = "사진 전체를 그 실물 크기로 봅니다 — 보통 뽑을 크기와 같게 두세요";
+    $("#refW").value = tgt.w || 170; $("#refH").value = tgt.h || 70; preset.value = "custom";
+  } else {
+    lbl.childNodes[0].nodeValue = "기준 사각형 실물 크기";
+    hint.textContent = "사진에서 찍은 네 귀퉁이가 실제로 몇 mm 인가";
+  }
+  draw();
+}
+
 /* ---------------------------------------------------------------- 시작 */
 function bind() {
   const drop = $("#drop"), file = $("#file");
@@ -271,12 +310,21 @@ function bind() {
   $("#suggest").onclick = async () => {
     const it = S.items[S.cur];
     if (!it) return;
-    const r = await fetch("/api/suggest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: it.id }) });
-    const j = await r.json();
-    if (!j.ok) return alert(j.error);
-    it.quad = j.quad;
+    await detect(it);
     draw();
-    $("#curSize").textContent = `${it.w}×${it.h}px · ${j.why}`;
+    $("#curSize").textContent = `${it.w}×${it.h}px · ${it.why || ""}`;
+  };
+
+  // 모드 — 바꾸면 지금 사진부터 다시 인식하고, 기준 크기 뜻도 함께 바꾼다
+  $("#autoMode").onchange = async (e) => {
+    S.mode = e.target.value;
+    syncRefForMode();
+    const it = S.items[S.cur];
+    if (it && S.mode !== "manual") { await detect(it); draw(); }
+    $("#autoHint").textContent = S.mode === "manual"
+      ? "네 귀퉁이를 직접 찍으세요 (방향키 1px · Shift 10px)"
+      : S.mode === "frame" ? "사진 전체를 그대로 씁니다 — 이미 170:70으로 찍은 사진"
+      : "사진마다 알아서 찾습니다. 확신이 낮으면 주황색으로 표시됩니다";
   };
 
   $("#applyAll").onclick = () => {
@@ -287,6 +335,7 @@ function bind() {
   };
 
   $("#runAll").onclick = runAll;
+  syncRefForMode();
   bindCanvas();
   window.addEventListener("resize", () => { if (S.items.length) { fitCanvas(); } });
 }
