@@ -1378,3 +1378,13 @@ h4.rp-sec-h{font-size:13px;color:var(--ink-2)}
 @media (max-width:520px){.rp-bars{gap:3px}.rp-bm{font-size:9px;letter-spacing:-.04em}.rp-bn{font-size:10px}}
 @media print{body.report-mode .rp-tscroll{overflow:visible}}
 /* 개발 실적 보고서 끝 */
+
+/* 필수 칸 표시 (새 시편 · 편집 서랍) */
+.req{color:#c4453a;font-weight:700;margin-left:1px}
+.req-empty{color:#c4453a !important;font-style:normal;font-weight:500;font-family:var(--font-sans);font-size:12px}
+.new-hint .mini-btn{margin-left:6px;vertical-align:baseline}
+.new-hint b{color:#5d6168;font-weight:600}
+.new-hint b.req{color:#c4453a}
+/* 아래 제안서 바가 떠 있으면 마지막 줄 카드·버튼을 가리지 않게 그만큼 여백 */
+body:has(.cartbar.show){padding-bottom:84px}
+@media print{body:has(.cartbar.show){padding-bottom:0}}
