@@ -544,18 +544,24 @@ export function renderCatalog() {
   // 다시 그리면 툴바가 새로 만들어져 초점이 body 로 빠진다 → 원래 있던 자리로 돌려준다
   const refocus = (sel) => { const el = $(sel); if (el) el.focus(); };
   const addAll = (focusSel) => {
+    const before = App.cart.length;
     // 화면에 보이는 순서(정렬 포함)대로 담는다 — 제안서 순서가 곧 담은 순서다. filtered()가 HITS 도 다시 채운다
     filtered().forEach((p) => (HITS.get(p.id) || []).forEach((vid) => {
       if (!inCart(p.id, vid)) App.cart.push({ pid: p.id, vid });
     }));
     saveLS(); renderCatalog(); renderCart();
     refocus(focusSel || "#selall");
+    // 전에는 아무 말 없이 버튼만 '빼기'로 바뀌어, 담긴 건지 알기 어려웠다
+    const n = App.cart.length - before;
+    toast(n ? `${n}개 컬러를 제안서에 담았어요 — 다시 누르면 뺍니다 (제안서 ${App.cart.length}개)` : "이미 모두 담겨 있어요", 2600);
   };
   const removeAll = (focusSel) => {
     filtered();
+    const before = App.cart.length;
     App.cart = App.cart.filter((c) => !(HITS.get(c.pid) || []).includes(c.vid));
     saveLS(); renderCatalog(); renderCart();
     refocus(focusSel || "#selall");
+    toast(`${before - App.cart.length}개 컬러를 제안서에서 뺐어요 (남은 ${App.cart.length}개)`, 2600);
   };
   const btnAll = $("#selall");
   // 결과가 전부 담겨 있으면 같은 버튼이 '빼기'가 된다(같은 대상의 반대 동작이라 토글로 합침)
@@ -706,11 +712,26 @@ export function renderCatalog() {
   }));
 }
 
+/** 새 시편에서 비어 있는 필수 칸으로 데려가 바로 입력하게 연다. 데려갔으면 true */
+export function focusMissingRequired() {
+  const d = App.newDraft;
+  if (!d) return false;
+  const miss = !d.project ? "project" : !(d.pattern && d.pattern.code) ? "pattern.code" : "";
+  if (!miss) return false;
+  const el = document.querySelector(`#view [data-f="${miss}"]`);
+  toast(miss === "project" ? "프로젝트를 입력하세요" : "패턴 코드를 입력하세요");
+  if (el) {
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.click();   // 인라인 입력칸을 바로 연다
+  }
+  return true;
+}
+
 export async function saveNewPattern() {
   const d = App.newDraft;
   if (!d) return;
-  if (!d.project) { toast("프로젝트를 입력하세요"); return; }
-  if (!d.pattern.code) { toast("패턴 코드를 입력하세요"); return; }
+  // 전에는 알림만 뜨고 그 칸이 화면 아래쪽 어디에 있는지 찾아야 했다 → 그 칸으로 데려가 연다
+  if (focusMissingRequired()) return;
   // 파일 ID는 편집기·사진 업로드와 같은 규칙(deriveId) — 다르면 저장 전에 올린 사진이 다른 폴더로 갔다
   const id = deriveId(d.project, d.pattern.code);
   if (!id) { toast("프로젝트·패턴 코드에 영문이나 숫자가 하나는 있어야 해요 (파일 이름에 씁니다)"); return; }

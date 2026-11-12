@@ -147,8 +147,25 @@ export function startInline(el, pid, vid) {
     renderDetail(pid, v.id);
   };
   inp.onblur = commit;
-  inp.onkeydown = (e) => {
+  inp.onkeydown = async (e) => {
     if (e.key === "Enter" && !multi) { e.preventDefault(); inp.blur(); }
     if (e.key === "Escape") { e.preventDefault(); inp.onblur = null; restore(); }
+    if (e.key === "Tab") {
+      // Tab = 확정하고 다음(Shift+Tab 은 이전) 칸 — 칸마다 마우스로 다시 누르지 않아도 된다
+      e.preventDefault();
+      const order = editableFields(pid);
+      const i = order.indexOf(el);
+      const j = i + (e.shiftKey ? -1 : 1);
+      inp.onblur = null;
+      await commit();
+      const next = editableFields(pid)[j];   // 저장 뒤 화면을 다시 그리므로 순서로 다시 찾는다
+      if (i >= 0 && next) { next.scrollIntoView({ block: "nearest" }); next.click(); }
+    }
   };
+}
+
+// Tab 으로 돌 수 있는 칸(화면 순서) — 저장된 시편의 프로젝트·패턴 코드는 편집기로 넘어가므로 건너뛴다
+function editableFields(pid) {
+  return [...document.querySelectorAll("#view [data-f]")].filter((x) =>
+    x.offsetParent && (pid === "__new__" || (x.dataset.f !== "project" && x.dataset.f !== "pattern.code")));
 }

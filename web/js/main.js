@@ -1,6 +1,6 @@
 /* RDP 시편 아카이브 — 라우터 · 부팅 (진입점) */
 import { $, $$, App, apiGet, esc, loadLS, normalizeDoc, saveSmart, toast } from "./core.js";
-import { renderCatalog } from "./catalog.js";
+import { renderCatalog, saveNewPattern } from "./catalog.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
 import { renderBoard } from "./board.js";
@@ -12,8 +12,18 @@ import { E, closeEditor, newDoc, openEditor, renderDrawer, saveDraft, syncTabs }
 import { bindCrop } from "./crop.js";
 
 /* ---------------- router ---------------- */
+// 목차 스크롤 위치 — 상세를 보고 [← 목차]·Esc로 돌아오면 보던 자리로 (전에는 맨 위로 튕겼다)
+let lastRoute = null;
+let catScroll = 0;
+let searchNav = false;
 export function rerender() {
   const h = location.hash.replace(/^#/, "");
+  const prev = lastRoute;
+  if (prev === "" && h !== "") catScroll = window.scrollY;
+  // 검색창에 쳐서 목차로 온 것이면 결과가 바뀌었으니 맨 위부터
+  const restore = h === "" && prev != null && prev !== "" && !searchNav;
+  lastRoute = h;
+  searchNav = false;
   document.body.classList.remove("board-mode");   // 컬러 보드 전용 인쇄 규칙은 이 화면에서만
   document.body.classList.remove("compare-mode");  // 비교 화면 인쇄 규칙(가로)도 그 화면에서만
   document.body.classList.remove("report-mode");   // 개발 실적 보고서 인쇄 규칙(A4 가로)도 그 화면에서만
@@ -47,7 +57,9 @@ export function rerender() {
     renderCatalog();
     renderCart();
   }
-  window.scrollTo(0, 0);
+  // 같은 화면을 다시 그린 것(저장·선택 해제 등)이면 보던 자리 그대로
+  if (h === prev) return;
+  window.scrollTo(0, restore ? catScroll : 0);
 }
 
 /* ---------------- boot ---------------- */
@@ -129,7 +141,7 @@ async function boot() {
   $("#search").addEventListener("input", (e) => {
     App.q = e.target.value;
     clearTimeout(qTimer);
-    if (location.hash && location.hash !== "#") location.hash = "";
+    if (location.hash && location.hash !== "#") { searchNav = true; location.hash = ""; }
     else if (App.patterns.length > 150) qTimer = setTimeout(() => { if (!location.hash || location.hash === "#") renderCatalog(); }, 120);
     else renderCatalog();
   });
@@ -137,12 +149,38 @@ async function boot() {
     const ae = document.activeElement;
     const typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
     if (e.key === "/" && !typing) { e.preventDefault(); $("#search").focus(); }
+    // Ctrl/⌘+S = 저장 — 편집 서랍이 열려 있으면 서랍을, 새 시편 화면이면 새 시편을 (브라우저 '페이지 저장' 대신)
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "s" || e.key === "S")) {
+      if (document.querySelector("dialog[open]")) return;
+      if ($("#drawer").classList.contains("on")) { e.preventDefault(); saveDraft(); return; }
+      if (location.hash === "#/new") {
+        e.preventDefault();
+        if (typing) ae.blur();   // 쓰던 칸을 먼저 확정(인라인 칸은 blur 때 반영)
+        setTimeout(() => saveNewPattern(), 0);
+        return;
+      }
+      if (typing && ae.classList.contains("inline-input")) { e.preventDefault(); ae.blur(); }
+      return;
+    }
     if (e.key === "Escape") {
       // Esc는 '지금 하던 것 취소'다 — 인라인 편집·대화상자가 이미 처리했거나 입력 중이면 목차로 나가지 않는다
       if (e.defaultPrevented) return;
       if ($("#crop-modal").classList.contains("on")) return $("#crop-modal").classList.remove("on");
-      if ($("#drawer").classList.contains("on")) return closeEditor();
       if (document.querySelector("dialog[open]")) return;   // 배합 미리보기·확정 저장 대화상자는 스스로 닫힌다
+      if ($("#drawer").classList.contains("on")) {
+        // 확인 대화상자가 이 Esc 를 받아 바로 닫히지 않게 다음 차례에 연다 (전에는 고친 뒤 Esc 를 눌러도 아무 일도 없었다)
+        e.preventDefault();
+        setTimeout(() => closeEditor(), 0);
+        return;
+      }
+      // 검색창: 첫 Esc 는 검색어를 지우고 목록도 되돌린다(전에는 글자만 지워지고 목록은 걸러진 채였다), 다음 Esc 는 빠져나오기
+      if (ae && ae.id === "search" && ae.value) {
+        e.preventDefault();
+        ae.value = "";
+        App.q = "";
+        if (!location.hash || location.hash === "#") renderCatalog();
+        return;
+      }
       if (typing) { ae.blur(); return; }
       if (location.hash) location.hash = "";
     }

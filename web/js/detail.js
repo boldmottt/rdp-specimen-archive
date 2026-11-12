@@ -1,7 +1,7 @@
 /* RDP 시편 아카이브 — 시편 상세 · 배합표 · 예상색 */
 import { $, $$, App, apiGet, apiPost, apiPut, byId, clearNewPhotos, clone, confirmDialog, dash, deriveId, esc, flushNewPhotos, fmtDate, html, imgUrl, inCart, layers, paintDots, raw, RESULT_LABEL, revOf, saveLS, toast, toggleCart, vName, varOf } from "./core.js";
 import { inlineSave, inlineSettled, startInline } from "./inline.js";
-import { saveNewPattern } from "./catalog.js";
+import { focusMissingRequired, saveNewPattern } from "./catalog.js";
 import { showPlate } from "./plates.js";
 import { renderCart } from "./proposal.js";
 import { workOf, workSource } from "./work.js";
@@ -324,10 +324,10 @@ export function renderDetail(pid, vid, override) {
       <div class="detail${App.meeting ? " meeting" : ""}">
         <div class="span2 d-head-row">
           <div>
-            <div class="kicker">${p.projectName || p.client ? `<span class="proj">${esc(p.projectName)}</span><span class="mini">${esc(p.client)}</span>` : `<span class="proj">NEW SPECIMEN</span>`}</div>
+            <div class="kicker">${p.projectName || p.client ? `<span class="proj">${esc(p.projectName)}</span><span class="mini">${esc(p.client)}</span>` : `<span class="proj">${isNew ? "NEW SPECIMEN" : esc(p.project || "")}</span>`}</div>
             <h1>${esc(p.pattern.code || "새 시편")}</h1>
             <div class="sub">${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · ") || p.label.type || "")}</div>
-            ${isNew ? '<div class="new-hint">값을 클릭해 채우세요. 프로젝트와 패턴 코드는 필수입니다.</div>' : ""}
+            ${isNew ? '<div class="new-hint">값을 클릭해 채우세요 — <b>Tab</b> 으로 다음 칸, <b>Ctrl+S</b> 로 저장. <b class="req">*</b> 프로젝트와 패턴 코드는 필수예요. <button type="button" class="mini-btn" id="new-req">필수 칸 채우기</button></div>' : ""}
           </div>
           <div class="d-actions">
             ${isNew
@@ -383,9 +383,11 @@ export function renderDetail(pid, vid, override) {
               ${[["회사", "company", "Company"], ["프로젝트", "project", "Project"]].map(([t, k, en]) => {
               const own = sampleOwn(v, k);
               const f = own ? "v.label." + k : (k === "company" ? "client" : "project");
-              return `<dt>${t}<small>${en}</small>${own ? ' <span class="lab-own" title="이 샘플 전용">샘플</span>' : ""}</dt><dd data-f="${f}"${own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : ""}>${esc(dash(sampleVal(p, v, k)))}</dd>`;
+              const req = isNew && k === "project";
+              const shown = sampleVal(p, v, k);
+              return `<dt>${t}${req ? ' <b class="req">*</b>' : ""}<small>${en}</small>${own ? ' <span class="lab-own" title="이 샘플 전용">샘플</span>' : ""}</dt><dd data-f="${f}"${own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : ""}>${req && !shown ? '<span class="is-empty req-empty">필수 — 클릭해 입력</span>' : esc(dash(shown))}</dd>`;
             }).join("")}
-              <dt>패턴 코드<small>Pattern Code</small></dt><dd class="mono" data-f="pattern.code" data-tip="패턴 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${esc(p.pattern.code)}</dd>
+              <dt>패턴 코드${isNew ? ' <b class="req">*</b>' : ""}<small>Pattern Code</small></dt><dd class="mono" data-f="pattern.code" data-tip="패턴 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${isNew && !p.pattern.code ? '<span class="is-empty req-empty">필수 — 클릭해 입력 (예: M-60213-F2)</span>' : esc(p.pattern.code)}</dd>
               <dt>패턴명<small>Pattern Name</small></dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
               <dt>컬러 코드<small>Color Code</small></dt><dd class="mono" data-f="v.colorCode">${esc(dash(v && v.colorCode))}</dd>
               ${[["품목", "item", "Item"], ["구분", "type", "Type"]].map(([t, k, en]) => {
@@ -449,6 +451,8 @@ export function renderDetail(pid, vid, override) {
   if (sameAsVar) bindRecipePreviews($("#view .sec-mix"), sameAsVar.mixes || []);
   if (isNew) {
     $("#newsave").onclick = () => saveNewPattern();
+    const reqBtn = $("#new-req");
+    if (reqBtn) reqBtn.onclick = () => { if (!focusMissingRequired()) toast("필수 칸이 모두 채워졌어요 — [저장]을 누르세요"); };
     $("#newfromwl").onclick = () => openWorklogPicker();
     $("#newedit").onclick = () => window.dispatchEvent(new CustomEvent("rdp:edit-new"));
     // 사진 먼저 — 고르면 파일명에서 정보를 읽어 칸을 채우고, 이미 있는 시편이면 그 시편으로 연결한다.

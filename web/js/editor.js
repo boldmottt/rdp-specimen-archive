@@ -279,14 +279,14 @@ export function renderDrawer() {
   let body = "";
   if (E.tab === "base") {
     body = `<div class="sec-label">패턴</div>
-        ${fieldRow("프로젝트", "project", { ph: "PJ01" })}
+        ${fieldRow('프로젝트 <b class="req" title="필수">*</b>', "project", { ph: "PJ01" })}
         ${fieldRow("차종명", "projectName", { ph: "PJ01 (차종명)" })}
         <div class="field-row"><label>고객</label>
           <input data-k="client" list="client-list" value="${esc(d.client || "")}" placeholder="고객사" autocomplete="off">
           <datalist id="client-list">${valueCounts(App.patterns, (pp) => pp.client).map((x) => `<option value="${esc(x.val)}">`).join("")}</datalist>
         </div>
         <div class="field-note" id="client-note" hidden>기존에 없는 고객사입니다 — 그대로 저장하면 새 값이 됩니다.</div>
-        ${fieldRow("패턴 코드", "pattern.code", { ph: "WB7", mono: true })}
+        ${fieldRow('패턴 코드 <b class="req" title="필수">*</b>', "pattern.code", { ph: "WB7", mono: true })}
         ${fieldRow("영문명", "pattern.name", { ph: "Wood" })}
         ${fieldRow("한글명", "pattern.nameKo", { ph: "우드" })}
         ${fieldRow("태그", "pattern.tags", { ph: "우드, 엠보, 도어" })}
