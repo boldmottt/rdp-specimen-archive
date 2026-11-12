@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>실물 크기 시편 사진</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+<header class="bar">
+  <strong>실물 크기 시편 사진</strong>
+  <span class="sub">사진 → 원근 보정 → 170×70mm 실물 크기로 저장</span>
+</header>
+
+<main>
+  <section class="panel">
+    <div id="drop" class="drop">
+      <b>사진을 끌어다 놓거나 클릭</b>
+      <span>여러 장 한꺼번에 넣고, 한 장에서 네 귀퉁이를 찍으면 나머지에 그대로 적용됩니다</span>
+      <input type="file" id="file" accept="image/*" multiple hidden>
+    </div>
+    <ul id="files" class="files"></ul>
+  </section>
+
+  <section class="panel">
+    <div class="row">
+      <label>기준 사각형 실물 크기
+        <span class="hint">사진에서 찍은 네 귀퉁이가 실제로 몇 mm 인가</span>
+      </label>
+      <div class="inputs">
+        <input type="number" id="refW" value="210" step="0.1" min="1"><span>×</span>
+        <input type="number" id="refH" value="297" step="0.1" min="1"><span>mm</span>
+        <select id="refPreset">
+          <option value="210,297">A4 210×297</option>
+          <option value="297,210">A4 가로 297×210</option>
+          <option value="180,120">A5 148×210 아님(예시)</option>
+          <option value="custom">직접 입력</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <label>뽑을 실물 크기
+        <span class="hint">저장되는 이미지의 실제 크기(mm)</span>
+      </label>
+      <div class="inputs">
+        <input type="number" id="tgtW" value="170" step="0.1" min="1"><span>×</span>
+        <input type="number" id="tgtH" value="70" step="0.1" min="1"><span>mm</span>
+        <button type="button" class="mini" id="tgt170">170×70</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <label>미세 이동 <span class="hint">자를 위치를 가운데서 옮깁니다</span></label>
+      <div class="inputs">
+        <input type="number" id="offX" value="0" step="1"><span>mm 가로</span>
+        <input type="number" id="offY" value="0" step="1"><span>mm 세로</span>
+        <label class="chk"><input type="checkbox" id="allowUp"> 확대 허용</label>
+      </div>
+    </div>
+
+    <div class="row">
+      <label>저장 형식</label>
+      <div class="inputs">
+        <label class="chk"><input type="radio" name="fmt" value="PNG" checked> PNG (무손실)</label>
+        <label class="chk"><input type="radio" name="fmt" value="TIFF"> TIFF (인쇄용)</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="runAll" disabled>모든 사진 처리</button>
+      <button class="line" id="applyAll" title="지금 사진의 네 귀퉁이를 모든 사진에 적용">이 귀퉁이를 전체에 적용</button>
+    </div>
+  </section>
+
+  <section class="panel canvas-wrap">
+    <div class="canvas-head">
+      <span id="curName">사진을 넣어 주세요</span>
+      <span id="curSize" class="hint"></span>
+      <button class="mini" id="suggest" disabled>귀퉁이 자동 제안</button>
+    </div>
+    <div class="stage">
+      <canvas id="cv"></canvas>
+      <div id="loupe" class="loupe"></div>
+    </div>
+    <p class="tip">귀퉁이 4개를 끌어서 맞추세요. 방향키로 1px 이동, Shift+방향키 10px. 순서는 좌상 → 우상 → 우하 → 좌하.</p>
+  </section>
+
+  <section class="panel">
+    <div class="results-head"><b>결과</b><span id="sum" class="hint"></span></div>
+    <ul id="results" class="results"></ul>
+  </section>
+</main>
+<script type="module" src="/web/app.js"></script>
+</body>
+</html>
