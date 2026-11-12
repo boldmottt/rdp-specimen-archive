@@ -6,3 +6,6 @@ data/
 .DS_Store
 __pycache__/
 .venv/
+
+# 실물 크기 시편 사진 도구의 임시 작업 폴더
+tools/spec-photo/_work/
