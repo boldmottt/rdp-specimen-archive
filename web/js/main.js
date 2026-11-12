@@ -1,6 +1,7 @@
 /* RDP 시편 아카이브 — 라우터 · 부팅 (진입점) */
 import { $, $$, App, apiGet, esc, loadLS, normalizeDoc, saveSmart, toast } from "./core.js";
 import { renderCatalog, saveNewPattern } from "./catalog.js";
+import { setShow, paintShowSeg } from "./showroom.js";
 import { loadInkCatalog, renderDetail } from "./detail.js";
 import { renderArchive, renderArchived, renderCart, renderProposal } from "./proposal.js";
 import { renderBoard } from "./board.js";
@@ -26,7 +27,8 @@ export function rerender() {
   searchNav = false;
   document.body.classList.remove("board-mode");   // 컬러 보드 전용 인쇄 규칙은 이 화면에서만
   document.body.classList.remove("compare-mode");  // 비교 화면 인쇄 규칙(가로)도 그 화면에서만
-  document.body.classList.remove("report-mode");   // 개발 실적 보고서 인쇄 규칙(A4 가로)도 그 화면에서만
+  document.body.classList.remove("report-mode");
+  document.body.classList.remove("show-mode");     // 연출 보기는 목차에서만 (renderCatalog 가 다시 켠다)   // 개발 실적 보고서 인쇄 규칙(A4 가로)도 그 화면에서만
   const nav = $("#navhome");
   if (nav) nav.style.display = h ? "" : "none";
   if (h === "/new") {
@@ -68,6 +70,14 @@ async function boot() {
   bindCrop();
   $("#brand").onclick = () => (location.hash = "");
   $("#navhome").onclick = () => (location.hash = "");
+  // 기본 보기 ↔ 연출 보기 — 다른 화면에서 눌러도 목차로 가서 그 보기로 연다
+  paintShowSeg();
+  document.querySelectorAll('#showseg input[name="showmode"]').forEach((r) => (r.onchange = () => {
+    setShow(r.value === "1");
+    paintShowSeg();
+    if (location.hash && location.hash !== "#") location.hash = "";
+    else { renderCatalog(); window.scrollTo(0, 0); }
+  }));
   $("#cartbtn").onclick = () => (location.hash = "#/proposal");
   $("#newbtn").onclick = () => { App.newDraft = newDoc(); location.hash = "#/new"; };
   // 서랍을 닫으면 '새 시편' 화면은 초안(App.newDraft)으로 다시 그린다 — 방금 채운 사진·배합이 보이게

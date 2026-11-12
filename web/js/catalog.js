@@ -15,6 +15,8 @@ import { openBakeDialog } from "./bake-dialog.js";
 import { bindRate, rateHTML } from "./rating.js";
 import { setView, viewSwitchHTML, bodyHTML, bindBody } from "./views.js";
 import { workOf } from "./work.js";
+// 연출 보기(테이블 위 샘플 묶음) — 같은 목록·같은 거르기, 보여 주는 방식만 다르다
+import { SHOW, showHTML, showToolsHTML, showHintHTML, bindShow } from "./showroom.js";
 
 /* ---------------- catalog ---------------- */
 /* 검색 결과: 지금 조건에 남은 시편 목록. 동시에 HITS 에 "패턴별로 남은 컬러 id" 를 채운다.
@@ -406,8 +408,9 @@ export function renderCatalog() {
       <div class="fpanel">
         <div class="fp-top">
           <span class="res-n" title="지금 조건에 걸린 시편·컬러">${list.length}장 · ${hitCount}색</span>
+          ${SHOW.on ? showHintHTML() : ""}
           <span class="grow"></span>
-          ${viewSwitchHTML()}
+          ${SHOW.on ? showToolsHTML() : viewSwitchHTML()}
           <div class="seg" role="radiogroup" aria-label="정렬">
             ${[["recent", "최근"], ["code", "코드"], ["color", "색"]].map(([v, label]) => {
               const off = v === "color" && !App.refColor;
@@ -449,7 +452,7 @@ export function renderCatalog() {
         </div>
       </div>
       ${selectionBarHTML()}
-      ${list.length ? `<div id="vbody">${bodyHTML(list, (pid) => HITS.get(pid), cardHTML)}</div>`
+      ${list.length ? `<div id="vbody">${SHOW.on ? showHTML() : bodyHTML(list, (pid) => HITS.get(pid), cardHTML)}</div>`
       : `<div class="panel empty-wrap"><div class="empty">
           <span class="ic" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
           <div><h3>조건에 맞는 시편이 없어요</h3>
@@ -645,7 +648,23 @@ export function renderCatalog() {
   // 보기 전환(카드 · 표 · 칸반) + 보기 도구(묶기 · 카드 크기 · 열 · 칸반 끌어 놓기)
   $$('input[name="viewmode"]').forEach((r) => (r.onchange = () => { setView(r.value); renderCatalog(); }));
   const vbody = $("#vbody");
-  if (vbody) bindBody(vbody, renderCatalog);
+  document.body.classList.toggle("show-mode", SHOW.on && !!vbody);
+  if (vbody && SHOW.on) {
+    bindShow(vbody, {
+      list,
+      hitsOf: (pid) => HITS.get(pid),
+      // 색 정렬 중이면 기준색과 가장 가까운 컬러를 묶음 맨 위에
+      topOf: (pid) => (BEST.get(pid) || {}).vid || null,
+      rerender: renderCatalog,
+      onCart: () => {      // [N개 담기/빼기] 글자를 지금 제안서에 맞춘다
+        const b = $("#selall");
+        if (!b) return;
+        const all = hitCount > 0 && list.every((p) => (HITS.get(p.id) || []).every((vid) => inCart(p.id, vid)));
+        b.textContent = all ? `${hitCount}개 빼기` : `${hitCount}개 담기`;
+        b.onclick = () => (all ? removeAll() : addAll());
+      },
+    });
+  } else if (vbody) bindBody(vbody, renderCatalog);
   const bulkBtn = $("#bulk-open");
   if (bulkBtn) bulkBtn.onclick = () => openBulkDialog(renderCatalog, (pid) => HITS.get(pid));
   const cmpSel = $("#sel-compare");
