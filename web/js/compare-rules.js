@@ -7,6 +7,8 @@
  * 되돌리기: #/compare 화면(compare-page.js)과 이 파일을 지우면 된다. 데이터는 읽기만 한다.
  */
 
+import { vehicleInfo, vehicleText } from "./report-rules.js";
+
 export const COMPARE_MAX = 4;
 
 const t = (x) => (x == null ? "" : Array.isArray(x) ? x.join(", ") : String(x)).trim();
@@ -43,7 +45,7 @@ export function compareRows(items, opt = {}) {
   add("기본", "code", "패턴", (p) => [t((p.pattern || {}).code), t((p.pattern || {}).nameKo || (p.pattern || {}).name)].filter(Boolean).join(" · "));
   add("기본", "color", "컬러", (p, v) => (opt.vName ? opt.vName(v) : t(v.colorName || v.colorCode)));
   add("기본", "colorCode", "컬러코드", (p, v) => v.colorCode);
-  add("기본", "project", "프로젝트", (p) => [p.project, p.projectName].map(t).filter(Boolean).join(" · "));
+  add("기본", "project", "제안차종", (p) => vehicleText(vehicleInfo(p)));
   add("기본", "client", "고객", (p) => p.client);
   add("기본", "status", "상태", (p, v) => v.status);
   add("기본", "date", "작업일", (p, v) => v.date);

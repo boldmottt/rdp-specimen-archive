@@ -279,8 +279,9 @@ export function renderDrawer() {
   let body = "";
   if (E.tab === "base") {
     body = `<div class="sec-label">패턴</div>
-        ${fieldRow('프로젝트 <b class="req" title="필수">*</b>', "project", { ph: "PJ01" })}
-        ${fieldRow("차종명", "projectName", { ph: "PJ01 (차종명)" })}
+        ${fieldRow('대표 제안차종 <b class="req" title="필수">*</b>', "project", { ph: "HX5 — 차종 코드 1개 (파일 이름 · 라벨에 쓰입니다)" })}
+        ${fieldRow("차종명", "projectName", { ph: "대표 제안차종의 이름" })}
+        ${fieldRow("추가 제안차종", "pattern.vehicles", { ph: "KQ2, NQ5 — 대표 말고도 제안한 차종 (쉼표로)" })}
         <div class="field-row"><label>고객</label>
           <input data-k="client" list="client-list" value="${esc(d.client || "")}" placeholder="고객사" autocomplete="off">
           <datalist id="client-list">${valueCounts(App.patterns, (pp) => pp.client).map((x) => `<option value="${esc(x.val)}">`).join("")}</datalist>
@@ -292,7 +293,6 @@ export function renderDrawer() {
         ${fieldRow("태그", "pattern.tags", { ph: "우드, 엠보, 도어" })}
         <div class="sec-label">개발 실적</div>
         ${devNote(d)}
-        ${fieldRow("제안 차종", "pattern.vehicles", { ph: "HX5, KQ2 — 프로젝트 말고도 제안한 차종 (쉼표로)" })}
         <div class="field-row"><label>개발 담당자</label>
           <input data-k="pattern.developer" list="dev-list" value="${esc((d.pattern || {}).developer || "")}" placeholder="담당자 이름" autocomplete="off">
           <datalist id="dev-list">${valueCounts(App.patterns, (pp) => (pp.pattern || {}).developer).map((x) => `<option value="${esc(x.val)}">`).join("")}</datalist>
@@ -325,14 +325,14 @@ export function renderDrawer() {
         ${fieldRow("컬러명", "variations." + E.vIdx + ".colorName", { ph: "다크 브라운" })}
         ${fieldRow("컬러코드", "variations." + E.vIdx + ".colorCode", { ph: "K-1116S", mono: true })}
         ${fieldRow("상태", "variations." + E.vIdx + ".status", { ph: "가승인" })}
-        ${fieldRow("제안 차종(이 컬러만)", "variations." + E.vIdx + ".vehicles", { ph: "이 컬러만 따로 제안한 차종 (쉼표로)" })}
+        ${fieldRow("추가 제안차종(이 컬러만)", "variations." + E.vIdx + ".vehicles", { ph: "이 컬러만 따로 제안한 차종 (쉼표로)" })}
         <div class="field-row is-locked"><label>작업일</label><input value="${esc(String(v.date || "").slice(0, 10))}" disabled></div>
         <div class="field-note"><button type="button" class="link-btn" id="goto-work-date">작업일은 「작업」에서 수정 →</button></div>
         ${fieldRow("Rev", "variations." + E.vIdx + ".rev", { ph: "0" })}
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 샘플의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 공통값을 씁니다 (패턴 코드·이름은 공통)</span></div>
         ${fieldRow("Company", "variations." + E.vIdx + ".label.company", { ph: d.client || "고객사" })}
-        ${fieldRow("제안차종", "variations." + E.vIdx + ".label.project", { ph: d.project || "PJ01", mono: true })}
+        ${fieldRow("라벨 제안차종", "variations." + E.vIdx + ".label.project", { ph: d.project || "비우면 대표 제안차종", mono: true })}
         ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "Design Sample" })}
         ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "Padprint Layer 1" })}
         ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}
@@ -1051,9 +1051,9 @@ export async function saveDraft() {
     }
     if (!d.pattern.code) { E.msg = "패턴 코드를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
     if (!d.id) {
-      if (!d.project) { E.msg = "프로젝트를 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
+      if (!d.project) { E.msg = "대표 제안차종을 입력하세요"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
       d.id = deriveId(d.project, d.pattern.code);
-      if (!d.id) { E.msg = "프로젝트·패턴 코드에 영문/숫자를 넣어주세요 (ID를 만들 수 없습니다)"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
+      if (!d.id) { E.msg = "대표 제안차종·패턴 코드에 영문/숫자를 넣어주세요 (ID를 만들 수 없습니다)"; E.tab = "base"; syncTabs(); renderDrawer(); return; }
       if (byId(d.id) && !(await confirmDialog({ title: "이미 있는 시편입니다", body: `'${d.id}' 시편을 덮어쓸까요?`, ok: "덮어쓰기", danger: true }))) {
         d.id = ""; E.msg = "저장 취소 — 패턴 코드를 바꾸세요"; renderDrawer(); return;
       }
@@ -1064,7 +1064,7 @@ export async function saveDraft() {
     const derived = deriveId(d.project, d.pattern.code);
     if (!E.isNew && d.id && derived && derived !== d.id) {
       if (!(await confirmDialog({ title: "시편 ID를 바꿀까요?", body: `${d.id}  →  ${derived}\n(이미지·원본 폴더도 함께 옮겨집니다)`, ok: "바꾸기" }))) {
-        E.msg = "저장 취소 — 프로젝트/패턴 코드를 되돌리세요"; renderDrawer(); return;
+        E.msg = "저장 취소 — 대표 제안차종/패턴 코드를 되돌리세요"; renderDrawer(); return;
       }
       targetId = derived;
     }

@@ -328,7 +328,7 @@ export function renderDetail(pid, vid, override) {
             <div class="kicker">${p.projectName || p.client ? `<span class="proj">${esc(p.projectName)}</span><span class="mini">${esc(p.client)}</span>` : `<span class="proj">${isNew ? "NEW SPECIMEN" : esc(p.project || "")}</span>`}</div>
             <h1>${esc(p.pattern.code || "새 시편")}</h1>
             <div class="sub">${esc([p.pattern.name, p.pattern.nameKo].filter(Boolean).join(" · ") || p.label.type || "")}</div>
-            ${isNew ? '<div class="new-hint">값을 클릭해 채우세요 — <b>Tab</b> 으로 다음 칸, <b>Ctrl+S</b> 로 저장. <b class="req">*</b> 프로젝트와 패턴 코드는 필수예요. <button type="button" class="mini-btn" id="new-req">필수 칸 채우기</button></div>' : ""}
+            ${isNew ? '<div class="new-hint">값을 클릭해 채우세요 — <b>Tab</b> 으로 다음 칸, <b>Ctrl+S</b> 로 저장. <b class="req">*</b> 대표 제안차종과 패턴 코드는 필수예요. <button type="button" class="mini-btn" id="new-req">필수 칸 채우기</button></div>' : ""}
           </div>
           <div class="d-actions">
             ${isNew
@@ -388,8 +388,8 @@ export function renderDetail(pid, vid, override) {
               const shown = sampleVal(p, v, k);
               // 제안차종은 여러 개일 수 있다. 라벨에 인쇄되는 칸은 대표 1개라, 나머지는 「외 N」으로 알린다
               const extra = k === "project" ? vehiclesOf(p).filter((x) => x !== shown) : [];
-              const more = extra.length ? ` <span class="mini" title="제안 차종 더: ${esc(extra.join(", "))}">외 ${extra.length}</span>` : "";
-              const hint = k === "project" ? ' data-tip="라벨에 인쇄되는 대표 제안차종 — 차종이 여러 개면 편집기의 「제안 차종」에 추가합니다"' : (own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : "");
+              const more = extra.length ? ` <span class="mini" title="추가 제안차종: ${esc(extra.join(", "))}">외 ${extra.length}</span>` : "";
+              const hint = k === "project" ? ' data-tip="라벨에 인쇄되는 대표 제안차종 — 차종이 여러 개면 편집기의 「추가 제안차종」에 적습니다"' : (own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : "");
               return `<dt>${t}${req ? ' <b class="req">*</b>' : ""}<small>${en}</small>${own ? ' <span class="lab-own" title="이 샘플 전용">샘플</span>' : ""}</dt><dd data-f="${f}"${hint}>${req && !shown ? '<span class="is-empty req-empty">필수 — 클릭해 입력</span>' : esc(dash(shown)) + more}</dd>`;
             }).join("")}
               <dt>패턴 코드${isNew ? ' <b class="req">*</b>' : ""}<small>Pattern Code</small></dt><dd class="mono" data-f="pattern.code" data-tip="패턴 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${isNew && !p.pattern.code ? '<span class="is-empty req-empty">필수 — 클릭해 입력 (예: M-60213-F2)</span>' : esc(p.pattern.code)}</dd>
@@ -410,6 +410,7 @@ export function renderDetail(pid, vid, override) {
           <section class="sec"><h3>작업 정보</h3>
             <dl class="kv">
               <dt>작업일자</dt><dd data-f="v.date" data-tip="이 샘플의 작업일 — 라벨 Date(Rev)·편집기 작업일과 같은 값">${esc(v && v.date ? fmtDate(v.date) : "—")}</dd>
+              <dt>개발 담당자</dt><dd data-f="pattern.developer" data-tip="이 패턴을 맡은 사람 — 개발 실적 보고서에 쓰입니다 (실제 인쇄한 사람은 아래 「작업자」)">${esc(dash((p.pattern || {}).developer))}</dd>
               ${[["작업 장소", "place"], ["작업자", "worker"], ["설비", "machine"]].map(([label, key]) => {
                 // 컬러가 덮어쓴 값이면 「컬러」 배지 + 공통값을 title 로. 클릭하면 그 자리(컬러 값)를 고친다.
                 const src = workSource(p, v, key);

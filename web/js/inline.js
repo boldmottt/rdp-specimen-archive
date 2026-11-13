@@ -60,7 +60,7 @@ export function startInline(el, pid, vid) {
   const path = el.dataset.f;
   if ((path === "project" || path === "pattern.code") && pid !== "__new__") {
     // 인라인으로 바꾸면 파일 ID·DB 키와 어긋난다 → ID 변경 흐름이 있는 편집기로 보낸다
-    toast("프로젝트/패턴 코드는 편집기에서 바꿉니다 (파일 ID도 함께 변경)");
+    toast("대표 제안차종/패턴 코드는 편집기에서 바꿉니다 (파일 ID도 함께 변경)");
     openEditor(pid, vid);
     return;
   }

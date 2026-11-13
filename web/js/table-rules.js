@@ -15,7 +15,7 @@ const own = (v, k) => t(((v && v.work) || {})[k]) !== "";
  * 열 정의. get: 보이는 값, sort: 정렬 키(없으면 get), edit: 'v.x' | 'p.x' | 'work.x' | 'tags'
  */
 export const COLUMNS = [
-  { key: "project", label: "프로젝트", get: (p) => p.project },
+  { key: "project", label: "대표 제안차종", get: (p) => p.project },
   { key: "code", label: "패턴", get: (p) => (p.pattern || {}).code },
   { key: "colorCode", label: "컬러코드", get: (p, v) => v.colorCode, edit: "v.colorCode" },
   { key: "colorName", label: "컬러명", get: (p, v) => v.colorName, edit: "v.colorName" },
@@ -123,7 +123,7 @@ export const STATUS_ORDER = ["의뢰", "작업중", "샘플", "가승인", "승�
 
 /** 묶을 수 있는 기준. get(p, v) → 묶음 이름('' 은 '없음' 묶음) */
 export const GROUPS = [
-  { key: "project", label: "프로젝트", get: (p) => t(p.project) },
+  { key: "project", label: "대표 제안차종", get: (p) => t(p.project) },
   { key: "status", label: "상태", get: (p, v) => t(v.status) },
   { key: "client", label: "고객", get: (p) => t(p.client) },
   { key: "worker", label: "작업자", get: (p, v) => t(COL.worker.get(p, v)) },

@@ -184,7 +184,7 @@ body.show-mode .fp-top{padding:8px 10px 8px 16px;gap:8px}
 .pk-pat{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .pk-pat b{font-size:16px;font-weight:700}
 .pk-pat code{font-family:var(--mono);font-size:13px;color:var(--ink-3)}
-.pk-panel dl{display:grid;grid-template-columns:86px 1fr;row-gap:10px;column-gap:8px;font-size:13.5px;margin:0}
+.pk-panel dl{display:grid;grid-template-columns:104px 1fr;row-gap:10px;column-gap:8px;font-size:13.5px;margin:0}
 .pk-panel dt{color:var(--ink-3)}
 .pk-panel dd{margin:0;font-weight:600;min-width:0;overflow-wrap:anywhere}
 .pk-panel dd small{font-weight:500;color:var(--ink-3);font-size:12px}

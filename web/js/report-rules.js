@@ -52,6 +52,31 @@ export function vehiclesOf(p) {
   return uniq([p && p.project, ...(pat.vehicles || []), ...((p && p.variations) || []).flatMap((v) => v.vehicles || [])]);
 }
 
+/* ---- 차종 · 사람 칸의 교통정리 ----
+ * 차종을 적는 칸이 여럿이라 화면마다 이름과 조합이 달랐다. 이름은 FIELD_LABEL, 조합은 vehicleInfo 한 곳에서만 정한다.
+ *   project            대표 제안차종 — 차종 코드 1개. 파일 ID · 라벨에 쓰인다(필수)
+ *   projectName        차종명 — 대표 제안차종의 이름(코드와 다른 내용)
+ *   pattern.vehicles   추가 제안차종 — 대표 말고도 제안한 차종(여러 개)
+ *   variation.vehicles 추가 제안차종(이 컬러만)
+ *   pattern.developer  개발 담당자 — 패턴을 맡은 사람(개발 실적 보고서)
+ *   work.worker        작업자 — 실제 인쇄한 사람(컬러마다 다를 수 있다)
+ */
+export const FIELD_LABEL = { project: "대표 제안차종", projectName: "차종명", vehicles: "추가 제안차종", developer: "개발 담당자", worker: "작업자" };
+
+/**
+ * 차종 정보 한 벌. v 를 주면 그 컬러 기준(패턴의 추가 차종 + 그 컬러만의 추가 차종), 없으면 시편 전체.
+ * @returns {{main, name, extra: string[], all: string[]}}  name 은 대표와 같으면 빈 값(같은 말을 두 번 쓰지 않는다)
+ */
+export function vehicleInfo(p, v) {
+  const pat = (p && p.pattern) || {};
+  const main = t(p && p.project), nm = t(p && p.projectName);
+  const more = v ? (v.vehicles || []) : ((p && p.variations) || []).flatMap((x) => x.vehicles || []);
+  const extra = uniq([...(pat.vehicles || []), ...more]).filter((x) => x !== main);
+  return { main, name: nm && nm !== main ? nm : "", extra, all: uniq([main, ...extra]) };
+}
+/** 한 줄로: "CL4PE (차종명) · HX5 · KQ2" */
+export const vehicleText = (info) => [[info.main, info.name ? `(${info.name})` : ""].filter(Boolean).join(" "), ...info.extra].filter(Boolean).join(" · ");
+
 const codeKey = (code) => t(code).toUpperCase().replace(/[\s_-]+/g, "");
 
 /**

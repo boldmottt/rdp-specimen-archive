@@ -88,7 +88,7 @@ export function openBulkDialog(rerender, hitsOf) {
       <h3>일괄 편집 · ${App.sel.size}개 시편</h3>
       <p class="bulk-hint">${esc(BULK_HINT.trim())}</p>
       <div class="bulk-grid">
-        <label>프로젝트<input name="project" list="bulk-project" placeholder="비우면 그대로" autocomplete="off">
+        <label>대표 제안차종<input name="project" list="bulk-project" placeholder="비우면 그대로" autocomplete="off">
           <datalist id="bulk-project">${projects.map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label>
         <label>상태<input name="status" list="bulk-status" placeholder="비우면 그대로">
           <datalist id="bulk-status">${statuses.map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label>

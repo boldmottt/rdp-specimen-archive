@@ -15,6 +15,7 @@ import { renderCart } from "./proposal.js";
 import { GROUPS, GROUP, groupRows } from "./table-rules.js";
 import { rateHTML, bindRate } from "./rating.js";
 import { workOf } from "./work.js";
+import { FIELD_LABEL, vehicleInfo } from "./report-rules.js";
 import {
   CHIP, FAN, GRID, VIEW3D, SIZES, orderVars, fanSlots, restLayout, fanLayout, columnsFor, layoutGroups, maxScroll, rowVisible, flowSlots, loupeZoom,
 } from "./show-rules.js";
@@ -496,12 +497,16 @@ function paintPanel() {
   const coat = (v.coating || []).filter((c) => c && (c.code || c.maker));
   const plates = (Array.isArray(w.plate) ? w.plate : [w.plate]).filter(Boolean);
   const ly = layers(v);
+  const veh = vehicleInfo(p, v);
   const rows = [
     ["도장 컬러", coat.map((c) => `<b>${esc(c.code || "—")}</b>${c.maker ? ` <small>${esc(c.maker)}</small>` : ""}`).join(", ")],
     ["동판", [plates.map((x) => `<code>${esc(x)}</code>`).join(" "), ly.length ? esc(ly.join(" · ")) : ""].filter(Boolean).join(" · ")],
-    // 제안 차종 = 프로젝트 차종 + 패턴에 적은 다른 제안 차종 + 이 컬러만 따로 제안한 차종
-    ["제안 차종", esc([...new Set([p.project, ...(p.pattern.vehicles || []), ...(v.vehicles || [])].map((x) => String(x || "").trim()).filter(Boolean))].join(" · "))],
+    // 차종 · 사람 칸은 시편 상세 · 편집기와 같은 이름 · 같은 조합(report-rules.js 의 FIELD_LABEL · vehicleInfo)
+    [FIELD_LABEL.project, veh.main ? `<b>${esc(veh.main)}</b>${veh.name ? ` <small>${esc(veh.name)}</small>` : ""}` : ""],
+    [FIELD_LABEL.vehicles, esc(veh.extra.join(" · "))],
     ["고객", esc(p.client || "")],
+    [FIELD_LABEL.developer, esc(p.pattern.developer || "")],
+    [FIELD_LABEL.worker, esc(w.worker || "")],
     ["작업일", v.date ? esc(fmtDate(v.date)) : ""],
     ["상태", esc(v.status || "")],
   ].filter(([, val]) => val);
