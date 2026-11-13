@@ -65,7 +65,7 @@ function chipHTML(p, v, k) {
     ? `<img loading="lazy" draggable="false" src="${esc(thumbUrl(p.id, img, 480))}" data-full="${esc(imgUrl(p.id, img))}" onerror="this.onerror=null;this.src=this.dataset.full" alt="">`
     : `<span class="sh-none">사진 없음</span>`;
   const inn = inCart(p.id, v.id);
-  return `<div class="sh-chip${inn ? " in" : ""}" role="button" tabindex="${k ? -1 : 0}" data-k="${k}" data-vid="${esc(v.id)}" style="z-index:${40 - k}"
+  return `<div class="sh-chip${inn ? " in" : ""}" role="button" tabindex="${k ? -1 : 0}" data-k="${k}" data-vid="${esc(v.id)}" style="z-index:${40 - k};--k:${k}"
       aria-label="${esc(p.pattern.code)} ${esc(vName(v))} — 눌러서 집어 들기">${media}
       <span class="sh-strip"><b>${esc(vName(v))}</b><code>${esc(stripCode(v))}</code></span>
       <span class="sh-acts"><button type="button" data-act="pick" tabindex="-1">⤢ 집어 들기</button><button type="button" class="pri" data-act="cart" tabindex="-1" aria-pressed="${inn}">${inn ? "✓ 담김" : "＋ 담기"}</button></span></div>`;
@@ -85,7 +85,7 @@ function tagHTML(p, vars, total) {
 function stackHTML(p, vars, total, cell, k, flip) {
   const { shown, more } = fanSlots(vars.length);
   const chips = vars.slice(0, shown).map((v, i) => chipHTML(p, v, i)).join("")
-    + (more ? `<div class="sh-chip sh-more" role="button" tabindex="-1" data-k="${shown}" data-more="${shown}" style="z-index:${40 - shown}" aria-label="나머지 ${more}색 보기"><span class="sh-moretxt"><b>+${more}색 더</b>눌러서 모두 넘겨 보기</span></div>` : "");
+    + (more ? `<div class="sh-chip sh-more" role="button" tabindex="-1" data-k="${shown}" data-more="${shown}" style="z-index:${40 - shown};--k:${shown}" aria-label="나머지 ${more}색 보기"><span class="sh-moretxt"><b>+${more}색 더</b>눌러서 모두 넘겨 보기</span></div>` : "");
   const rot = ((cell.i * 37) % 7 - 3) * 0.55;       // 묶음마다 조금씩 삐뚤게(늘 같은 값 — 다시 그려도 흔들리지 않게)
   return `<div class="sh-stack" data-pid="${esc(p.id)}" data-flip="${flip ? 1 : 0}" style="left:${cell.x}px;--r:${rot.toFixed(2)}deg;--u:${k}">
       <div class="sh-pile">${chips}</div>${tagHTML(p, vars, total)}</div>`;
@@ -161,12 +161,29 @@ export function bindShow(root, ctx) {
   window.addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("resize", onResize);
   const onDocDown = (e) => { if (open && !open.contains(e.target)) closeFan(); };
+  // 마우스를 따라 시점이 아주 조금 움직인다 — 평평한 그림이 아니라 놓인 물건처럼 보이게('동작 줄이기'면 끔)
+  const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let mx = 0, my = 0, tx = 0, ty = 0, raf = 0;
+  const tick = () => {
+    mx += (tx - mx) * 0.12; my += (ty - my) * 0.12;
+    scene.style.setProperty("--mx", mx.toFixed(3));
+    scene.style.setProperty("--my", my.toFixed(3));
+    raf = Math.abs(tx - mx) + Math.abs(ty - my) > 0.004 ? requestAnimationFrame(tick) : 0;
+  };
+  const onMove = (e) => {
+    if (calm || e.pointerType !== "mouse") return;
+    tx = (e.clientX / window.innerWidth) * 2 - 1;
+    ty = (e.clientY / window.innerHeight) * 2 - 1;
+    if (!raf) raf = requestAnimationFrame(tick);
+  };
+  scene.addEventListener("pointermove", onMove, { passive: true });
   document.addEventListener("pointerdown", onDocDown);
   cleanup = () => {
     window.removeEventListener("scroll", onScroll);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("pointerdown", onDocDown);
     clearTimeout(openT); clearTimeout(closeT); clearTimeout(rz);
+    cancelAnimationFrame(raf);
     cleanup = null;
   };
 
@@ -181,14 +198,17 @@ export function bindShow(root, ctx) {
   function openFan(stack, hot) {
     if (open && open !== stack) closeFan();
     open = stack;
-    stack.classList.add("open");
+    // 펼치는 순간에만 한 장씩 차례로(촤라락). 펼친 뒤 칩을 옮겨 다닐 때는 바로바로 따라온다
+    stack.classList.add("open", "opening");
+    clearTimeout(stack._ot);
+    stack._ot = setTimeout(() => stack.classList.remove("opening"), 620);
     stack.parentElement.classList.add("has-open");
     setHot(stack, hot || 0);
   }
   function closeFan() {
     clearTimeout(openT); clearTimeout(closeT);
     if (!open) return;
-    open.classList.remove("open");
+    open.classList.remove("open", "opening");
     open.parentElement.classList.remove("has-open");
     $$(".sh-chip", open).forEach((c) => c.classList.remove("hot"));
     delete open.dataset.hot;
@@ -220,6 +240,11 @@ export function bindShow(root, ctx) {
     const stack = e.target.closest(".sh-stack");
     if (!stack) return;
     const p = byId(stack.dataset.pid), vars = VARS.get(stack.dataset.pid) || [];
+    if (p && e.target.closest(".sh-tag")) {
+      const top = stack.querySelector(".sh-chip");
+      openPick(p, vars, Number(stack.dataset.hot) || 0, ctx, top && top.getBoundingClientRect());
+      return;
+    }
     const chip = e.target.closest(".sh-chip");
     if (!p || !chip) return;
     const act = e.target.closest("[data-act]");
@@ -230,7 +255,7 @@ export function bindShow(root, ctx) {
       if (stack !== open) { openFan(stack, ci); return; }
       if (ci !== Number(stack.dataset.hot)) { setHot(stack, ci); return; }
     }
-    openPick(p, vars, chip.dataset.more != null ? Number(chip.dataset.more) : ci, ctx);
+    openPick(p, vars, chip.dataset.more != null ? Number(chip.dataset.more) : ci, ctx, chip.getBoundingClientRect());
   });
   plane.addEventListener("focusin", (e) => {
     const stack = e.target.closest(".sh-stack"), ci = chipIndex(e.target);
@@ -288,7 +313,11 @@ function paintCart(stack, p, vars) {
     if (b) { b.textContent = inn ? "✓ 담김" : "＋ 담기"; b.setAttribute("aria-pressed", String(inn)); }
   });
   const n = vars.filter((v) => inCart(p.id, v.id)).length, st = stack.querySelector(".stamp");
-  if (st) { st.hidden = !n; st.textContent = "담김" + (n > 1 ? " " + n : ""); }
+  if (st) {
+    const was = st.textContent;
+    st.hidden = !n; st.textContent = "담김" + (n > 1 ? " " + n : "");
+    if (n && st.textContent !== was) { st.classList.remove("pop"); void st.offsetWidth; st.classList.add("pop"); }
+  }
 }
 
 /* ---------------- 등장: 한 더미에서 날아와 자리 잡기 ---------------- */
@@ -335,7 +364,26 @@ function pickDialog() {
     d.innerHTML = "";
     if (pk && pk.changed && pk.ctx && pk.ctx.rerender && SHOW.on && (!location.hash || location.hash === "#")) pk.ctx.rerender();
   });
-  d.addEventListener("click", (e) => { if (e.target === d || e.target.classList.contains("pk-wrap")) d.close(); });
+  // 닫을 때 뚝 끊기지 않게 잠깐 옅어진 뒤 닫는다(Esc 포함)
+  d.softClose = () => {
+    if (d.classList.contains("closing")) return;
+    d.classList.add("closing");
+    setTimeout(() => { d.classList.remove("closing"); if (d.open) d.close(); }, 170);
+  };
+  d.addEventListener("cancel", (e) => { e.preventDefault(); d.softClose(); });
+  d.addEventListener("click", (e) => { if (e.target === d || e.target.classList.contains("pk-wrap")) d.softClose(); });
+  // 휠(트랙패드 좌우 밀기)로도 넘긴다 — 한 번에 한 장
+  let wheelAt = 0;
+  d.addEventListener("wheel", (e) => {
+    if (!PK || !e.target.closest(".pk-flow")) return;
+    const dv = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (Math.abs(dv) < 12) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - wheelAt < 320) return;
+    wheelAt = now;
+    go(PK.i + (dv > 0 ? 1 : -1));
+  }, { passive: false });
   d.addEventListener("keydown", (e) => {
     if (!PK || e.target.closest("input, select, textarea")) return;
     if (e.key === "ArrowLeft") { e.preventDefault(); go(PK.i - 1); }
@@ -352,7 +400,7 @@ function go(i) {
 
 const fullOf = (p, v) => (v.images && v.images[0] ? imgUrl(p.id, v.images[0]) : "");
 
-function openPick(p, vars, i, ctx) {
+function openPick(p, vars, i, ctx, from) {
   if (!vars.length) return;
   const d = pickDialog();
   PK = { p, vars, i: Math.max(0, Math.min(vars.length - 1, i || 0)), changed: false, ctx };
@@ -364,7 +412,7 @@ function openPick(p, vars, i, ctx) {
       <div class="pk-name" id="pk-name" aria-live="polite"></div>
       <div class="pk-hint">${vars.length > 1 ? "옆 칩을 누르거나 <kbd>←</kbd><kbd>→</kbd> 로 다른 컬러 · " : ""}<kbd>Esc</kbd> 테이블로</div>
     </div><aside class="pk-panel" id="pk-panel"></aside></div>`;
-  d.querySelector("[data-close]").onclick = () => d.close();
+  d.querySelector("[data-close]").onclick = () => d.softClose();
   $$("[data-go]", d).forEach((b) => (b.onclick = () => go(PK.i + Number(b.dataset.go))));
   const flow = $("#pk-flow", d);
   flow.addEventListener("click", (e) => { const fc = e.target.closest(".pk-fc"); if (fc && fc.dataset.slot !== "0") go(Number(fc.dataset.i)); });
@@ -376,6 +424,23 @@ function openPick(p, vars, i, ctx) {
   document.body.classList.add("sh-picking");
   if (!d.open) d.showModal();
   paintPick();
+  fly(from);
+}
+
+/** 테이블에 있던 그 칩이 날아올라 가운데에 놓인다 — 어디서 온 칩인지 눈이 따라간다 */
+function fly(from) {
+  const el = document.querySelector('#sh-pick .pk-fc[data-slot="0"]');
+  if (!el || !from || !from.width) return;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const to = el.getBoundingClientRect();
+  if (!to.width) return;
+  const dx = from.left + from.width / 2 - (to.left + to.width / 2), dy = from.top + from.height / 2 - (to.top + to.height / 2);
+  el.classList.remove("enter");
+  el.classList.add("fly");
+  el.style.transform = `translate(-50%,-50%) translate(${dx}px,${dy}px) scale(${from.width / to.width})`;
+  void el.offsetWidth;                       // 출발 자리를 먼저 그리게 한 뒤
+  el.classList.remove("fly");
+  el.style.transform = "";                   // 제자리(CSS)로 — transition 이 그 사이를 잇는다
 }
 
 function paintPick() {
@@ -392,6 +457,7 @@ function paintPick() {
       el.dataset.i = vi;
       el.innerHTML = img ? `<img draggable="false" src="${esc(thumbUrl(p.id, img, 960))}" data-full="${esc(imgUrl(p.id, img))}" onerror="this.onerror=null;this.src=this.dataset.full" alt="${esc(vName(x))}">`
         : `<span class="sh-none">사진 없음</span>`;
+      el.classList.add("enter");
       flow.insertBefore(el, flow.firstChild);
     }
     el.dataset.slot = slot;
@@ -443,7 +509,7 @@ function paintPanel() {
     paintPanel();
     $("#pk-cart", $("#sh-pick")).focus();
   };
-  $("#pk-open", panel).onclick = () => { PK.changed = false; d.close(); };
+  $("#pk-open", panel).onclick = () => { PK.changed = false; d.close(); };   // 바로 닫는다(곧 화면이 바뀐다)
 }
 
 /** 가운데 칩 위에서 마우스를 따라다니는 돋보기 — 원본 화소가 받쳐 주는 만큼만 키운다(최대 2배) */
