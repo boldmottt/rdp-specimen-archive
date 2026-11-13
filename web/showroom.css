@@ -214,3 +214,9 @@ body.show-mode .fp-top{padding:8px 10px 8px 16px;gap:8px}
   .sh-pick::backdrop,.sh-pick .pk-panel,.sh-pick .pk-crumb,.sh-pick .pk-name,.sh-pick .pk-hint,.sh-pick .pk-arr,.pk-fc.enter,.sh-tag .stamp.pop{animation:none}
   .sh-stack:hover{transform:rotate(var(--r,0deg))}
 }
+
+/* 접힐 때는 스르르 — 아래 칩부터 천천히 제자리로 */
+.sh-stack.closing{transition:transform .7s cubic-bezier(.4,0,.2,1)}
+.sh-stack.closing .sh-chip{transition:transform .7s cubic-bezier(.4,0,.2,1) calc((4 - min(var(--k,0), 4)) * 45ms),box-shadow .5s}
+.sh-stack.closing .sh-tag{transition:top .7s cubic-bezier(.4,0,.2,1)}
+@media (prefers-reduced-motion:reduce){ .sh-stack.closing,.sh-stack.closing .sh-chip,.sh-stack.closing .sh-tag{transition:none} }
