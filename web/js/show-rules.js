@@ -9,7 +9,7 @@
 /** 칩 한 장(시편 사진 170:70 + 아래 이름 띠) · 묶음 간격 */
 export const CHIP = { w: 236, h: 115, strip: 18 };
 export const FAN = { step: 37, dx: 17, max: 5 };          // 펼칠 때 한 장마다 내려오는 높이 · 옆으로 밀리는 폭 · 펼쳐 보이는 장수
-export const GRID = { gapX: 86, pitchY: 344, zoneH: 58, top: -100, tagH: 70 };
+export const GRID = { gapX: 86, pitchY: 344, zoneH: 92, top: -60, tagH: 0 };   // 이름표는 시편 위쪽(뒤)에 꽂혀 있어 아래 자리를 차지하지 않는다
 /** 원근 — CSS 의 perspective · translateZ · rotateX 와 같은 값이어야 계산이 화면과 맞는다 */
 export const VIEW3D = { persp: 2300, back: 430, tilt: 21, pivot: 248 };
 export const SIZES = { s: 0.82, m: 1, l: 1.2 };
