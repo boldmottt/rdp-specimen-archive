@@ -19,6 +19,7 @@ import {
   CHIP, FAN, GRID, VIEW3D, SIZES, orderVars, fanSlots, restLayout, fanLayout, columnsFor, layoutGroups, maxScroll, rowVisible, flowSlots, loupeZoom,
 } from "./show-rules.js";
 
+const CLOSE_DELAY = 2000;   // 펼친 묶음에서 마우스가 벗어난 뒤 접히기까지(ms)
 const LS = { on: "rdp.show", tone: "rdp.showTone", size: "rdp.showSize", group: "rdp.showGroup" };
 const load = (k, d) => { try { const x = JSON.parse(localStorage.getItem(k)); return x == null ? d : x; } catch (e) { return d; } };
 const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
@@ -199,6 +200,8 @@ export function bindShow(root, ctx) {
     if (open && open !== stack) closeFan();
     open = stack;
     // 펼치는 순간에만 한 장씩 차례로(촤라락). 펼친 뒤 칩을 옮겨 다닐 때는 바로바로 따라온다
+    stack.classList.remove("closing");
+    clearTimeout(stack._ct);
     stack.classList.add("open", "opening");
     clearTimeout(stack._ot);
     stack._ot = setTimeout(() => stack.classList.remove("opening"), 620);
@@ -208,6 +211,11 @@ export function bindShow(root, ctx) {
   function closeFan() {
     clearTimeout(openT); clearTimeout(closeT);
     if (!open) return;
+    // 스르르 접힌다 — 아래 칩부터 천천히(펼칠 때의 반대 순서)
+    const s = open;
+    s.classList.add("closing");
+    clearTimeout(s._ct);
+    s._ct = setTimeout(() => s.classList.remove("closing"), 1000);
     open.classList.remove("open", "opening");
     open.parentElement.classList.remove("has-open");
     $$(".sh-chip", open).forEach((c) => c.classList.remove("hot"));
@@ -234,7 +242,8 @@ export function bindShow(root, ctx) {
     const stack = e.target.closest(".sh-stack");
     if (!stack || stack.contains(e.relatedTarget)) return;
     clearTimeout(openT);
-    if (stack === open) closeT = setTimeout(closeFan, 160);
+    // 바로 접히면 칩을 고르다 살짝 벗어나기만 해도 다시 펼쳐야 했다 → 2초 기다렸다가 접는다(그 사이 돌아오면 그대로)
+    if (stack === open) closeT = setTimeout(closeFan, CLOSE_DELAY);
   });
   plane.addEventListener("click", (e) => {
     const stack = e.target.closest(".sh-stack");
