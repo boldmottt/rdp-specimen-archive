@@ -361,7 +361,7 @@ export function renderCatalog() {
   const activeHTML = (() => {
     const toks = tokenize(App.q);
     const proj = App.project !== "all"
-      ? `<span class="achip"><span class="achip-k">프로젝트</span>${esc(App.project || "미지정")}<button type="button" data-rmproj aria-label="프로젝트 조건 빼기">×</button></span>` : "";
+      ? `<span class="achip"><span class="achip-k">대표 제안차종</span>${esc(App.project || "미지정")}<button type="button" data-rmproj aria-label="프로젝트 조건 빼기">×</button></span>` : "";
     if (!toks.length && !proj) return "";
     return `<div class="activebar" aria-label="적용된 조건">${proj}${toks.map((t) =>
       `<span class="achip${t.raw.startsWith("-") ? " neg" : ""}">${esc(t.raw)}<button type="button" data-rmtok="${esc(t.raw)}" aria-label="${esc(t.raw)} 빼기">×</button></span>`).join("")}` +
@@ -401,7 +401,7 @@ export function renderCatalog() {
     <div class="wrap">
       <div class="cat">
       <aside class="filterbar facets${filtersOpen ? " open" : ""}" id="filterbar" aria-label="거르기">
-        <div class="fc-sec"><div class="fc-h">프로젝트</div><div class="projrow">${chips}</div></div>
+        <div class="fc-sec"><div class="fc-h" title="시편마다 1개인 대표 차종 — 추가로 제안한 차종까지 보려면 아래 「제안차종 (추가 포함)」">대표 제안차종</div><div class="projrow">${chips}</div></div>
         ${sfbar}${tagbar}
       </aside>
       <div class="cat-main">
@@ -627,7 +627,7 @@ export function renderCatalog() {
       else if (act === "sync") doSyncAll();
       else if (act === "board") {
         // 좁은 화면에서는 결과 줄의 보드 링크가 숨으므로 메뉴가 유일한 진입로다
-        if (App.project === "all") toast("프로젝트를 먼저 고르세요");
+        if (App.project === "all") toast("왼쪽에서 대표 제안차종을 먼저 고르세요");
         else location.hash = "#/board/" + encodeURIComponent(App.project);
       }
     }));
@@ -738,7 +738,7 @@ export function focusMissingRequired() {
   const miss = !d.project ? "project" : !(d.pattern && d.pattern.code) ? "pattern.code" : "";
   if (!miss) return false;
   const el = document.querySelector(`#view [data-f="${miss}"]`);
-  toast(miss === "project" ? "프로젝트를 입력하세요" : "패턴 코드를 입력하세요");
+  toast(miss === "project" ? "대표 제안차종을 입력하세요" : "패턴 코드를 입력하세요");
   if (el) {
     el.scrollIntoView({ block: "center", behavior: "smooth" });
     el.click();   // 인라인 입력칸을 바로 연다
@@ -753,7 +753,7 @@ export async function saveNewPattern() {
   if (focusMissingRequired()) return;
   // 파일 ID는 편집기·사진 업로드와 같은 규칙(deriveId) — 다르면 저장 전에 올린 사진이 다른 폴더로 갔다
   const id = deriveId(d.project, d.pattern.code);
-  if (!id) { toast("프로젝트·패턴 코드에 영문이나 숫자가 하나는 있어야 해요 (파일 이름에 씁니다)"); return; }
+  if (!id) { toast("대표 제안차종·패턴 코드에 영문이나 숫자가 하나는 있어야 해요 (파일 이름에 씁니다)"); return; }
   const exists = byId(id);
   if (exists) {
     if (await confirmDialog({ title: "이미 있는 시편입니다", body: `'${id}' 시편이 이미 있습니다.\n기존 시편을 열까요? (지금 작성한 내용은 저장되지 않습니다)`, ok: "기존 시편 열기" })) {
@@ -761,7 +761,7 @@ export async function saveNewPattern() {
       App.newDraft = null;
       location.hash = `#/p/${encodeURIComponent(id)}${v0 ? "/" + encodeURIComponent(v0) : ""}`;
     } else {
-      toast("이미 있는 시편입니다 — 프로젝트나 패턴 코드를 바꾸세요");
+      toast("이미 있는 시편입니다 — 대표 제안차종이나 패턴 코드를 바꾸세요");
     }
     return;
   }

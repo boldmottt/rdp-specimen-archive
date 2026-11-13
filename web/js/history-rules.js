@@ -10,7 +10,7 @@
 const s = (v) => (v == null ? "" : Array.isArray(v) ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v)).trim();
 const short = (v) => { const t = s(v); return t ? (t.length > 40 ? t.slice(0, 39) + "…" : t) : "—"; };
 
-const TOP = [["project", "프로젝트"], ["projectName", "차종명"], ["client", "고객"]];
+const TOP = [["project", "대표 제안차종"], ["projectName", "차종명"], ["client", "고객"]];
 const PATTERN = [["code", "패턴 코드"], ["name", "영문명"], ["nameKo", "한글명"], ["tags", "태그"]];
 const LABEL = [["item", "품목"], ["type", "구분"], ["supplier", "공급사"], ["company", "고객사(라벨)"], ["remark", "비고"]];
 const WORK = [["place", "작업 장소"], ["worker", "작업자"], ["machine", "설비"], ["plate", "동판"], ["emboss", "엠보"],

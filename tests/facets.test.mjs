@@ -117,3 +117,13 @@ test("도장 컬러 칩 숫자 = 걸리는 시편 수 (컬러 수는 따로)", a
   const dc1 = coat.values.find((v) => v.val === "DC-1");
   assert.deepEqual([dc1.n, dc1.colors], [2, 3]);   // 2장 · 컬러 3개
 });
+
+test("자동 태그 — 추가 제안차종이 하나도 없으면 '제안차종 (추가 포함)'은 숨긴다(대표 목록과 같아서)", async () => {
+  const { autoFacets } = await import("../web/js/facets.js");
+  const ps = [{ project: "HX5", pattern: { code: "A" }, variations: [{}] }, { project: "KQ2", pattern: { code: "B" }, variations: [{}] }];
+  assert.equal(autoFacets(ps, () => ({})).some((r) => r.kind === "project"), false);
+  ps[0].pattern.vehicles = ["NQ5"];
+  const row = autoFacets(ps, () => ({})).find((r) => r.kind === "project");
+  assert.equal(row.label, "제안차종 (추가 포함)");
+  assert.deepEqual(row.values.map((v) => v.val).sort(), ["HX5", "KQ2", "NQ5"]);
+});

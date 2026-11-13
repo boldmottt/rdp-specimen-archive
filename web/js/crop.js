@@ -14,7 +14,7 @@ import { E, renderDrawer } from "./editor.js";
 function uploadId() {
   const code = String((E.draft.pattern || {}).code || "").trim();
   const id = E.draft.id || deriveId(E.draft.project, code);
-  if (!code || !id) throw new Error("먼저 프로젝트와 패턴 코드를 입력하세요 (영문·숫자 포함)");
+  if (!code || !id) throw new Error("먼저 대표 제안차종과 패턴 코드를 입력하세요 (영문·숫자 포함)");
   return id;
 }
 

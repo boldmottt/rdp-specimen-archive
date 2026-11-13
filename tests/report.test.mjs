@@ -71,3 +71,20 @@ test("실제 양식 M-60213-F2 — 하이픈이 있어도 같은 코드", () => 
   assert.equal(rows.length, 1);                                  // 하이픈만 다른 같은 코드는 한 줄
   assert.deepEqual(rows[0].vehicles, ["HX5", "KQ2"]);
 });
+
+test("vehicleInfo — 대표 · 차종명 · 추가를 한 곳에서 조합한다", async () => {
+  const { vehicleInfo, vehicleText, FIELD_LABEL } = await import("../web/js/report-rules.js");
+  const p = { project: "HX5", projectName: "차종 A", pattern: { vehicles: ["KQ2", "HX5", " "] },
+    variations: [{ id: "v01", vehicles: ["NQ5"] }, { id: "v02", vehicles: ["SP3", "KQ2"] }] };
+  // 시편 전체: 대표는 추가에서 빠지고, 같은 차종은 한 번만
+  assert.deepEqual(vehicleInfo(p), { main: "HX5", name: "차종 A", extra: ["KQ2", "NQ5", "SP3"], all: ["HX5", "KQ2", "NQ5", "SP3"] });
+  // 컬러 기준: 패턴의 추가 + 그 컬러만의 추가 (다른 컬러 것은 안 섞인다)
+  assert.deepEqual(vehicleInfo(p, p.variations[0]).extra, ["KQ2", "NQ5"]);
+  assert.equal(vehicleText(vehicleInfo(p, p.variations[0])), "HX5 (차종 A) · KQ2 · NQ5");
+  // 차종명이 대표와 같으면 같은 말을 두 번 쓰지 않는다
+  assert.equal(vehicleInfo({ project: "HX5", projectName: "HX5" }).name, "");
+  assert.equal(vehicleText(vehicleInfo({ project: "HX5", projectName: "HX5" })), "HX5");
+  assert.deepEqual(vehicleInfo(null), { main: "", name: "", extra: [], all: [] });
+  assert.equal(FIELD_LABEL.project, "대표 제안차종");
+  assert.equal(FIELD_LABEL.vehicles, "추가 제안차종");
+});

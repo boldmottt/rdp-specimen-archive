@@ -82,8 +82,8 @@ export function layersOf(v) {
 export function autoFacets(patterns, workOf, topPerKind = 6) {
   const kinds = [
     { kind: "devyear", label: "개발년도", unit: "pattern", byValue: true },
-    { kind: "developer", label: "담당자", unit: "pattern" },
-    { kind: "project", label: "제안차종", unit: "pattern" },
+    { kind: "developer", label: "개발 담당자", unit: "pattern" },
+    { kind: "project", label: "제안차종 (추가 포함)", unit: "pattern" },
     { kind: "code", label: "계열", unit: "pattern" },
     { kind: "client", label: "고객사", unit: "pattern" },
     { kind: "place", label: "작업장소", unit: "color" },
@@ -91,7 +91,10 @@ export function autoFacets(patterns, workOf, topPerKind = 6) {
     { kind: "coat", label: "도장 컬러", unit: "color" },
   ];
   const out = [];
+  // 추가 제안차종을 적은 시편이 하나도 없으면 위의 '대표 제안차종' 목록과 똑같은 칩이 된다 → 숨긴다
+  const hasExtraVehicle = (patterns || []).some((p) => vehiclesOf(p).length > 1);
   kinds.forEach(({ kind, label, unit, byValue }) => {
+    if (kind === "project" && !hasExtraVehicle) return;
     const cnt = new Map();     // 값 → 시편(카드) 수 — 눌렀을 때 결과의 'N장'과 같다
     const cols = new Map();    // 값 → 컬러 수 (컬러 단위 칩의 안내용)
     const add = (val) => { val = String(val == null ? "" : val).trim(); if (!EMPTY_VALS.includes(val)) cnt.set(val, (cnt.get(val) || 0) + 1); };
