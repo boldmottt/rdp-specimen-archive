@@ -495,7 +495,8 @@ function paintPanel() {
   const rows = [
     ["도장 컬러", coat.map((c) => `<b>${esc(c.code || "—")}</b>${c.maker ? ` <small>${esc(c.maker)}</small>` : ""}`).join(", ")],
     ["동판", [plates.map((x) => `<code>${esc(x)}</code>`).join(" "), ly.length ? esc(ly.join(" · ")) : ""].filter(Boolean).join(" · ")],
-    ["프로젝트", esc([p.project, p.projectName].filter(Boolean).join(" · "))],
+    // 제안 차종 = 프로젝트 차종 + 패턴에 적은 다른 제안 차종 + 이 컬러만 따로 제안한 차종
+    ["제안 차종", esc([...new Set([p.project, ...(p.pattern.vehicles || []), ...(v.vehicles || [])].map((x) => String(x || "").trim()).filter(Boolean))].join(" · "))],
     ["고객", esc(p.client || "")],
     ["작업일", v.date ? esc(fmtDate(v.date)) : ""],
     ["상태", esc(v.status || "")],
@@ -503,9 +504,14 @@ function paintPanel() {
   const tags = (p.pattern.tags || []).map((t) => `<span>${esc(t)}</span>`).join("");
   const inn = inCart(p.id, v.id);
   const panel = $("#pk-panel", d);
-  panel.innerHTML = `<div class="pk-k">컬러 ${i + 1} / ${vars.length}</div>
-    <h2>${esc(vName(v))}</h2>${stripCode(v) ? `<code class="pk-code">${esc(stripCode(v))}</code>` : ""}
-    <div class="pk-pat"><code>${esc(p.pattern.code)}</code><span>${esc([p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "", p.pattern.nameKo].filter(Boolean).join(" · "))}</span></div>
+  panel.innerHTML = `<div class="pk-k">패턴</div>
+    ${(() => {
+      const nm = [p.pattern.nameKo, p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : ""].filter(Boolean);
+      // 패턴 이름이 없으면 코드가 제목이 된다(같은 코드를 두 번 쓰지 않게)
+      return nm.length ? `<h2>${esc(nm[0])}</h2>${nm[1] ? `<div class="pk-sub">${esc(nm[1])}</div>` : ""}<code class="pk-code">${esc(p.pattern.code)}</code>`
+        : `<h2 class="mono">${esc(p.pattern.code)}</h2>`;
+    })()}
+    <div class="pk-pat"><span class="pk-k">컬러 ${i + 1} / ${vars.length}</span><b>${esc(vName(v))}</b>${stripCode(v) ? `<code>${esc(stripCode(v))}</code>` : ""}</div>
     ${rows.length ? `<dl>${rows.map(([key, val]) => `<dt>${key}</dt><dd>${val}</dd>`).join("")}</dl>` : ""}
     <div class="pk-marks">${rateHTML(p.id, v.id)}${tags ? `<div class="pk-tags">${tags}</div>` : ""}</div>
     <div class="pk-acts"><button type="button" class="pk-cart${inn ? " in" : ""}" id="pk-cart" aria-pressed="${inn}">${inn ? "✓ 제안서에 담김 — 빼기" : "＋ 제안서에 담기"}</button>
