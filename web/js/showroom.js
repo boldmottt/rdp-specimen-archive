@@ -74,13 +74,17 @@ function chipHTML(p, v, k) {
 
 function tagHTML(p, vars, total) {
   const top = vars[0] || {};
-  const nm = [p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : "", p.pattern.nameKo].filter(Boolean).join(" ");
-  const line = [App.project === "all" ? p.project : "", nm].filter(Boolean).join(" · ");
+  // 첫 줄(늘 보이는 부분)은 패턴 이름 — 이름이 없으면 코드가 그 자리에
+  const nm = [p.pattern.nameKo, p.pattern.name && p.pattern.name !== p.pattern.code ? p.pattern.name : ""].filter(Boolean);
+  const title = nm[0] || p.pattern.code;
+  const sub = [nm[0] ? p.pattern.code : "", App.project === "all" ? p.project : "", nm[1] || ""].filter(Boolean);
   const count = vars.length < total ? `${vars.length} / ${total}색` : `${total}색`;
   const mk = [top.rating ? `<span class="st">★ ${Number(top.rating)}</span>` : "", top.flag ? `<span class="fl">⚑</span>` : ""].join("");
   const inN = vars.filter((v) => inCart(p.id, v.id)).length;
-  return `<div class="sh-tag"><i>${count}</i><code>${esc(p.pattern.code)}</code><span>${esc(line)}</span>
-      <div class="mk">${mk}</div><div class="stamp"${inN ? "" : " hidden"}>담김${inN > 1 ? " " + inN : ""}</div></div>`;
+  // 시편 뒤에 꽂혀 첫 줄(이름)만 빼꼼 보이다가, 마우스를 올리면 위로 올라와 나머지가 보인다
+  return `<div class="sh-tag"><b class="t">${esc(title)}</b><div class="stamp"${inN ? "" : " hidden"}>담김${inN > 1 ? " " + inN : ""}</div>
+      <div class="more"><span>${sub.map((x, n) => (n === 0 && nm[0] ? `<code>${esc(x)}</code>` : esc(x))).join(" · ")}</span><i>${count}</i></div>
+      <div class="mk">${mk}</div></div>`;
 }
 
 function stackHTML(p, vars, total, cell, k, flip) {
@@ -143,7 +147,7 @@ export function bindShow(root, ctx) {
     const lay = layoutGroups(groups, cols, k);
     rowsMeta = lay.rows.map((r) => r.y);
     plane.innerHTML = lay.rows.map((r, ri) => `<div class="sh-row" data-row="${ri}" style="top:${r.y}px">${
-      r.zone ? `<div class="sh-zone" style="left:${r.cells[0].x - 4}px;top:${-GRID.zoneH * k + 2}px">${esc(r.zone)}</div>` : ""}${
+      r.zone ? `<div class="sh-zone" style="left:${r.cells[0].x - 4}px;top:${-GRID.zoneH * k - 6}px">${esc(r.zone)}</div>` : ""}${
       r.cells.map((c) => stackHTML(c.item, VARS.get(c.item.id), (c.item.variations || []).length, c, k, c.i % 2)).join("")}</div>`).join("");
     $$(".sh-stack", plane).forEach(rest);
     maxSy = maxScroll(lay.height + GRID.tagH * k, sceneH);

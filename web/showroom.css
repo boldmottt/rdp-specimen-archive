@@ -84,27 +84,34 @@ body.show-mode #view{min-height:0}
 .sh-stack.open .sh-more.hot .sh-moretxt{height:100%;flex-direction:column;justify-content:center;gap:4px}
 
 /* 종이 이름표 — 묶음은 삐뚤어도 이름표는 똑바로(글이 잘 읽히게) */
-.sh-tag{position:absolute;left:calc(6px * var(--u));top:calc(121px * var(--u));min-width:calc(186px * var(--u));max-width:calc(236px * var(--u));background:#fbfaf7;border-radius:2px;
-  padding:8px 11px 9px;transform:rotate(calc(var(--r,0deg) * -1 - .3deg));box-shadow:0 1px 0 #fff inset,0 7px 10px -7px rgba(0,0,0,.5);
-  font-size:calc(12.5px * var(--u));line-height:1.4;transition:top .32s cubic-bezier(.2,.8,.3,1),opacity .3s;cursor:pointer}
-.sh-tag code{font-family:var(--mono);font-size:calc(12.5px * var(--u));font-weight:700;display:block;color:#1c1d20;white-space:nowrap}
-.sh-tag span{color:#55585e;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(200px * var(--u))}
-.sh-tag i{font-style:normal;float:right;font-size:calc(11px * var(--u));color:#77797f;font-weight:700;margin:1px 0 0 14px}
-.sh-tag .mk{display:flex;gap:8px;margin-top:3px;font-size:calc(11px * var(--u));font-weight:700}
+/* 종이 이름표 — 시편 뒤에 꽂혀 첫 줄(패턴 이름)만 위로 빼꼼 보인다.
+   마우스를 올리면(또는 펼치면) 천천히 위로 올라와 코드 · 프로젝트 · 색 수 · 별점이 보인다 */
+.sh-tag{position:absolute;z-index:0;left:calc(10px * var(--u));top:0;min-width:calc(176px * var(--u));max-width:calc(220px * var(--u));background:#fbfaf7;border-radius:2px 2px 0 0;
+  padding:calc(5px * var(--u)) calc(11px * var(--u)) calc(9px * var(--u));box-shadow:0 1px 0 #fff inset,0 -2px 6px -3px rgba(0,0,0,.25);
+  font-size:calc(12px * var(--u));line-height:1.4;cursor:pointer;
+  --peek:calc(-25px * var(--u));
+  transform:translateY(var(--peek)) rotate(calc(var(--r,0deg) * -1 - .3deg));
+  transition:transform .45s cubic-bezier(.25,.8,.3,1),opacity .3s}
+.sh-tag .t{display:block;font-size:calc(13px * var(--u));font-weight:750;color:#1c1d20;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:calc(40px * var(--u))}
+.sh-tag .more{display:flex;align-items:baseline;gap:8px;margin-top:2px;color:#8a8d93;font-size:calc(11.5px * var(--u))}
+.sh-tag .more span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.sh-tag .more code{font-family:var(--mono);font-weight:500;color:#8a8d93}
+.sh-tag .more i{font-style:normal;margin-left:auto;white-space:nowrap;color:#8a8d93;font-weight:600}
+.sh-tag .mk{display:flex;gap:8px;margin-top:2px;font-size:calc(11px * var(--u));font-weight:700}
 .sh-tag .mk:empty{display:none}
 .sh-tag .mk .st{color:#a06a00}.sh-tag .mk .fl{color:#b33a2f}
-.sh-tag .stamp{position:absolute;right:9px;bottom:7px;font-size:calc(9.5px * var(--u));font-weight:800;color:#b8560f;border:1.5px solid #b8560f;border-radius:3px;padding:1px 5px;transform:rotate(-7deg);letter-spacing:.04em}
+.sh-stack:hover .sh-tag,.sh-stack:focus-within .sh-tag,.sh-stack.open .sh-tag{transform:translateY(calc(-100% + 6px * var(--u))) rotate(calc(var(--r,0deg) * -1 - .3deg))}
+.sh-tag .stamp{position:absolute;right:calc(8px * var(--u));top:calc(5px * var(--u));font-size:calc(9.5px * var(--u));font-weight:800;color:#b8560f;border:1.5px solid #b8560f;border-radius:3px;padding:1px 5px;transform:rotate(-7deg);letter-spacing:.04em}
 .sh-tag .stamp[hidden]{display:none}
 .sh-tag .stamp.pop{animation:sh-stamp .38s cubic-bezier(.2,1.5,.4,1)}
 @keyframes sh-stamp{0%{transform:rotate(-7deg) scale(2.2);opacity:0}60%{opacity:1}100%{transform:rotate(-7deg) scale(1)}}
 /* 펼치면 이름표는 묶음 위로 비켜 난다(아래는 펼친 칩 자리) */
-.sh-stack.open .sh-tag{top:calc(-66px * var(--u))}
 
 /* ---------- 등장: 한 더미에서 날아와 자리 잡기 ---------- */
 .sh-plane.intro .sh-stack{transition:none;transform:translate(var(--ix,0),var(--iy,0)) rotate(var(--ir,0deg)) translateZ(170px)}
 .sh-plane.intro .sh-tag,.sh-plane.intro .sh-zone{opacity:0}
 .sh-plane.intro-run .sh-stack{transition:transform .95s cubic-bezier(.16,.84,.24,1) var(--idl,0ms)}
-.sh-plane.intro-run .sh-tag{transition:opacity .4s calc(var(--idl,0ms) + .7s)}
+.sh-plane.intro-run .sh-tag{transition:opacity .4s calc(var(--idl,0ms) + .7s),transform .45s}
 .sh-plane.intro-run .sh-zone{transition:opacity .4s .9s}
 @media (prefers-reduced-motion:reduce){
   .sh-stack,.sh-chip,.sh-tag,.pk-fc{transition:none!important}
@@ -225,7 +232,7 @@ body.show-mode .fp-top{padding:8px 10px 8px 16px;gap:8px}
 /* 접힐 때는 스르르 — 아래 칩부터 천천히 제자리로 */
 .sh-stack.closing{transition:transform .7s cubic-bezier(.4,0,.2,1)}
 .sh-stack.closing .sh-chip{transition:transform .7s cubic-bezier(.4,0,.2,1) calc((4 - min(var(--k,0), 4)) * 45ms),box-shadow .5s}
-.sh-stack.closing .sh-tag{transition:top .7s cubic-bezier(.4,0,.2,1)}
+.sh-stack.closing .sh-tag{transition:transform .7s cubic-bezier(.4,0,.2,1)}
 @media (prefers-reduced-motion:reduce){ .sh-stack.closing,.sh-stack.closing .sh-chip,.sh-stack.closing .sh-tag{transition:none} }
 
 /* 테이블 위 칩 — 사진(170:70) 아래에 이름 띠가 붙어 있어 비율이 다르다 → 가로 기준 3.2% 를 px 로 */
