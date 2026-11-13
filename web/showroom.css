@@ -20,9 +20,12 @@ body.show-mode #view{min-height:0}
 .sh-spacer{pointer-events:none}
 
 .sh-scene{position:fixed;left:0;right:0;top:var(--sh-top,56px);bottom:0;overflow:hidden;z-index:1;
-  perspective:2300px;perspective-origin:var(--cx,50%) 248px;background:#c9c6c0;transition:background .35s}
-.sh-scene.tone-mid{background:#858482}
-.sh-scene.tone-dark{background:#2c2c2d}
+  --bgc:#c9c6c0;perspective:2300px;perspective-origin:calc(var(--cx,50%) + var(--mx,0) * -22px) calc(248px + var(--my,0) * -12px);background:var(--bgc);transition:background .35s}
+.sh-scene.tone-mid{--bgc:#858482}
+.sh-scene.tone-dark{--bgc:#2c2c2d}
+/* 먼 쪽은 옅게 흐려지고 가장자리는 살짝 어둡다 — 깊이가 느껴지게(화면에 덮는 층, 누르는 데는 방해 없음) */
+.sh-scene::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:5;
+  background:linear-gradient(to bottom,var(--bgc) 0,transparent 15%),radial-gradient(120% 90% at 50% 45%,transparent 55%,rgba(0,0,0,.2) 100%)}
 /* 평면: 회전축이 장면 위에서 248px, 스크롤만큼 평면이 올라간다 — 숫자는 show-rules.js VIEW3D 와 같아야 한다 */
 .sh-plane{position:absolute;left:var(--cx,50%);top:248px;width:0;height:0;transform-style:preserve-3d;
   transform:translateZ(-430px) rotateX(21deg) translateY(calc(var(--sy,0) * -1px))}
@@ -35,6 +38,8 @@ body.show-mode #view{min-height:0}
     #cbc8c2}
 .tone-mid .sh-plane::before{background:radial-gradient(60% 1400px at 40% 1100px,rgba(255,255,255,.1),transparent 70%),repeating-linear-gradient(90deg,rgba(255,255,255,.03) 0 1px,transparent 1px 3px),#868583}
 .tone-dark .sh-plane::before{background:radial-gradient(60% 1400px at 40% 1100px,rgba(255,255,255,.05),transparent 70%),repeating-linear-gradient(90deg,rgba(255,255,255,.02) 0 1px,transparent 1px 3px),#2d2d2e}
+.sh-plane::after{content:"";position:absolute;left:-2600px;width:5200px;top:-1400px;height:60000px;pointer-events:none;opacity:.42;mix-blend-mode:multiply;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' seed='7'/><feColorMatrix values='0 0 0 0 .45 0 0 0 0 .45 0 0 0 0 .45 0 0 0 .5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>")}
+.tone-dark .sh-plane::after{opacity:.5;mix-blend-mode:soft-light}
 .sh-row{position:absolute;left:0;width:0;transform-style:preserve-3d}
 
 /* ---------- 구역 이름표 (묶기) ---------- */
@@ -45,11 +50,13 @@ body.show-mode #view{min-height:0}
 /* ---------- 묶음 ---------- */
 .sh-stack{position:absolute;top:0;width:calc(236px * var(--u));height:calc(115px * var(--u));transform:rotate(var(--r,0deg));
   transition:transform .32s cubic-bezier(.2,.8,.3,1)}
+.sh-stack:hover{transform:rotate(var(--r,0deg)) translateZ(12px)}
 .sh-stack.open{z-index:20;transform:rotate(-.6deg) translateZ(34px)}
+.sh-stack.opening .sh-chip{transition:transform .46s cubic-bezier(.2,1.2,.35,1) calc(var(--k,0) * 34ms),box-shadow .2s}
 .sh-chip{position:absolute;left:0;top:0;width:100%;height:100%;border-radius:3px;background:#d4d1ca;overflow:hidden;cursor:pointer;outline:none;
   transform:translate(calc(var(--x,0px) * var(--u)),calc(var(--y,0px) * var(--u))) rotate(var(--a,0deg));
   transition:transform .32s cubic-bezier(.2,.8,.3,1),box-shadow .2s;
-  box-shadow:0 1px 0 rgba(255,255,255,.3) inset,0 -1px 0 rgba(0,0,0,.22) inset,0 2px 0 rgba(0,0,0,.26),0 10px 14px -8px rgba(0,0,0,.5),0 22px 30px -18px rgba(0,0,0,.34)}
+  box-shadow:0 1px 0 rgba(255,255,255,.3) inset,0 -1px 0 rgba(0,0,0,.18) inset,0 calc(2.5px * var(--u)) 0 #d9d6cf,0 calc(3.5px * var(--u)) 0 rgba(0,0,0,.32),3px 9px 9px -5px rgba(0,0,0,.42),8px 22px 26px -16px rgba(0,0,0,.36)}
 .sh-chip img{position:absolute;left:0;top:0;width:100%;height:calc(100% - 18px * var(--u));object-fit:cover;display:block;pointer-events:none;user-select:none}
 .sh-none{position:absolute;inset:0 0 calc(18px * var(--u)) 0;display:grid;place-items:center;font-size:calc(11px * var(--u));letter-spacing:.14em;font-weight:700;color:#77746e;
   background:repeating-linear-gradient(135deg,#c3c0ba 0 10px,#bbb8b2 10px 20px)}
@@ -58,8 +65,8 @@ body.show-mode #view{min-height:0}
 .sh-strip b{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .sh-strip code{margin-left:auto;font-family:var(--mono);font-weight:600;font-size:calc(9.5px * var(--u));color:#6a6d73;white-space:nowrap}
 .sh-chip.in .sh-strip b::after{content:" ✓";color:#b8560f}
-.sh-stack.open .sh-chip{box-shadow:0 1px 0 rgba(255,255,255,.3) inset,0 -1px 0 rgba(0,0,0,.22) inset,0 2px 0 rgba(0,0,0,.26),0 20px 24px -14px rgba(0,0,0,.5),0 46px 46px -30px rgba(0,0,0,.38)}
-.sh-stack.open .sh-chip.hot,.sh-chip:focus-visible{box-shadow:0 0 0 2.5px #fff,0 0 0 4px rgba(0,0,0,.22),0 30px 36px -14px rgba(0,0,0,.6)}
+.sh-stack.open .sh-chip{box-shadow:0 1px 0 rgba(255,255,255,.3) inset,0 -1px 0 rgba(0,0,0,.18) inset,0 calc(2.5px * var(--u)) 0 #d9d6cf,0 calc(3.5px * var(--u)) 0 rgba(0,0,0,.32),6px 18px 20px -10px rgba(0,0,0,.44),16px 44px 44px -26px rgba(0,0,0,.36)}
+.sh-stack.open .sh-chip.hot,.sh-chip:focus-visible{box-shadow:0 0 0 2.5px #fff,0 0 0 4px rgba(0,0,0,.22),10px 30px 34px -14px rgba(0,0,0,.58)}
 /* 올린 칩의 버튼 — 집어 들기 · 담기 */
 .sh-acts{position:absolute;right:calc(7px * var(--u));top:calc(7px * var(--u));display:flex;gap:5px;opacity:0;transform:translateY(-3px);transition:.18s;pointer-events:none}
 .sh-chip.hot .sh-acts{opacity:1;transform:none;pointer-events:auto}
@@ -75,7 +82,7 @@ body.show-mode #view{min-height:0}
 /* 종이 이름표 — 묶음은 삐뚤어도 이름표는 똑바로(글이 잘 읽히게) */
 .sh-tag{position:absolute;left:calc(6px * var(--u));top:calc(121px * var(--u));min-width:calc(186px * var(--u));max-width:calc(236px * var(--u));background:#fbfaf7;border-radius:2px;
   padding:8px 11px 9px;transform:rotate(calc(var(--r,0deg) * -1 - .3deg));box-shadow:0 1px 0 #fff inset,0 7px 10px -7px rgba(0,0,0,.5);
-  font-size:calc(12.5px * var(--u));line-height:1.4;transition:top .32s cubic-bezier(.2,.8,.3,1),opacity .3s;pointer-events:none}
+  font-size:calc(12.5px * var(--u));line-height:1.4;transition:top .32s cubic-bezier(.2,.8,.3,1),opacity .3s;cursor:pointer}
 .sh-tag code{font-family:var(--mono);font-size:calc(12.5px * var(--u));font-weight:700;display:block;color:#1c1d20;white-space:nowrap}
 .sh-tag span{color:#55585e;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(200px * var(--u))}
 .sh-tag i{font-style:normal;float:right;font-size:calc(11px * var(--u));color:#77797f;font-weight:700;margin:1px 0 0 14px}
@@ -84,6 +91,8 @@ body.show-mode #view{min-height:0}
 .sh-tag .mk .st{color:#a06a00}.sh-tag .mk .fl{color:#b33a2f}
 .sh-tag .stamp{position:absolute;right:9px;bottom:7px;font-size:calc(9.5px * var(--u));font-weight:800;color:#b8560f;border:1.5px solid #b8560f;border-radius:3px;padding:1px 5px;transform:rotate(-7deg);letter-spacing:.04em}
 .sh-tag .stamp[hidden]{display:none}
+.sh-tag .stamp.pop{animation:sh-stamp .38s cubic-bezier(.2,1.5,.4,1)}
+@keyframes sh-stamp{0%{transform:rotate(-7deg) scale(2.2);opacity:0}60%{opacity:1}100%{transform:rotate(-7deg) scale(1)}}
 /* 펼치면 이름표는 묶음 위로 비켜 난다(아래는 펼친 칩 자리) */
 .sh-stack.open .sh-tag{top:calc(-66px * var(--u))}
 
@@ -190,3 +199,18 @@ body.show-mode .fp-top{padding:8px 10px 8px 16px;gap:8px}
 }
 @media print{ body.show-mode .sh-scene,.sh-pick{display:none!important} }
 @media (hover:none){ .pk-hint{display:none} }
+
+/* ---------- 집어 드는 움직임: 테이블의 그 칩이 날아올라 가운데로 ---------- */
+.sh-pick::backdrop{animation:pk-fade .28s ease-out}
+.sh-pick .pk-panel,.sh-pick .pk-crumb,.sh-pick .pk-name,.sh-pick .pk-hint,.sh-pick .pk-arr{animation:pk-rise .36s .08s cubic-bezier(.2,.8,.3,1) both}
+.pk-fc.enter{animation:pk-fade .4s ease-out both}
+.pk-fc.fly{transition:none}
+.sh-pick.closing{animation:pk-out .16s ease-in forwards}
+.sh-pick.closing::backdrop{animation:pk-out .16s ease-in forwards}
+@keyframes pk-fade{from{opacity:0}}
+@keyframes pk-rise{from{opacity:0;translate:0 10px}}
+@keyframes pk-out{to{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .sh-pick::backdrop,.sh-pick .pk-panel,.sh-pick .pk-crumb,.sh-pick .pk-name,.sh-pick .pk-hint,.sh-pick .pk-arr,.pk-fc.enter,.sh-tag .stamp.pop{animation:none}
+  .sh-stack:hover{transform:rotate(var(--r,0deg))}
+}
