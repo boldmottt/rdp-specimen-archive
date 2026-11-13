@@ -10,6 +10,7 @@ import { startCropForDraft } from "./crop.js";
 import { parsePhotoName, describeParse } from "./photo-intake.js";
 import { openHistory } from "./history.js";
 import { batchCompare, deltaText } from "./mix-compare.js";
+import { vehiclesOf } from "./report-rules.js";
 import { loadMixCheck, loadWorklogs } from "./worklog-link.js";
 import { loadProposalHistory } from "./feedback.js";
 import { compareList, inCompare, toggleCompareItem } from "./compare-page.js";
@@ -385,7 +386,11 @@ export function renderDetail(pid, vid, override) {
               const f = own ? "v.label." + k : (k === "company" ? "client" : "project");
               const req = isNew && k === "project";
               const shown = sampleVal(p, v, k);
-              return `<dt>${t}${req ? ' <b class="req">*</b>' : ""}<small>${en}</small>${own ? ' <span class="lab-own" title="이 샘플 전용">샘플</span>' : ""}</dt><dd data-f="${f}"${own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : ""}>${req && !shown ? '<span class="is-empty req-empty">필수 — 클릭해 입력</span>' : esc(dash(shown))}</dd>`;
+              // 제안차종은 여러 개일 수 있다. 라벨에 인쇄되는 칸은 대표 1개라, 나머지는 「외 N」으로 알린다
+              const extra = k === "project" ? vehiclesOf(p).filter((x) => x !== shown) : [];
+              const more = extra.length ? ` <span class="mini" title="제안 차종 더: ${esc(extra.join(", "))}">외 ${extra.length}</span>` : "";
+              const hint = k === "project" ? ' data-tip="라벨에 인쇄되는 대표 제안차종 — 차종이 여러 개면 편집기의 「제안 차종」에 추가합니다"' : (own ? ' data-tip="이 샘플 전용 값 — 비우면 공통값을 씁니다"' : "");
+              return `<dt>${t}${req ? ' <b class="req">*</b>' : ""}<small>${en}</small>${own ? ' <span class="lab-own" title="이 샘플 전용">샘플</span>' : ""}</dt><dd data-f="${f}"${hint}>${req && !shown ? '<span class="is-empty req-empty">필수 — 클릭해 입력</span>' : esc(dash(shown)) + more}</dd>`;
             }).join("")}
               <dt>패턴 코드${isNew ? ' <b class="req">*</b>' : ""}<small>Pattern Code</small></dt><dd class="mono" data-f="pattern.code" data-tip="패턴 코드 — 바꾸면 파일 ID도 함께 바뀝니다 (편집기에서 변경)">${isNew && !p.pattern.code ? '<span class="is-empty req-empty">필수 — 클릭해 입력 (예: M-60213-F2)</span>' : esc(p.pattern.code)}</dd>
               <dt>패턴명<small>Pattern Name</small></dt><dd data-f="pattern.name">${esc(dash(p.pattern.name))}</dd>
