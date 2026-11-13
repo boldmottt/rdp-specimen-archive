@@ -380,7 +380,7 @@ export function renderDetail(pid, vid, override) {
         <div class="span2 split2">
           <section class="sec"><h3>라벨 정보 <span class="lab-hint">샘플(컬러) 기준 — 패턴 코드·이름만 공통</span></h3>
             <dl class="kv">
-              ${[["회사", "company", "Company"], ["프로젝트", "project", "Project"]].map(([t, k, en]) => {
+              ${[["회사", "company", "Company"], ["제안차종", "project", "Proposed Model"]].map(([t, k, en]) => {
               const own = sampleOwn(v, k);
               const f = own ? "v.label." + k : (k === "company" ? "client" : "project");
               const req = isNew && k === "project";

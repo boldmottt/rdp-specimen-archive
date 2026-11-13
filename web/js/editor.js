@@ -332,7 +332,7 @@ export function renderDrawer() {
         ${fieldRow("메모", "variations." + E.vIdx + ".note", { type: "textarea", ph: "2도 톤 미세조정 단계" })}
         <div class="sec-label">이 샘플의 라벨 <span style="font-weight:400;color:#8d9198;font-size:10px">비우면 공통값을 씁니다 (패턴 코드·이름은 공통)</span></div>
         ${fieldRow("Company", "variations." + E.vIdx + ".label.company", { ph: d.client || "고객사" })}
-        ${fieldRow("Project", "variations." + E.vIdx + ".label.project", { ph: d.project || "PJ01", mono: true })}
+        ${fieldRow("제안차종", "variations." + E.vIdx + ".label.project", { ph: d.project || "PJ01", mono: true })}
         ${fieldRow("품목", "variations." + E.vIdx + ".label.item", { ph: d.label.item || "Design Sample" })}
         ${fieldRow("구분", "variations." + E.vIdx + ".label.type", { ph: d.label.type || "Padprint Layer 1" })}
         ${fieldRow("공급사", "variations." + E.vIdx + ".label.supplier", { ph: d.label.supplier || "NIFCO KOREA" })}
